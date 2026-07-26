@@ -60,6 +60,7 @@ class ConfigSchemaTests(unittest.TestCase):
         )
         self.assertNotIn("perceptual_duplicate_threshold", schema)
         self.assertNotIn("library_index_batch_size", schema)
+        self.assertFalse(schema["library_index_enabled"]["default"])
 
 
 if __name__ == "__main__":

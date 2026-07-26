@@ -193,7 +193,7 @@ class MemeStealer(Star):
 
     def _schedule_library_index(self) -> None:
         """Schedule an idempotent scan when meme_manager is healthy."""
-        if not self._bool_config("library_index_enabled", True):
+        if not self._bool_config("library_index_enabled", False):
             return
         provider_id = configured_provider_id(
             self.config,
@@ -763,13 +763,16 @@ class MemeStealer(Star):
                             None, batch_paths, category, provider_id
                         )
                     except Exception as exc:
-                        batch_results = {}
                         logger.warning(
                             "[meme_stealer] 自动索引批次失败 category=%s count=%s: %s",
                             category,
                             len(batch),
                             exc,
                         )
+                        logger.warning(
+                            "[meme_stealer] stopping this library-index run after the first failed batch"
+                        )
+                        return
                     for path, digest in batch:
                         metadata = batch_results.get(path)
                         if metadata is None:

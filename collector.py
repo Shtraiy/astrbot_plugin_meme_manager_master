@@ -6,6 +6,7 @@ tested on a normal Python installation.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -167,7 +168,10 @@ def parse_model_json(text: str) -> dict[str, Any]:
         try:
             parsed = json.loads(candidate[start : end + 1])
         except json.JSONDecodeError as exc:
-            raise ValueError("model response contains invalid JSON") from exc
+            try:
+                parsed = ast.literal_eval(candidate[start : end + 1])
+            except (SyntaxError, ValueError) as literal_exc:
+                raise ValueError("model response contains invalid JSON") from literal_exc
     if not isinstance(parsed, dict):
         raise ValueError("model response is not a JSON object")
     return parsed

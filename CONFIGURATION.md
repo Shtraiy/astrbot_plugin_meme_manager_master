@@ -10,7 +10,7 @@ The settings page now exposes only the options needed for normal use:
 | `scene_provider_id` | Model used to choose a meme category |
 | `only_capture_memes` | Skip ordinary photos and non-meme images |
 | `auto_send_enabled` | Allow automatic meme replies |
-| `library_index_enabled` | Allow background library indexing |
+| `library_index_enabled` | Allow background library indexing (off by default) |
 
 Download limits, deduplication thresholds, concurrency, candidate counts, and indexing batch sizes remain supported as advanced runtime keys, but are no longer shown in the normal settings page. Existing configurations continue to work after upgrading.
 

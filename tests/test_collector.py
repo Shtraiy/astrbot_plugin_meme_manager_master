@@ -81,6 +81,10 @@ class CollectorTests(unittest.TestCase):
         )
         self.assertEqual([item["id"] for item in result["items"]], ["image_0", "image_1"])
 
+    def test_parse_model_python_dict_fallback(self):
+        result = parse_model_json("{'items': [{'id': 'image_0', 'tags': ['晚安']}]}")
+        self.assertEqual(result["items"][0]["id"], "image_0")
+
     def test_invalid_category_falls_back_and_rejects_path(self):
         allowed = {"happy", "confused"}
         self.assertEqual(normalize_category("../../tmp", allowed), "confused")
