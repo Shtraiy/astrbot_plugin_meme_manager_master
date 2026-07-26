@@ -8,7 +8,6 @@ from collector import (
     event_identity,
     normalize_category,
     parse_model_json,
-    stop_event_propagation,
     strip_meme_markers,
     whitelist_allows,
 )
@@ -19,21 +18,7 @@ class FakeEvent:
         self.group_id = group_id
         self.unified_msg_origin = umo
 
-    def stop_event(self):
-        self.stopped = True
-
-
 class CollectorTests(unittest.TestCase):
-    def test_stop_event_propagation_calls_astrbot_event_stop(self):
-        event = FakeEvent()
-        event.stopped = False
-
-        self.assertTrue(stop_event_propagation(event))
-        self.assertTrue(event.stopped)
-
-    def test_stop_event_propagation_handles_plain_objects(self):
-        self.assertFalse(stop_event_propagation(object()))
-
     def test_event_identity_uses_message_id(self):
         first = FakeEvent()
         second = FakeEvent()
