@@ -212,6 +212,55 @@ class MemeStealer(Star):
     def _clear_agent_tool_guard(self, event: AstrMessageEvent) -> None:
         self._agent_tool_guards.pop(event_identity(event), None)
 
+    @staticmethod
+    def _disable_default_llm(event: AstrMessageEvent) -> None:
+        """Keep plugin LLM calls available while skipping AstrBot's default Agent."""
+        should_call_llm = getattr(event, "should_call_llm", None)
+        if callable(should_call_llm):
+            should_call_llm(False)
+        else:
+            event.stop_event()
+
+    async def _handle_explicit_meme_request(
+        self,
+        event: AstrMessageEvent,
+        message_text: str,
+    ) -> None:
+        """Handle a direct meme request before the default Agent can use tools."""
+        setattr(event, "_meme_stealer_explicit_handled", True)
+        if not await self._manager_ready():
+            event.set_result(
+                event.plain_result("本地表情包管理器当前不可用，暂时无法发送表情包。")
+            )
+            self._disable_default_llm(event)
+            return
+        if not await self._claim_auto_send(event):
+            self._disable_default_llm(event)
+            return
+
+        image_path = await self._choose_outgoing_meme_from_index(
+            event,
+            message_text,
+            force_send=True,
+        )
+        if image_path is None:
+            event.set_result(
+                event.plain_result("本地表情包库暂时没有找到合适的表情包。")
+            )
+            self._disable_default_llm(event)
+            logger.info("[meme_stealer] explicit meme request handled without a local match")
+            return
+
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        self._pending_auto_images[event_identity(event)] = (umo, image_path)
+        self._arm_agent_tool_guard(event)
+        event.set_result(event.plain_result("找到了一个合适的表情包，发给你～"))
+        self._disable_default_llm(event)
+        logger.info(
+            "[meme_stealer] explicit meme request handled before default Agent file=%s",
+            image_path,
+        )
+
     def _schedule_library_index(self) -> None:
         """Schedule an idempotent scan when meme_manager is healthy."""
         if not self._bool_config("library_index_enabled", False):
@@ -254,6 +303,17 @@ class MemeStealer(Star):
             return
         if not self._bool_config("enabled", True):
             return
+
+        message_text = self._event_text(event)
+        if (
+            self._bool_config("auto_send_enabled", True)
+            and explicit_meme_request(message_text)
+            and not self._is_control_command(event)
+            and whitelist_allows(event, self._whitelist())
+        ):
+            await self._handle_explicit_meme_request(event, message_text)
+            return
+
         if not await self._manager_ready():
             return
         if not group_id_from_event(event):
@@ -271,7 +331,7 @@ class MemeStealer(Star):
         if not sources:
             return
 
-        text = self._event_text(event)
+        text = message_text
         outline = self._event_outline(event)
         task = asyncio.create_task(self._process_and_maybe_send(event, sources[:limit], text, outline))
         self._tasks.add(task)
@@ -381,6 +441,8 @@ class MemeStealer(Star):
     @filter.on_decorating_result(priority=100000)
     async def on_decorating_result(self, event: AstrMessageEvent) -> None:
         """Replace meme_manager's marker sender with this plugin's sender."""
+        if getattr(event, "_meme_stealer_explicit_handled", False):
+            return
         result = event.get_result()
         chain = getattr(result, "chain", None) if result else None
         if not chain:
