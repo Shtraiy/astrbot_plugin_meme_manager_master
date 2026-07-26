@@ -20,6 +20,27 @@ except ImportError:  # Pillow is optional at import time for AstrBot startup.
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_IMAGE_FORMAT_EXTENSIONS = {
+    "PNG": ".png",
+    "JPEG": ".jpg",
+    "GIF": ".gif",
+    "WEBP": ".webp",
+    "BMP": ".bmp",
+}
+
+
+def detect_image_extension(content: bytes) -> str | None:
+    """Validate image bytes and return an extension based on its real format."""
+    if Image is None or not content:
+        return None
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.verify()
+        with Image.open(io.BytesIO(content)) as image:
+            image.load()
+            return _IMAGE_FORMAT_EXTENSIONS.get(str(image.format or "").upper())
+    except Exception:
+        return None
 
 
 DEFAULT_CATEGORY_DESCRIPTIONS = {

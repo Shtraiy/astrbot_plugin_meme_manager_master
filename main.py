@@ -6,7 +6,6 @@ import asyncio
 import base64
 import binascii
 import hashlib
-import mimetypes
 import random
 import re
 import time
@@ -34,7 +33,7 @@ from .collector import (
     whitelist_allows,
 )
 from .health import MemeManagerHealth, check_meme_manager_health
-from .storage import MemeStore
+from .storage import MemeStore, detect_image_extension
 
 
 VISION_SYSTEM_PROMPT = """
@@ -1263,7 +1262,7 @@ class MemeStealer(Star):
         if source.startswith("data:"):
             return self._decode_data_url(source, limit)
         if source.startswith("base64://"):
-            return self._decode_base64(source[9:], ".png", limit)
+            return self._decode_base64(source[9:], limit)
         if source.startswith(("http://", "https://")):
             return await self._download_image(source, limit)
         if source.startswith("file://"):
@@ -1276,7 +1275,10 @@ class MemeStealer(Star):
         if len(content) > limit:
             logger.warning("[meme_stealer] 图片超过大小限制: %s", path)
             return None
-        return ImagePayload(content, self._extension_from_name(path.name))
+        payload = self._payload_from_content(content, limit)
+        if payload is None:
+            logger.warning("[meme_stealer] local file is not a valid image: %s", path)
+        return payload
 
     async def _download_image(self, source: str, limit: int) -> ImagePayload | None:
         timeout = aiohttp.ClientTimeout(total=self._float_config("download_timeout", 20, 5, 120))
@@ -1296,10 +1298,15 @@ class MemeStealer(Star):
                             logger.warning("[meme_stealer] 远程图片超过大小限制: %s", source)
                             return None
                         chunks.append(chunk)
-                    extension = self._extension_from_content_type(
-                        response.headers.get("Content-Type", "")
-                    ) or self._extension_from_name(urlparse(source).path)
-                    return ImagePayload(b"".join(chunks), extension)
+                    content = b"".join(chunks)
+                    payload = self._payload_from_content(content, limit)
+                    if payload is None:
+                        logger.warning(
+                            "[meme_stealer] downloaded content is not a valid image: %s content_type=%s",
+                            source,
+                            response.headers.get("Content-Type", ""),
+                        )
+                    return payload
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             logger.warning("[meme_stealer] 下载图片失败 %s: %s", source, exc)
             return None
@@ -1309,15 +1316,24 @@ class MemeStealer(Star):
         match = re.match(r"data:image/([a-zA-Z0-9.+-]+);base64,(.+)", source, re.DOTALL)
         if not match:
             return None
-        return MemeStealer._decode_base64(match.group(2), f".{match.group(1)}", limit)
+        return MemeStealer._decode_base64(match.group(2), limit)
 
     @staticmethod
-    def _decode_base64(value: str, extension: str, limit: int) -> ImagePayload | None:
+    def _decode_base64(value: str, limit: int) -> ImagePayload | None:
         try:
             content = base64.b64decode(value, validate=True)
         except (binascii.Error, ValueError):
             return None
-        return ImagePayload(content, extension) if len(content) <= limit else None
+        return MemeStealer._payload_from_content(content, limit)
+
+    @staticmethod
+    def _payload_from_content(content: bytes, limit: int) -> ImagePayload | None:
+        if not content or len(content) > limit:
+            return None
+        extension = detect_image_extension(content)
+        if extension is None:
+            return None
+        return ImagePayload(content, extension)
 
     def _should_skip(self, vision: dict) -> bool:
         if not self._bool_config("only_capture_memes", True):
@@ -1375,17 +1391,6 @@ class MemeStealer(Star):
         except (TypeError, ValueError):
             value = default
         return max(minimum, min(maximum, value))
-
-    @staticmethod
-    def _extension_from_name(name: str) -> str:
-        suffix = Path(name).suffix.lower()
-        return suffix if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"} else ".png"
-
-    @staticmethod
-    def _extension_from_content_type(content_type: str) -> str:
-        value = content_type.split(";", 1)[0].strip().lower()
-        extension = mimetypes.guess_extension(value) or ".png"
-        return MemeStealer._extension_from_name(extension)
 
     @staticmethod
     def _log_task_failure(task: asyncio.Task) -> None:

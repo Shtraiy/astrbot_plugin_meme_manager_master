@@ -3,10 +3,26 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from storage import MemeStore
+from storage import MemeStore, detect_image_extension
 
 
 class StorageTests(unittest.TestCase):
+    def test_detect_image_extension_rejects_non_image_bytes(self):
+        self.assertIsNone(detect_image_extension(b"<html>temporary error</html>"))
+
+    def test_detect_image_extension_uses_actual_image_format(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow is not installed")
+
+        import io
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (2, 2), "red").save(buffer, format="JPEG")
+
+        self.assertEqual(detect_image_extension(buffer.getvalue()), ".jpg")
+
     def test_save_creates_category_and_preserves_existing_descriptions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
