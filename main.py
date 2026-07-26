@@ -29,6 +29,7 @@ from .collector import (
     group_id_from_event,
     normalize_category,
     parse_model_json,
+    should_block_agent_tool_after_meme,
     strip_meme_markers,
     whitelist_allows,
 )
@@ -145,6 +146,7 @@ class MemeStealer(Star):
         self._auto_send_claims: dict[str, float] = {}
         self._auto_send_claim_lock = asyncio.Lock()
         self._pending_auto_images: dict[str, tuple[str, Path]] = {}
+        self._agent_tool_guards: dict[str, float] = {}
         self._last_stolen_image: dict[str, Path] = {}
 
     async def initialize(self) -> None:
@@ -189,6 +191,26 @@ class MemeStealer(Star):
                 oldest = min(self._auto_send_claims, key=self._auto_send_claims.get)
                 self._auto_send_claims.pop(oldest, None)
             return True
+
+    def _arm_agent_tool_guard(self, event: AstrMessageEvent) -> None:
+        """Stop the same agent turn from drawing a second image after meme delivery."""
+        now = time.monotonic()
+        self._agent_tool_guards[event_identity(event)] = now + 15.0
+        for key, expires_at in list(self._agent_tool_guards.items()):
+            if expires_at <= now:
+                self._agent_tool_guards.pop(key, None)
+
+    def _agent_tool_guard_active(self, event: AstrMessageEvent) -> bool:
+        now = time.monotonic()
+        key = event_identity(event)
+        expires_at = self._agent_tool_guards.get(key, 0.0)
+        for expired_key, expired_at in list(self._agent_tool_guards.items()):
+            if expired_at <= now:
+                self._agent_tool_guards.pop(expired_key, None)
+        return expires_at > now
+
+    def _clear_agent_tool_guard(self, event: AstrMessageEvent) -> None:
+        self._agent_tool_guards.pop(event_identity(event), None)
 
     def _schedule_library_index(self) -> None:
         """Schedule an idempotent scan when meme_manager is healthy."""
@@ -420,6 +442,7 @@ class MemeStealer(Star):
                 component.text = confirmation if not replaced else ""
                 replaced = True
         self._pending_auto_images[event_identity(event)] = (umo, image_path)
+        self._arm_agent_tool_guard(event)
         logger.info(
             "[meme_stealer] 已锁定表情包，等待正文发送完成 source=%s category=%s file=%s "
             "description=%s emotion=%s tags=%s",
@@ -431,6 +454,25 @@ class MemeStealer(Star):
             details["description"],
             details["emotion"],
             details["tags"],
+        )
+
+    @filter.on_using_llm_tool()
+    async def on_using_llm_tool(self, event: AstrMessageEvent, tool, tool_args=None) -> None:
+        """Prevent the main Agent from drawing/sending again after a local meme."""
+        tool_name = str(
+            getattr(tool, "name", "")
+            or (tool.get("name", "") if isinstance(tool, dict) else "")
+            or (tool if isinstance(tool, str) else "")
+        ).strip()
+        if not should_block_agent_tool_after_meme(tool_name):
+            return
+        if not self._agent_tool_guard_active(event):
+            return
+        self._clear_agent_tool_guard(event)
+        event.stop_event()
+        logger.info(
+            "[meme_stealer] blocked agent tool after local meme send tool=%s",
+            tool_name,
         )
 
     @filter.after_message_sent(priority=0)

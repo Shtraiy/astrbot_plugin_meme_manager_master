@@ -8,6 +8,7 @@ from collector import (
     event_identity,
     normalize_category,
     parse_model_json,
+    should_block_agent_tool_after_meme,
     strip_meme_markers,
     whitelist_allows,
 )
@@ -69,6 +70,11 @@ class CollectorTests(unittest.TestCase):
     def test_parse_model_python_dict_fallback(self):
         result = parse_model_json("{'items': [{'id': 'image_0', 'tags': ['晚安']}]}")
         self.assertEqual(result["items"][0]["id"], "image_0")
+
+    def test_agent_tool_guard_blocks_image_tools_only(self):
+        self.assertTrue(should_block_agent_tool_after_meme("astrbot_execute_python"))
+        self.assertTrue(should_block_agent_tool_after_meme("send_message_to_user"))
+        self.assertFalse(should_block_agent_tool_after_meme("web_search"))
 
     def test_invalid_category_falls_back_and_rejects_path(self):
         allowed = {"happy", "confused"}
