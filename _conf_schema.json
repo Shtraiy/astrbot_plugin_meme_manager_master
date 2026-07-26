@@ -1,156 +1,47 @@
 {
-    "enabled": {
-      "type": "bool",
-      "description": "是否启用自动偷取",
-      "default": true
-    },
-    "group_whitelist": {
-      "type": "list",
-      "items": { "type": "string" },
-      "description": "群号或完整 UMO 白名单；为空时允许全部群",
-      "default": []
-    },
-    "vision_provider_id": {
-      "type": "string",
-      "description": "视觉识别模型提供商；为空时使用当前会话 Provider",
-      "_special": "select_provider",
-      "default": ""
-    },
-    "scene_provider_id": {
-      "type": "string",
-      "description": "情景分类模型提供商；为空时使用当前会话 Provider",
-      "_special": "select_provider",
-      "default": ""
-    },
-    "reply_scene_provider_id": {
-      "type": "string",
-      "description": "智能回复情景判定与候选图片匹配使用的多模态模型提供商；为空时复用情景分类模型",
-      "_special": "select_provider",
-      "default": ""
-    },
-    "only_capture_memes": {
-      "type": "bool",
-      "description": "是否跳过视觉模型判定为普通照片的图片",
-      "default": true
-    },
-    "perceptual_dedupe_enabled": {
-      "type": "bool",
-      "description": "在模型请求前检查相似图片重复，Pillow 缺失时自动回退为精确去重",
-      "default": true
-    },
-    "perceptual_duplicate_threshold": {
-      "type": "int",
-      "description": "感知哈希的最大响应距离，值越小越严格",
-      "default": 6,
-      "minimum": 0,
-      "maximum": 16
-    },
-    "meme_rejection_confidence": {
-      "type": "float",
-      "description": "判定为普通照片并跳过保存的最低置信度",
-      "default": 0.7,
-      "minimum": 0,
-      "maximum": 1
-    },
-    "fallback_category": {
-      "type": "string",
-      "description": "模型失败或分类无效时使用的分类",
-      "default": "confused"
-    },
-    "max_images_per_message": {
-      "type": "int",
-      "description": "每条消息最多处理多少张图片",
-      "default": 2,
-      "minimum": 1,
-      "maximum": 6
-    },
-    "max_image_size_mb": {
-      "type": "int",
-      "description": "单张图片最大大小（MB）",
-      "default": 10,
-      "minimum": 1,
-      "maximum": 50
-    },
-    "download_timeout": {
-      "type": "int",
-      "description": "下载图片超时时间（秒）",
-      "default": 20,
-      "minimum": 5,
-      "maximum": 120
-    },
-    "max_concurrent": {
-      "type": "int",
-      "description": "同时进行识别的图片数量",
-      "default": 2,
-      "minimum": 1,
-      "maximum": 8
-    },
-    "health_check_interval": {
-      "type": "int",
-      "description": "检查 meme_manager 插件和数据目录的间隔（秒）",
-      "default": 300,
-      "minimum": 10,
-      "maximum": 600
-    },
-    "auto_send_enabled": {
-      "type": "bool",
-      "description": "是否由本插件统一接管机器人表情包发送",
-      "default": true
-    },
-    "proactive_send_after_steal": {
-      "type": "bool",
-      "description": "偷取成功后主动发送最近保存的表情包；开启后自动监听收图也会发送，请谨慎开启",
-      "default": false
-    },
-    "auto_send_probability": {
-      "type": "float",
-      "description": "符合情景时发送表情包的概率（百分比）",
-      "default": 35,
-      "minimum": 0,
-      "maximum": 100
-    },
-    "auto_send_cooldown": {
-      "type": "float",
-      "description": "同一会话两次自动发送表情包的最短间隔（秒）",
-      "default": 30,
-      "minimum": 0,
-      "maximum": 3600
-    },
-    "auto_send_candidate_limit": {
-      "type": "int",
-      "description": "每次智能回复表情最多交给多模态模型比较的候选图片数",
-      "default": 8,
-      "minimum": 2,
-      "maximum": 16
-    },
-    "library_index_enabled": {
-      "type": "bool",
-      "description": "meme_manager 正常运行后是否自动补齐本地表情包索引",
-      "default": true
-    },
-    "library_index_provider_id": {
-      "type": "string",
-      "description": "后台自动整理已有表情包使用的多模态模型提供商；为空时复用视觉模型",
-      "_special": "select_provider",
-      "default": ""
-    },
-    "library_index_progress_step": {
-      "type": "int",
-      "description": "后台索引每处理多少张图片写入一次进度日志",
-      "default": 5,
-      "minimum": 1,
-      "maximum": 50
-    },
-    "library_index_batch_size": {
-      "type": "int",
-      "description": "后台索引一次提交给多模态模型的图片数量",
-      "default": 6,
-      "minimum": 1,
-      "maximum": 12
-    },
-    "library_index_rename_files": {
-      "type": "bool",
-      "description": "后台索引时是否只在原分类目录内将图片重命名为 category_0001 格式",
-      "default": true
-    }
+  "enabled": {
+    "type": "bool",
+    "description": "\u542f\u7528\u8868\u60c5\u5305\u5077\u53d6",
+    "hint": "\u5173\u95ed\u540e\u6682\u505c\u81ea\u52a8\u6536\u96c6\uff1b\u624b\u52a8\u547d\u4ee4\u4ecd\u53ef\u6309\u63d2\u4ef6\u903b\u8f91\u4f7f\u7528\u3002",
+    "default": true
+  },
+  "group_whitelist": {
+    "type": "list",
+    "items": { "type": "string" },
+    "description": "\u7fa4\u7ec4\u767d\u540d\u5355",
+    "hint": "\u586b\u5199\u7fa4\u53f7\u6216\u5b8c\u6574 UMO\uff1b\u7559\u7a7a\u8868\u793a\u5141\u8bb8\u6240\u6709\u7fa4\u3002",
+    "default": []
+  },
+  "vision_provider_id": {
+    "type": "string",
+    "description": "\u8bc6\u56fe\u6a21\u578b",
+    "hint": "\u7528\u4e8e\u5224\u65ad\u56fe\u7247\u662f\u5426\u4e3a\u8868\u60c5\u5305\uff0c\u5fc5\u987b\u652f\u6301\u56fe\u7247\u8f93\u5165\uff1b\u7559\u7a7a\u4f7f\u7528\u5f53\u524d\u4f1a\u8bdd\u6a21\u578b\u3002",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "scene_provider_id": {
+    "type": "string",
+    "description": "\u5206\u7c7b\u6a21\u578b",
+    "hint": "\u7528\u4e8e\u6839\u636e\u804a\u5929\u573a\u666f\u9009\u62e9\u5206\u7c7b\uff1b\u7559\u7a7a\u4f7f\u7528\u5f53\u524d\u4f1a\u8bdd\u6a21\u578b\u3002",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "only_capture_memes": {
+    "type": "bool",
+    "description": "\u53ea\u4fdd\u5b58\u8868\u60c5\u5305",
+    "hint": "\u5f00\u542f\u540e\u4f1a\u8df3\u8fc7\u666e\u901a\u7167\u7247\u548c\u975e\u8868\u60c5\u56fe\u7247\uff0c\u63a8\u8350\u4fdd\u6301\u5f00\u542f\u3002",
+    "default": true
+  },
+  "auto_send_enabled": {
+    "type": "bool",
+    "description": "\u81ea\u52a8\u53d1\u9001\u8868\u60c5\u5305",
+    "hint": "\u5173\u95ed\u540e\u4e0d\u518d\u6839\u636e\u804a\u5929\u5185\u5bb9\u81ea\u52a8\u53d1\u9001\uff0c\u4f46\u4e0d\u5f71\u54cd\u624b\u52a8\u5077\u53d6\u548c\u53d1\u9001\u3002",
+    "default": true
+  },
+  "library_index_enabled": {
+    "type": "bool",
+    "description": "\u540e\u53f0\u6574\u7406\u8868\u60c5\u5e93",
+    "hint": "\u5f00\u542f\u540e\u4f1a\u5b9a\u671f\u626b\u63cf\u65b0\u56fe\u7247\u5e76\u8865\u5145\u63cf\u8ff0\u7d22\u5f15\uff0c\u53ef\u80fd\u4ea7\u751f\u989d\u5916\u6a21\u578b\u8c03\u7528\u3002",
+    "default": true
+  }
 }

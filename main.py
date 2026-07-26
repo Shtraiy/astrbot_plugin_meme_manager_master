@@ -29,6 +29,7 @@ from .collector import (
     group_id_from_event,
     normalize_category,
     parse_model_json,
+    stop_event_propagation,
     strip_meme_markers,
     whitelist_allows,
 )
@@ -458,6 +459,11 @@ class MemeStealer(Star):
             )
             self._last_auto_send[umo] = time.monotonic()
             logger.info("[meme_stealer] text sent; deferred meme sent file=%s", image_path)
+            if self._bool_config("stop_agent_after_meme", True):
+                if stop_event_propagation(event):
+                    logger.info(
+                        "[meme_stealer] stopped later agent handlers after sending meme"
+                    )
         except Exception as exc:
             logger.warning("[meme_stealer] deferred meme send failed: %s", exc)
 

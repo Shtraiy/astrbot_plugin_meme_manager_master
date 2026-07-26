@@ -113,6 +113,15 @@ def event_identity(event: Any) -> str:
     return f"{umo}:object:{id(event)}"
 
 
+def stop_event_propagation(event: Any) -> bool:
+    """Stop later AstrBot handlers when this plugin has completed the reply."""
+    stopper = getattr(event, "stop_event", None)
+    if not callable(stopper):
+        return False
+    stopper()
+    return True
+
+
 def whitelist_allows(event: Any, whitelist: Sequence[str] | None) -> bool:
     """Return whether a group event matches an empty-or-explicit whitelist."""
     entries = {str(item).strip() for item in (whitelist or []) if str(item).strip()}
