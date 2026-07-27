@@ -78,6 +78,10 @@ def explicit_meme_request(text: str) -> bool:
     if not value:
         return False
     if re.search(
+        r"(?:不要|别|不用|无需|不需要|不想)\s*(?:再\s*)?(?:发|发送|来|换)\s*(?:一个|一张|个|张)?",
+        value,
+        flags=re.IGNORECASE,
+    ) or re.search(
         r"(?:不要|别|不用|无需|不需要|不想).{0,8}(?:发|发送|来).{0,12}(?:表情包|表情|图片|图)",
         value,
         flags=re.IGNORECASE,
@@ -94,7 +98,34 @@ def explicit_meme_request(text: str) -> bool:
             value,
             flags=re.IGNORECASE,
         )
+        or re.search(
+            r"^\s*(?:再|继续)\s*(?:发|发送|来)\s*(?:一个|一张|个|张)(?:吧|呗|啊|呀|哦|喔)?\s*[。！!？?~～]*$",
+            value,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"^\s*换\s*(?:一个|一张|个|张)(?:吧|呗|啊|呀|哦|喔)?\s*[。！!？?~～]*$",
+            value,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"换\s*(?:一个|一张|个|张)\s*(?:表情包|表情|图片|图|meme)",
+            value,
+            flags=re.IGNORECASE,
+        )
     )
+
+
+def should_block_agent_tool_for_meme_request(
+    tool_name: Any,
+    message_text: str = "",
+    *,
+    guard_active: bool = False,
+) -> bool:
+    """Block image-producing Agent tools for a meme request or active guard."""
+    if not should_block_agent_tool_after_meme(tool_name):
+        return False
+    return bool(guard_active or explicit_meme_request(message_text))
 
 
 def _read_value(value: Any, key: str, default: Any = None) -> Any:

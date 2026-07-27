@@ -9,6 +9,7 @@ from collector import (
     normalize_category,
     parse_model_json,
     should_block_agent_tool_after_meme,
+    should_block_agent_tool_for_meme_request,
     strip_meme_markers,
     whitelist_allows,
 )
@@ -75,6 +76,26 @@ class CollectorTests(unittest.TestCase):
         self.assertTrue(should_block_agent_tool_after_meme("astrbot_execute_python"))
         self.assertTrue(should_block_agent_tool_after_meme("send_message_to_user"))
         self.assertFalse(should_block_agent_tool_after_meme("web_search"))
+        self.assertTrue(
+            should_block_agent_tool_for_meme_request(
+                "astrbot_execute_python", "再发一个", guard_active=False
+            )
+        )
+        self.assertTrue(
+            should_block_agent_tool_for_meme_request(
+                "astrbot_execute_python", "普通消息", guard_active=True
+            )
+        )
+        self.assertFalse(
+            should_block_agent_tool_for_meme_request(
+                "astrbot_execute_python", "普通消息", guard_active=False
+            )
+        )
+        self.assertFalse(
+            should_block_agent_tool_for_meme_request(
+                "web_search", "再发一个", guard_active=True
+            )
+        )
 
     def test_invalid_category_falls_back_and_rejects_path(self):
         allowed = {"happy", "confused"}
@@ -109,8 +130,17 @@ class CollectorTests(unittest.TestCase):
     def test_explicit_meme_request_bypasses_automatic_probability(self):
         self.assertTrue(explicit_meme_request("可以发一下你的表情包库里的笨蛋表情吗"))
         self.assertTrue(explicit_meme_request("给我来一张图"))
+        for text in ("再发一个", "再来一张", "换一个"):
+            with self.subTest(text=text):
+                self.assertTrue(explicit_meme_request(text))
         self.assertFalse(explicit_meme_request("今天的图片说明很清楚"))
         self.assertFalse(explicit_meme_request("不要发图片"))
+        for text in ("不要再发一个", "别再来一张", "不用换一个"):
+            with self.subTest(text=text):
+                self.assertFalse(explicit_meme_request(text))
+        for text in ("请换一个模型", "我再发一个文件"):
+            with self.subTest(text=text):
+                self.assertFalse(explicit_meme_request(text))
 
 
 if __name__ == "__main__":

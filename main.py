@@ -29,7 +29,7 @@ from .collector import (
     group_id_from_event,
     normalize_category,
     parse_model_json,
-    should_block_agent_tool_after_meme,
+    should_block_agent_tool_for_meme_request,
     strip_meme_markers,
     whitelist_allows,
 )
@@ -518,6 +518,37 @@ class MemeStealer(Star):
             details["tags"],
         )
 
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, req) -> None:
+        """Remove the Python image tool before the LLM can call it."""
+        if not should_block_agent_tool_for_meme_request(
+            "astrbot_execute_python",
+            self._event_text(event),
+            guard_active=self._agent_tool_guard_active(event),
+        ):
+            return
+
+        tool_set = getattr(req, "func_tool", None)
+        if tool_set is None:
+            return
+        get_tool = getattr(tool_set, "get_tool", None)
+        if callable(get_tool) and get_tool("astrbot_execute_python") is None:
+            return
+        remove_tool = getattr(tool_set, "remove_tool", None)
+        if callable(remove_tool):
+            remove_tool("astrbot_execute_python")
+        elif isinstance(getattr(tool_set, "tools", None), list):
+            tool_set.tools = [
+                tool
+                for tool in tool_set.tools
+                if getattr(tool, "name", "") != "astrbot_execute_python"
+            ]
+        else:
+            return
+        logger.info(
+            "[meme_stealer] removed astrbot_execute_python before LLM request"
+        )
+
     @filter.on_using_llm_tool()
     async def on_using_llm_tool(self, event: AstrMessageEvent, tool, tool_args=None) -> None:
         """Prevent the main Agent from drawing/sending again after a local meme."""
@@ -526,11 +557,14 @@ class MemeStealer(Star):
             or (tool.get("name", "") if isinstance(tool, dict) else "")
             or (tool if isinstance(tool, str) else "")
         ).strip()
-        if not should_block_agent_tool_after_meme(tool_name):
+        guard_active = self._agent_tool_guard_active(event)
+        if not should_block_agent_tool_for_meme_request(
+            tool_name,
+            self._event_text(event),
+            guard_active=guard_active,
+        ):
             return
-        if not self._agent_tool_guard_active(event):
-            return
-        self._clear_agent_tool_guard(event)
+        self._disable_default_llm(event)
         event.stop_event()
         logger.info(
             "[meme_stealer] blocked agent tool after local meme send tool=%s",
