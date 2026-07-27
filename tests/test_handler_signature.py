@@ -32,7 +32,28 @@ class HandlerSignatureTests(unittest.TestCase):
             if isinstance(node, ast.ExceptHandler)
         ]
         self.assertTrue(
-            any(any(isinstance(node, ast.Return) for node in handler.body) for handler in handlers)
+            any(
+                any(isinstance(node, ast.Return) for node in ast.walk(handler))
+                for handler in handlers
+            )
+        )
+
+    def test_library_batch_failure_has_single_image_fallback(self):
+        source = Path(__file__).resolve().parents[1] / "main.py"
+        module = ast.parse(source.read_text(encoding="utf-8"))
+        ensure = next(
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "_ensure_library_index"
+        )
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_describe_library_single"
+                for node in ast.walk(ensure)
+            )
         )
 
 

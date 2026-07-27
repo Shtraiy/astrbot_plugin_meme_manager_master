@@ -83,6 +83,15 @@ def _library_batch_system_prompt(category: str) -> str:
 """.strip()
 
 
+def _library_single_system_prompt(category: str) -> str:
+    return f"""
+你是表情包素材库单图整理器。当前图片已经位于 meme_manager 的 {category} 分类目录。
+目录名是权威分类，不要移动或重新分类图片。请识别图片并只输出一个 JSON 对象。
+不要输出 Markdown、解释或 JSON 数组；没有文字或标签时使用空字符串或空数组。
+格式：{{"description":"不超过40字", "emotion":"主要情绪", "text":"图片文字", "tags":["关键词1"]}}
+""".strip()
+
+
 OUTGOING_DECISION_SYSTEM_PROMPT = """
 你是聊天机器人的表情包决策器。请严格按以下顺序在一次输出中完成判断：
 1. 判断机器人回复是否真的需要表情包；事实说明、长文、错误提示和无明显情绪时 should_send=false。
@@ -124,7 +133,7 @@ class ImagePayload:
     "meme_stealer",
     "YourName",
     "自动识别并收集群聊表情包到 meme_manager",
-    "1.4.0",
+    "1.4.1",
 )
 class MemeStealer(Star):
     def __init__(self, context: Context, config: dict | None = None):
@@ -929,14 +938,34 @@ class MemeStealer(Star):
                             None, batch_paths, category, provider_id
                         )
                     except Exception as exc:
-                        logger.warning(
-                            "[meme_stealer] 自动索引批次失败，已停止本轮并进入退避 category=%s count=%s: %s",
+                        logger.debug(
+                            "[meme_stealer] 自动索引批次失败，改用逐图识别 category=%s count=%s: %s",
                             category,
                             len(batch),
                             exc,
                         )
-                        self._schedule_library_retry(provider_id)
-                        return
+                        batch_results = {}
+                        for path in batch_paths:
+                            try:
+                                batch_results.update(
+                                    await self._describe_library_single(
+                                        None, path, category, provider_id
+                                    )
+                                )
+                            except Exception as single_exc:
+                                logger.debug(
+                                    "[meme_stealer] single-image index fallback failed path=%s: %s",
+                                    path,
+                                    single_exc,
+                                )
+                        if not batch_results:
+                            logger.warning(
+                                "[meme_stealer] 逐图识别也失败，停止本轮并进入退避 category=%s count=%s",
+                                category,
+                                len(batch),
+                            )
+                            self._schedule_library_retry(provider_id)
+                            return
                     for path, digest in batch:
                         metadata = batch_results.get(path)
                         if metadata is None:
@@ -1027,6 +1056,27 @@ class MemeStealer(Star):
         else:
             items = parsed
         return normalize_library_results(items, image_paths)
+
+    async def _describe_library_single(
+        self,
+        event: AstrMessageEvent | None,
+        image_path: Path,
+        category: str,
+        provider_id: str,
+    ) -> dict[Path, dict]:
+        response = await self._generate(
+            event,
+            f"分类目录：{category}\n请识别这张图片并返回描述、情绪、图片文字和标签。",
+            image_urls=[str(image_path)],
+            provider_id=provider_id,
+            system_prompt=_library_single_system_prompt(category),
+        )
+        parsed = parse_model_json(response)
+        items = parsed.get("items", parsed) if isinstance(parsed, dict) else parsed
+        result = normalize_library_results(items, [image_path])
+        if image_path not in result:
+            raise ValueError("single-image index response cannot be matched")
+        return result
 
     async def _choose_outgoing_meme_from_index(
         self,

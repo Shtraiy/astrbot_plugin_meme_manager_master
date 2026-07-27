@@ -414,7 +414,7 @@ class MemeStore:
         ]
         if numbers or (self.memes_dir / category / "index.json").exists():
             return f"{category}_{max(numbers, default=0) + 1:04d}{extension}"
-        return f"stolen_{int(time.time() * 1000)}_{digest[:12]}{extension}"
+        return f"stolen_{time.time_ns()}_{digest[:12]}{extension}"
 
     @staticmethod
     def _catalog_markdown(category: str, entries: list[dict]) -> str:
