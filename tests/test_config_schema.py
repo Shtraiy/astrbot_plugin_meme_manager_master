@@ -56,11 +56,15 @@ class ConfigSchemaTests(unittest.TestCase):
                 "only_capture_memes",
                 "auto_send_enabled",
                 "library_index_enabled",
+                "library_index_batch_size",
             },
         )
         self.assertNotIn("perceptual_duplicate_threshold", schema)
-        self.assertNotIn("library_index_batch_size", schema)
         self.assertFalse(schema["library_index_enabled"]["default"])
+        self.assertEqual(schema["library_index_batch_size"]["type"], "int")
+        self.assertEqual(schema["library_index_batch_size"]["default"], 6)
+        self.assertEqual(schema["library_index_batch_size"]["min"], 1)
+        self.assertEqual(schema["library_index_batch_size"]["max"], 12)
 
 
 if __name__ == "__main__":

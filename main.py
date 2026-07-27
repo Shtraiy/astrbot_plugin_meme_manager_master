@@ -34,6 +34,7 @@ from .collector import (
     whitelist_allows,
 )
 from .health import MemeManagerHealth, check_meme_manager_health
+from .indexing import catalog_needs_write, normalize_library_results
 from .storage import MemeStore, detect_image_extension
 
 
@@ -109,8 +110,8 @@ explicit_request=true 表示用户明确索要表情包，此时必须发送，s
 """.strip()
 
 
-LIBRARY_INDEX_VERSION = 2
-LIBRARY_INDEX_PROMPT_VERSION = "library-batch-v2"
+LIBRARY_INDEX_VERSION = 3
+LIBRARY_INDEX_PROMPT_VERSION = "library-batch-v3"
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,9 @@ class MemeStealer(Star):
         self._health_task: asyncio.Task | None = None
         self._library_task: asyncio.Task | None = None
         self._library_lock = asyncio.Lock()
+        self._library_completed_key: tuple[str, tuple] | None = None
+        self._library_retry_key: tuple[str, tuple] | None = None
+        self._library_retry_at = 0.0
         self._last_auto_send: dict[str, float] = {}
         self._auto_send_claims: dict[str, float] = {}
         self._auto_send_claim_lock = asyncio.Lock()
@@ -275,8 +279,27 @@ class MemeStealer(Star):
             return
         if self._library_task is not None and not self._library_task.done():
             return
+        source_signature = self._library_source_signature()
+        run_key = (provider_id, source_signature)
+        now = time.monotonic()
+        if run_key == self._library_completed_key:
+            return
+        if run_key == self._library_retry_key and now < self._library_retry_at:
+            return
         self._library_task = asyncio.create_task(self._ensure_library_index())
         self._library_task.add_done_callback(self._log_library_task_failure)
+
+    def _library_source_signature(self) -> tuple:
+        """Return a cheap signature for image files that need indexing."""
+        signature = []
+        for category in sorted(self.store.directory_categories()):
+            for path in self.store.image_paths(category):
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                signature.append((category, path.name, stat.st_mtime_ns, stat.st_size))
+        return tuple(signature)
 
     @staticmethod
     def _log_library_task_failure(task: asyncio.Task) -> None:
@@ -849,6 +872,7 @@ class MemeStealer(Star):
             )
             if not provider_id:
                 return
+            run_signature = self._library_source_signature()
             processed = 0
             classified = 0
             errors = 0
@@ -895,6 +919,7 @@ class MemeStealer(Star):
                             None, batch_paths, category, provider_id
                         )
                     except Exception as exc:
+                        batch_results = {}
                         logger.warning(
                             "[meme_stealer] 自动索引批次失败 category=%s count=%s: %s",
                             category,
@@ -902,9 +927,8 @@ class MemeStealer(Star):
                             exc,
                         )
                         logger.warning(
-                            "[meme_stealer] stopping this library-index run after the first failed batch"
+                            "[meme_stealer] will retry this library-index batch after the retry delay"
                         )
-                        return
                     for path, digest in batch:
                         metadata = batch_results.get(path)
                         if metadata is None:
@@ -943,7 +967,27 @@ class MemeStealer(Star):
                     entry = dict(metadata)
                     entry.update({"id": new_path.stem, "filename": new_path.name})
                     entries.append(entry)
-                self.store.write_catalog(category, entries, index_metadata)
+                if catalog_needs_write(old_catalog, entries, index_metadata):
+                    self.store.write_catalog(category, entries, index_metadata)
+            final_signature = self._library_source_signature()
+            final_key = (provider_id, final_signature)
+            if errors:
+                self._library_retry_key = final_key
+                self._library_retry_at = time.monotonic() + max(
+                    self._float_config("health_check_interval", 300, 10, 600),
+                    60,
+                )
+            elif final_signature != run_signature:
+                # A file was added/changed while the scan was running. Keep
+                # the completed key at the start signature so the next health
+                # check schedules another pass for the new source set.
+                self._library_completed_key = (provider_id, run_signature)
+                self._library_retry_key = None
+                self._library_retry_at = 0.0
+            else:
+                self._library_completed_key = final_key
+                self._library_retry_key = None
+                self._library_retry_at = 0.0
             logger.info(
                 "[meme_stealer] 自动索引检查完成 total=%s newly_classified=%s errors=%s",
                 total,
@@ -974,32 +1018,11 @@ class MemeStealer(Star):
             system_prompt=_library_batch_system_prompt(category),
         )
         parsed = parse_model_json(response)
-        items = parsed.get("items", [])
-        if not isinstance(items, list):
-            raise ValueError("batch model response items is not a list")
-        by_id = {
-            str(item.get("id", "")): item
-            for item in items
-            if isinstance(item, dict) and item.get("id")
-        }
-        result: dict[Path, dict] = {}
-        for path, image_id in image_ids.items():
-            item = by_id.get(image_id)
-            if item is None:
-                continue
-            tags = item.get("tags", [])
-            if isinstance(tags, str):
-                tags = [part.strip() for part in re.split(r"[,，、]", tags) if part.strip()]
-            if not isinstance(tags, list):
-                tags = []
-            result[path] = {
-                "description": str(item.get("description", "") or "")[:120],
-                "emotion": str(item.get("emotion", "") or "")[:40],
-                "text": str(item.get("text", "") or "")[:120],
-                "tags": [str(tag)[:30] for tag in tags[:8] if str(tag).strip()],
-                "indexed": True,
-            }
-        return result
+        if isinstance(parsed, dict):
+            items = parsed.get("items", parsed.get("results", parsed))
+        else:
+            items = parsed
+        return normalize_library_results(items, image_paths)
 
     async def _choose_outgoing_meme_from_index(
         self,
