@@ -31,13 +31,13 @@ from .collector import (
     extract_meme_markers,
     extract_image_sources,
     group_id_from_event,
+    is_meme_follow_up_request,
     is_safe_remote_image_url,
     normalize_category,
     parse_model_json,
     should_block_agent_tool_for_meme_request,
     should_skip_meme_result,
     strip_meme_markers,
-    unique_pending_event_key,
     vision_failure_result,
     whitelist_allows,
 )
@@ -167,7 +167,6 @@ class MemeStealer(Star):
         self._auto_send_claims: dict[str, float] = {}
         self._auto_send_umo_claims: dict[str, float] = {}
         self._auto_send_claim_lock = asyncio.Lock()
-        self._pending_auto_images: dict[str, tuple[str, Path]] = {}
         self._agent_tool_guards: dict[str, float] = {}
         self._last_stolen_image: dict[str, Path] = {}
         self._stolen_image_by_event: dict[str, Path] = {}
@@ -201,6 +200,15 @@ class MemeStealer(Star):
         if time.monotonic() - self._last_health_check >= interval:
             await self._refresh_health()
         return self._health.ready
+
+    def _recent_meme_sent(self, event: AstrMessageEvent) -> bool:
+        """Return whether this chat recently received a meme from this plugin."""
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        sent_at = self._last_auto_send.get(umo, 0.0)
+        if not umo or not sent_at:
+            return False
+        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        return time.monotonic() - sent_at <= window
 
     async def _claim_auto_send(
         self,
@@ -299,9 +307,17 @@ class MemeStealer(Star):
             return
 
         umo = str(getattr(event, "unified_msg_origin", "") or "")
-        self._pending_auto_images[event_identity(event)] = (umo, image_path)
         self._arm_agent_tool_guard(event)
-        event.set_result(event.plain_result("找到了一个合适的表情包，发给你～"))
+        event.set_result(
+            event.chain_result(
+                [
+                    Comp.Plain("找到了一个合适的表情包，发给你～"),
+                    Comp.Image.fromFileSystem(str(image_path)),
+                ]
+            )
+        )
+        if umo:
+            self._last_auto_send[umo] = time.monotonic()
         self._disable_default_llm(event)
         logger.info(
             "[meme_stealer] explicit meme request handled before default Agent file=%s",
@@ -395,9 +411,13 @@ class MemeStealer(Star):
             return
 
         message_text = self._event_text(event)
+        follow_up_request = is_meme_follow_up_request(
+            message_text,
+            recent_meme=self._recent_meme_sent(event),
+        )
         if (
             self._bool_config("auto_send_enabled", True)
-            and explicit_meme_request(message_text)
+            and (explicit_meme_request(message_text) or follow_up_request)
             and not self._is_control_command(event)
             and whitelist_allows(event, self._whitelist())
         ):
@@ -553,7 +573,11 @@ class MemeStealer(Star):
                 component.text = cleaned
             if cleaned:
                 plain_texts.append(cleaned)
-        force_send = explicit_meme_request(self._event_text(event))
+        event_text = self._event_text(event)
+        force_send = explicit_meme_request(event_text) or is_meme_follow_up_request(
+            event_text,
+            recent_meme=self._recent_meme_sent(event),
+        )
 
         # Marker cleanup always happens, even if our own sender is disabled.
         if (
@@ -596,7 +620,9 @@ class MemeStealer(Star):
                     continue
                 component.text = confirmation if not replaced else ""
                 replaced = True
-        self._pending_auto_images[event_identity(event)] = (umo, image_path)
+        result.chain = list(chain) + [Comp.Image.fromFileSystem(str(image_path))]
+        if umo:
+            self._last_auto_send[umo] = time.monotonic()
         self._arm_agent_tool_guard(event)
         logger.info(
             "[meme_stealer] 已锁定表情包，等待正文发送完成 source=%s category=%s file=%s "
@@ -663,33 +689,6 @@ class MemeStealer(Star):
             "[meme_stealer] blocked agent tool after local meme send tool=%s",
             tool_name,
         )
-
-    @filter.after_message_sent(priority=0)
-    async def after_message_sent(self, event: AstrMessageEvent) -> None:
-        """Send a selected meme only after the text response is sent."""
-        key = event_identity(event)
-        pending = self._pending_auto_images.pop(key, None)
-        if pending is None:
-            umo = str(getattr(event, "unified_msg_origin", "") or "")
-            pending_key = unique_pending_event_key(self._pending_auto_images, umo)
-            if pending_key is not None:
-                pending = self._pending_auto_images.pop(pending_key)
-        if pending is None:
-            return
-
-        umo, image_path = pending
-        if not image_path.is_file():
-            logger.warning("[meme_stealer] deferred meme file is missing: %s", image_path)
-            return
-        try:
-            await self.context.send_message(
-                umo,
-                MessageChain().file_image(str(image_path)),
-            )
-            self._last_auto_send[umo] = time.monotonic()
-            logger.info("[meme_stealer] text sent; deferred meme sent file=%s", image_path)
-        except Exception as exc:
-            logger.warning("[meme_stealer] deferred meme send failed: %s", exc)
 
     async def _process_one(
         self,

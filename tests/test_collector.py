@@ -8,13 +8,13 @@ from collector import (
     extract_image_sources,
     event_identity,
     is_safe_remote_image_url,
+    is_meme_follow_up_request,
     normalize_category,
     parse_model_json,
     should_skip_meme_result,
     should_block_agent_tool_after_meme,
     should_block_agent_tool_for_meme_request,
     strip_meme_markers,
-    unique_pending_event_key,
     vision_failure_result,
     whitelist_allows,
 )
@@ -70,16 +70,11 @@ class CollectorTests(unittest.TestCase):
         self.assertFalse(complete_batch_indices({100, 101}, {0, 1}))
         self.assertFalse(complete_batch_indices({0}, {0, 1}))
 
-    def test_pending_event_fallback_only_accepts_one_same_chat(self):
-        pending = {
-            "event-a": ("umo", "a.png"),
-            "event-b": ("umo", "b.png"),
-        }
-        self.assertIsNone(unique_pending_event_key(pending, "umo"))
-        self.assertEqual(
-            unique_pending_event_key({"event-a": ("umo", "a.png")}, "umo"),
-            "event-a",
-        )
+    def test_short_follow_up_is_meme_request_only_after_recent_meme(self):
+        self.assertTrue(is_meme_follow_up_request("还有吗", recent_meme=True))
+        self.assertTrue(is_meme_follow_up_request("还有别的吗？", recent_meme=True))
+        self.assertFalse(is_meme_follow_up_request("还有吗", recent_meme=False))
+        self.assertFalse(is_meme_follow_up_request("不要了", recent_meme=True))
 
     def test_event_identity_uses_message_id(self):
         first = FakeEvent()

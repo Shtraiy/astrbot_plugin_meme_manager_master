@@ -99,6 +99,14 @@
     "min": 0,
     "max": 3600
   },
+  "meme_follow_up_window": {
+    "type": "float",
+    "description": "继续索取表情包的上下文窗口秒数",
+    "hint": "在此时间内发送“还有吗”等短句会被理解为继续要表情包。",
+    "default": 300,
+    "min": 10,
+    "max": 1800
+  },
   "auto_send_candidate_limit": {
     "type": "int",
     "description": "自动发送候选分类数量",

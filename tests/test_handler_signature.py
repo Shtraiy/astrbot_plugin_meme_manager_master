@@ -117,6 +117,52 @@ class HandlerSignatureTests(unittest.TestCase):
         self.assertTrue(uses_save_lock(process))
         self.assertTrue(uses_save_lock(index))
 
+    def test_meme_reply_is_put_in_the_normal_result_chain(self):
+        module = self._module()
+        explicit = next(
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "_handle_explicit_meme_request"
+        )
+        decorating = next(
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "on_decorating_result"
+        )
+
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Attribute)
+                and node.attr == "chain_result"
+                for node in ast.walk(explicit)
+            )
+        )
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Attribute)
+                and node.attr == "chain"
+                for node in ast.walk(decorating)
+            )
+        )
+
+    def test_short_follow_up_is_checked_before_default_agent(self):
+        module = self._module()
+        on_message = next(
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "on_message"
+        )
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Name)
+                and node.id == "is_meme_follow_up_request"
+                for node in ast.walk(on_message)
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,6 +34,7 @@
 - `proactive_send_after_steal`：偷取成功后通过独立主动消息发送最近保存的表情包，默认关闭；开启后自动监听收图也会发送，请谨慎开启。
 - `auto_send_probability`：情景模型判定适合发送后，实际发送概率，默认 35%。
 - `auto_send_cooldown`：同一会话自动发送的最短间隔，默认 30 秒。
+- `meme_follow_up_window`：发送表情包后，将“还有吗”“还有别的吗”等短句理解为继续索取表情包的时间窗口，默认 300 秒。
 - `auto_send_candidate_limit`：每次发送前交给多模态模型比较的候选图片数，默认 8。
 - `library_index_provider_id`：从 AstrBot 已配置的模型提供商中选择后台整理已有表情包库使用的多模态模型；为空时复用 `vision_provider_id`。后台任务需要明确的 Provider ID。
 - `library_index_enabled`：meme_manager 正常运行后是否自动补齐本地表情包索引。

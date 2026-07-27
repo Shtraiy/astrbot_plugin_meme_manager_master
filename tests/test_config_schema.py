@@ -69,6 +69,7 @@ class ConfigSchemaTests(unittest.TestCase):
                 "auto_send_enabled",
                 "auto_send_probability",
                 "auto_send_cooldown",
+                "meme_follow_up_window",
                 "auto_send_candidate_limit",
                 "library_index_provider_id",
                 "library_index_enabled",

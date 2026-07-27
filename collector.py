@@ -124,15 +124,6 @@ def complete_batch_indices(actual: Any, expected: Any) -> bool:
         return False
 
 
-def unique_pending_event_key(
-    pending: Mapping[str, tuple[str, Any]],
-    umo: str,
-) -> str | None:
-    """Return a same-chat pending event only when the match is unambiguous."""
-    matches = [key for key, value in pending.items() if value and value[0] == umo]
-    return matches[0] if len(matches) == 1 else None
-
-
 def should_block_agent_tool_after_meme(tool_name: Any) -> bool:
     """Return whether a tool can create/send a second image after a local meme."""
     return str(tool_name or "").strip() in BLOCKED_AGENT_TOOLS_AFTER_MEME
@@ -194,6 +185,24 @@ def explicit_meme_request(text: str) -> bool:
         )
         or re.search(
             r"换\s*(?:一个|一张|个|张)\s*(?:表情包|表情|图片|图|meme)",
+            value,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def is_meme_follow_up_request(text: str, *, recent_meme: bool) -> bool:
+    """Recognize short requests for another meme only with recent meme context."""
+    if not recent_meme:
+        return False
+    value = str(text or "").strip()
+    if not value or re.search(r"^(?:不要|别|不用|无需|不需要|不想|不要了)", value):
+        return False
+    value = re.sub(r"[。！!？?，,、~～\s]+$", "", value)
+    return bool(
+        re.fullmatch(
+            r"(?:还有(?:(?:别的|其他|另外)(?:一个|一张)?|一个|一张)?(?:吗|呢|没有)?|"
+            r"再来(?:一个|一张|个|张)?|换(?:一个|一张|个|张)?)",
             value,
             flags=re.IGNORECASE,
         )
