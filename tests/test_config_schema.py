@@ -41,10 +41,15 @@ class ConfigSchemaTests(unittest.TestCase):
 
     def test_model_settings_use_astrbot_provider_selector(self):
         schema = self._schema()
-        for key in ("vision_provider_id", "scene_provider_id"):
+        for key in (
+            "vision_provider_id",
+            "scene_provider_id",
+            "reply_scene_provider_id",
+            "library_index_provider_id",
+        ):
             self.assertEqual(schema[key].get("_special"), "select_provider", key)
 
-    def test_schema_exposes_only_core_settings(self):
+    def test_schema_exposes_all_runtime_settings(self):
         schema = self._schema()
         self.assertEqual(
             set(schema),
@@ -53,13 +58,29 @@ class ConfigSchemaTests(unittest.TestCase):
                 "group_whitelist",
                 "vision_provider_id",
                 "scene_provider_id",
+                "reply_scene_provider_id",
                 "only_capture_memes",
+                "fallback_category",
+                "max_images_per_message",
+                "max_image_size_mb",
+                "max_concurrent",
+                "download_timeout",
+                "health_check_interval",
                 "auto_send_enabled",
+                "auto_send_probability",
+                "auto_send_cooldown",
+                "auto_send_candidate_limit",
+                "library_index_provider_id",
                 "library_index_enabled",
+                "library_index_progress_step",
                 "library_index_batch_size",
+                "library_index_rename_files",
+                "perceptual_dedupe_enabled",
+                "perceptual_duplicate_threshold",
+                "meme_rejection_confidence",
+                "local_image_roots",
             },
         )
-        self.assertNotIn("perceptual_duplicate_threshold", schema)
         self.assertFalse(schema["library_index_enabled"]["default"])
         self.assertEqual(schema["library_index_batch_size"]["type"], "int")
         self.assertEqual(schema["library_index_batch_size"]["default"], 6)

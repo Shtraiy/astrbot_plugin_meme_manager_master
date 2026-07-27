@@ -1,6 +1,6 @@
 # Configuration
 
-The settings page now exposes only the options needed for normal use:
+The settings page exposes the core options below; advanced runtime options are also available:
 
 | Setting | Purpose |
 | --- | --- |
@@ -15,4 +15,4 @@ The settings page now exposes only the options needed for normal use:
 
 Download limits, deduplication thresholds, concurrency, and candidate counts remain supported as advanced runtime keys. Existing configurations continue to work after upgrading.
 
-Advanced keys can still be kept in the plugin configuration file when needed, such as `max_concurrent`, `download_timeout`, and `auto_send_probability`.
+Advanced keys can still be kept in the plugin configuration file when needed, such as `max_concurrent`, `download_timeout`, `auto_send_probability`, and `local_image_roots`.

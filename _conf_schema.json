@@ -1,55 +1,168 @@
 {
   "enabled": {
     "type": "bool",
-    "description": "\u542f\u7528\u8868\u60c5\u5305\u5077\u53d6",
-    "hint": "\u5173\u95ed\u540e\u6682\u505c\u81ea\u52a8\u6536\u96c6\uff1b\u624b\u52a8\u547d\u4ee4\u4ecd\u53ef\u6309\u63d2\u4ef6\u903b\u8f91\u4f7f\u7528\u3002",
+    "description": "启用表情包偷取",
+    "hint": "关闭后暂停自动收集；手动命令仍可按插件逻辑使用。",
     "default": true
   },
   "group_whitelist": {
     "type": "list",
     "items": { "type": "string" },
-    "description": "\u7fa4\u7ec4\u767d\u540d\u5355",
-    "hint": "\u586b\u5199\u7fa4\u53f7\u6216\u5b8c\u6574 UMO\uff1b\u7559\u7a7a\u8868\u793a\u5141\u8bb8\u6240\u6709\u7fa4\u3002",
+    "description": "群组白名单",
+    "hint": "填写群号或完整 UMO；留空表示允许所有群。",
     "default": []
   },
   "vision_provider_id": {
     "type": "string",
-    "description": "\u8bc6\u56fe\u6a21\u578b",
-    "hint": "\u7528\u4e8e\u5224\u65ad\u56fe\u7247\u662f\u5426\u4e3a\u8868\u60c5\u5305\uff0c\u5fc5\u987b\u652f\u6301\u56fe\u7247\u8f93\u5165\uff1b\u7559\u7a7a\u4f7f\u7528\u5f53\u524d\u4f1a\u8bdd\u6a21\u578b\u3002",
+    "description": "识图模型",
+    "hint": "用于判断图片是否为表情包，必须支持图片输入；留空使用当前会话模型。",
     "_special": "select_provider",
     "default": ""
   },
   "scene_provider_id": {
     "type": "string",
-    "description": "\u5206\u7c7b\u6a21\u578b",
-    "hint": "\u7528\u4e8e\u6839\u636e\u804a\u5929\u573a\u666f\u9009\u62e9\u5206\u7c7b\uff1b\u7559\u7a7a\u4f7f\u7528\u5f53\u524d\u4f1a\u8bdd\u6a21\u578b\u3002",
+    "description": "分类模型",
+    "hint": "用于根据聊天场景选择分类；留空使用当前会话模型。",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "reply_scene_provider_id": {
+    "type": "string",
+    "description": "自动回复模型",
+    "hint": "用于判断机器人回复是否需要表情包；留空复用分类模型。",
     "_special": "select_provider",
     "default": ""
   },
   "only_capture_memes": {
     "type": "bool",
-    "description": "\u53ea\u4fdd\u5b58\u8868\u60c5\u5305",
-    "hint": "\u5f00\u542f\u540e\u4f1a\u8df3\u8fc7\u666e\u901a\u7167\u7247\u548c\u975e\u8868\u60c5\u56fe\u7247\uff0c\u63a8\u8350\u4fdd\u6301\u5f00\u542f\u3002",
+    "description": "只保存表情包",
+    "hint": "开启后会跳过普通照片和非表情图片。",
     "default": true
+  },
+  "fallback_category": {
+    "type": "string",
+    "description": "非法分类时的降级目录",
+    "default": "confused"
+  },
+  "max_images_per_message": {
+    "type": "int",
+    "description": "单条消息最多处理图片数",
+    "default": 2,
+    "min": 1,
+    "max": 6
+  },
+  "max_image_size_mb": {
+    "type": "int",
+    "description": "单张图片大小上限 MB",
+    "default": 10,
+    "min": 1,
+    "max": 50
+  },
+  "max_concurrent": {
+    "type": "int",
+    "description": "并发图片处理任务数",
+    "default": 2,
+    "min": 1,
+    "max": 8
+  },
+  "download_timeout": {
+    "type": "float",
+    "description": "远程图片下载超时时间秒",
+    "default": 20,
+    "min": 5,
+    "max": 120
+  },
+  "health_check_interval": {
+    "type": "float",
+    "description": "依赖插件健康检查间隔秒",
+    "default": 300,
+    "min": 10,
+    "max": 600
   },
   "auto_send_enabled": {
     "type": "bool",
-    "description": "\u81ea\u52a8\u53d1\u9001\u8868\u60c5\u5305",
-    "hint": "\u5173\u95ed\u540e\u4e0d\u518d\u6839\u636e\u804a\u5929\u5185\u5bb9\u81ea\u52a8\u53d1\u9001\uff0c\u4f46\u4e0d\u5f71\u54cd\u624b\u52a8\u5077\u53d6\u548c\u53d1\u9001\u3002",
+    "description": "自动发送表情包",
+    "hint": "关闭后不再根据聊天内容自动发送。",
     "default": true
+  },
+  "auto_send_probability": {
+    "type": "float",
+    "description": "自动发送概率百分比",
+    "default": 35,
+    "min": 0,
+    "max": 100
+  },
+  "auto_send_cooldown": {
+    "type": "float",
+    "description": "同一会话自动发送冷却秒数",
+    "default": 30,
+    "min": 0,
+    "max": 3600
+  },
+  "auto_send_candidate_limit": {
+    "type": "int",
+    "description": "自动发送候选分类数量",
+    "default": 8,
+    "min": 2,
+    "max": 16
+  },
+  "library_index_provider_id": {
+    "type": "string",
+    "description": "后台索引模型",
+    "hint": "必须支持图片输入；留空复用识图模型。",
+    "_special": "select_provider",
+    "default": ""
   },
   "library_index_enabled": {
     "type": "bool",
-    "description": "\u540e\u53f0\u6574\u7406\u8868\u60c5\u5e93",
-    "hint": "\u5f00\u542f\u540e\u4f1a\u5b9a\u671f\u626b\u63cf\u65b0\u56fe\u7247\u5e76\u8865\u5145\u63cf\u8ff0\u7d22\u5f15\uff0c\u53ef\u80fd\u4ea7\u751f\u989d\u5916\u6a21\u578b\u8c03\u7528\u3002",
+    "description": "后台整理表情库",
+    "hint": "开启后定期扫描图片并补充描述索引，可能产生额外模型调用。",
     "default": false
+  },
+  "library_index_progress_step": {
+    "type": "int",
+    "description": "后台索引进度日志间隔",
+    "default": 5,
+    "min": 1,
+    "max": 50
   },
   "library_index_batch_size": {
     "type": "int",
-    "description": "\u540e\u53f0\u7d22\u5f15\u6279\u6b21\u6570\u91cf",
-    "hint": "\u6bcf\u6279\u53d1\u9001\u7ed9\u89c6\u89c9\u6a21\u578b\u7684\u56fe\u7247\u6570\u91cf\uff0c\u8303\u56f4 1-12\u3002\u6a21\u578b\u5bb9\u6613\u8f93\u51fa\u975e JSON \u65f6\u5efa\u8bae\u8bbe\u4e3a 1 \u6216 2\u3002",
+    "description": "后台索引批次数量",
+    "hint": "每批发送给视觉模型的图片数量，范围 1-12。",
     "default": 6,
     "min": 1,
     "max": 12
+  },
+  "library_index_rename_files": {
+    "type": "bool",
+    "description": "后台索引时规范化文件名",
+    "hint": "将图片重命名为 category_0001.png 格式。",
+    "default": true
+  },
+  "perceptual_dedupe_enabled": {
+    "type": "bool",
+    "description": "启用相似图片去重",
+    "default": true
+  },
+  "perceptual_duplicate_threshold": {
+    "type": "int",
+    "description": "相似图片去重阈值",
+    "default": 6,
+    "min": 0,
+    "max": 16
+  },
+  "meme_rejection_confidence": {
+    "type": "float",
+    "description": "普通图片拒绝置信度",
+    "default": 0.7,
+    "min": 0,
+    "max": 1
+  },
+  "local_image_roots": {
+    "type": "list",
+    "items": { "type": "string" },
+    "description": "额外允许读取的本地图片目录",
+    "default": []
   }
 }

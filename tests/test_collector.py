@@ -2,15 +2,20 @@ import unittest
 
 from collector import (
     configured_provider_id,
+    complete_batch_indices,
     explicit_meme_request,
     extract_meme_markers,
     extract_image_sources,
     event_identity,
+    is_safe_remote_image_url,
     normalize_category,
     parse_model_json,
+    should_skip_meme_result,
     should_block_agent_tool_after_meme,
     should_block_agent_tool_for_meme_request,
     strip_meme_markers,
+    unique_pending_event_key,
+    vision_failure_result,
     whitelist_allows,
 )
 
@@ -21,6 +26,61 @@ class FakeEvent:
         self.unified_msg_origin = umo
 
 class CollectorTests(unittest.TestCase):
+    def test_malformed_vision_results_are_rejected(self):
+        for result in (
+            {},
+            {"is_meme": "maybe", "confidence": 0.99},
+            {"is_meme": True},
+            {"is_meme": False, "confidence": "nan"},
+            {"is_meme": False, "confidence": 1.1},
+            {"is_meme": False, "confidence": -0.1},
+        ):
+            with self.subTest(result=result):
+                self.assertTrue(should_skip_meme_result(result))
+
+    def test_valid_vision_results_keep_existing_semantics(self):
+        self.assertFalse(should_skip_meme_result({"is_meme": True, "confidence": 0.1}))
+        self.assertTrue(should_skip_meme_result({"is_meme": False, "confidence": 0.7}))
+        self.assertFalse(should_skip_meme_result({"is_meme": False, "confidence": 0.2}))
+        self.assertFalse(should_skip_meme_result({"is_meme": "true", "confidence": 0.9}))
+        self.assertTrue(should_skip_meme_result({"is_meme": "false", "confidence": 0.9}))
+
+    def test_vision_failure_result_is_fail_closed(self):
+        result = vision_failure_result()
+
+        self.assertFalse(result["is_meme"])
+        self.assertEqual(result["confidence"], 1.0)
+        self.assertTrue(result["vision_error"])
+
+    def test_remote_image_url_rejects_private_or_non_http_targets(self):
+        for source in (
+            "http://127.0.0.1/image.png",
+            "http://localhost/image.png",
+            "http://169.254.169.254/latest/meta-data/",
+            "ftp://example.test/image.png",
+            "https://user:password@example.test/image.png",
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(is_safe_remote_image_url(source))
+
+        self.assertTrue(is_safe_remote_image_url("https://example.test/image.png"))
+
+    def test_batch_indices_must_match_requested_images_exactly(self):
+        self.assertTrue(complete_batch_indices({0, 1}, {0, 1}))
+        self.assertFalse(complete_batch_indices({100, 101}, {0, 1}))
+        self.assertFalse(complete_batch_indices({0}, {0, 1}))
+
+    def test_pending_event_fallback_only_accepts_one_same_chat(self):
+        pending = {
+            "event-a": ("umo", "a.png"),
+            "event-b": ("umo", "b.png"),
+        }
+        self.assertIsNone(unique_pending_event_key(pending, "umo"))
+        self.assertEqual(
+            unique_pending_event_key({"event-a": ("umo", "a.png")}, "umo"),
+            "event-a",
+        )
+
     def test_event_identity_uses_message_id(self):
         first = FakeEvent()
         second = FakeEvent()

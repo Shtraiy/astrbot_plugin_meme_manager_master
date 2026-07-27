@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import ast
 import json
+from ipaddress import ip_address
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+from urllib.parse import urlparse
 
 
 CATEGORY_ALIASES = {
@@ -47,6 +50,87 @@ BLOCKED_AGENT_TOOLS_AFTER_MEME = frozenset({
     "astrbot_execute_python",
     "send_message_to_user",
 })
+
+
+def vision_failure_result() -> dict[str, Any]:
+    """Represent an unavailable vision model as a high-confidence rejection."""
+    return {
+        "is_meme": False,
+        "confidence": 1.0,
+        "description": "视觉模型不可用",
+        "vision_error": True,
+    }
+
+
+def should_skip_meme_result(
+    vision: Any,
+    rejection_confidence: float = 0.7,
+) -> bool:
+    """Fail closed when a vision result is missing or semantically invalid."""
+    if not isinstance(vision, Mapping) or vision.get("vision_error"):
+        return True
+
+    raw_is_meme = vision.get("is_meme")
+    if isinstance(raw_is_meme, bool):
+        is_meme = raw_is_meme
+    elif isinstance(raw_is_meme, str):
+        normalized = raw_is_meme.strip().lower()
+        if normalized in {"true", "yes", "1"}:
+            is_meme = True
+        elif normalized in {"false", "no", "0"}:
+            is_meme = False
+        else:
+            return True
+    else:
+        return True
+
+    try:
+        confidence = float(vision.get("confidence"))
+    except (TypeError, ValueError):
+        return True
+    if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        return True
+
+    if is_meme:
+        return False
+    return confidence >= rejection_confidence
+
+
+def is_safe_remote_image_url(value: Any) -> bool:
+    """Allow only credential-free HTTP(S) URLs with public IP literals."""
+    try:
+        parsed = urlparse(str(value or "").strip())
+        hostname = parsed.hostname
+        if parsed.scheme.lower() not in {"http", "https"}:
+            return False
+        if not hostname or parsed.username or parsed.password:
+            return False
+        if hostname.lower() in {"localhost", "localhost.localdomain"}:
+            return False
+        try:
+            return ip_address(hostname).is_global
+        except ValueError:
+            # DNS names are checked again after resolution in main.py.
+            return True
+    except ValueError:
+        return False
+
+
+def complete_batch_indices(actual: Any, expected: Any) -> bool:
+    """Return whether a batch response contains exactly the requested indices."""
+    try:
+        return set(actual) == set(expected)
+    except TypeError:
+        return False
+
+
+def unique_pending_event_key(
+    pending: Mapping[str, tuple[str, Any]],
+    umo: str,
+) -> str | None:
+    """Return a same-chat pending event only when the match is unambiguous."""
+    matches = [key for key, value in pending.items() if value and value[0] == umo]
+    return matches[0] if len(matches) == 1 else None
 
 
 def should_block_agent_tool_after_meme(tool_name: Any) -> bool:

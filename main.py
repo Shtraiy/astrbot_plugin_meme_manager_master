@@ -6,8 +6,11 @@ import asyncio
 import base64
 import binascii
 import hashlib
+from ipaddress import ip_address
 import random
 import re
+import socket
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,16 +24,21 @@ from astrbot.api.event.filter import EventMessageType
 from astrbot.api.star import Context, Star, register
 
 from .collector import (
+    complete_batch_indices,
     configured_provider_id,
     event_identity,
     explicit_meme_request,
     extract_meme_markers,
     extract_image_sources,
     group_id_from_event,
+    is_safe_remote_image_url,
     normalize_category,
     parse_model_json,
     should_block_agent_tool_for_meme_request,
+    should_skip_meme_result,
     strip_meme_markers,
+    unique_pending_event_key,
+    vision_failure_result,
     whitelist_allows,
 )
 from .health import MemeManagerHealth, check_meme_manager_health
@@ -131,7 +139,7 @@ class ImagePayload:
 
 @register(
     "meme_stealer",
-    "YourName",
+    "Shtraiy",
     "自动识别并收集群聊表情包到 meme_manager",
     "1.4.1",
 )
@@ -157,10 +165,12 @@ class MemeStealer(Star):
         self._library_retry_at = 0.0
         self._last_auto_send: dict[str, float] = {}
         self._auto_send_claims: dict[str, float] = {}
+        self._auto_send_umo_claims: dict[str, float] = {}
         self._auto_send_claim_lock = asyncio.Lock()
         self._pending_auto_images: dict[str, tuple[str, Path]] = {}
         self._agent_tool_guards: dict[str, float] = {}
         self._last_stolen_image: dict[str, Path] = {}
+        self._stolen_image_by_event: dict[str, Path] = {}
 
     async def initialize(self) -> None:
         """Check the required plugin before accepting any image."""
@@ -192,17 +202,41 @@ class MemeStealer(Star):
             await self._refresh_health()
         return self._health.ready
 
-    async def _claim_auto_send(self, event: AstrMessageEvent) -> bool:
-        """Allow only one automatic send attempt for one incoming event."""
+    async def _claim_auto_send(
+        self,
+        event: AstrMessageEvent,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """Atomically claim one event and one chat cooldown window."""
         key = event_identity(event)
         async with self._auto_send_claim_lock:
+            now = time.monotonic()
             if key in self._auto_send_claims:
                 logger.debug("[meme_stealer] 跳过同一事件的重复表情包发送 event=%s", key)
                 return False
-            self._auto_send_claims[key] = time.monotonic()
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
+            cooldown = self._float_config("auto_send_cooldown", 30, 0, 3600)
+            if not force and umo and cooldown:
+                last_claim = max(
+                    self._last_auto_send.get(umo, 0.0),
+                    self._auto_send_umo_claims.get(umo, 0.0),
+                )
+                if now - last_claim < cooldown:
+                    logger.debug("[meme_stealer] 跳过同一会话的并发自动发送 umo=%s", umo)
+                    return False
+            self._auto_send_claims[key] = now
+            if umo:
+                self._auto_send_umo_claims[umo] = now
             if len(self._auto_send_claims) > 1024:
                 oldest = min(self._auto_send_claims, key=self._auto_send_claims.get)
                 self._auto_send_claims.pop(oldest, None)
+            if len(self._auto_send_umo_claims) > 1024:
+                oldest_umo = min(
+                    self._auto_send_umo_claims,
+                    key=self._auto_send_umo_claims.get,
+                )
+                self._auto_send_umo_claims.pop(oldest_umo, None)
             return True
 
     def _arm_agent_tool_guard(self, event: AstrMessageEvent) -> None:
@@ -247,7 +281,7 @@ class MemeStealer(Star):
             )
             self._disable_default_llm(event)
             return
-        if not await self._claim_auto_send(event):
+        if not await self._claim_auto_send(event, force=True):
             self._disable_default_llm(event)
             return
 
@@ -307,7 +341,21 @@ class MemeStealer(Star):
                     stat = path.stat()
                 except OSError:
                     continue
-                signature.append((category, path.name, stat.st_mtime_ns, stat.st_size))
+                try:
+                    digest = self.store.image_digest(path)
+                except OSError:
+                    continue
+                signature.append((category, path.name, digest))
+        return tuple(signature)
+
+    def _category_content_signature(self, category: str) -> tuple[tuple[str, str], ...]:
+        """Return content identities used to detect writes during indexing."""
+        signature: list[tuple[str, str]] = []
+        for path in self.store.image_paths(category):
+            try:
+                signature.append((path.name, self.store.image_digest(path)))
+            except OSError:
+                continue
         return tuple(signature)
 
     def _schedule_library_retry(self, provider_id: str) -> None:
@@ -436,12 +484,15 @@ class MemeStealer(Star):
         results: list[str],
     ) -> None:
         """Send the latest captured image through an independent message path."""
+        event_key = event_identity(event)
         if not self._bool_config("proactive_send_after_steal", False):
+            self._stolen_image_by_event.pop(event_key, None)
             return
         if not any(status in {"saved", "duplicate"} for status in results):
+            self._stolen_image_by_event.pop(event_key, None)
             return
         umo = str(getattr(event, "unified_msg_origin", "") or "")
-        image_path = self._last_stolen_image.get(umo)
+        image_path = self._stolen_image_by_event.pop(event_key, None)
         if not umo or image_path is None or not image_path.is_file():
             return
         try:
@@ -525,7 +576,7 @@ class MemeStealer(Star):
         probability = self._float_config("auto_send_probability", 35, 0, 100)
         if not force_send and (probability <= 0 or random.random() * 100 >= probability):
             return
-        if not await self._claim_auto_send(event):
+        if not await self._claim_auto_send(event, force=force_send):
             return
         image_path = await self._choose_outgoing_meme_from_index(
             event,
@@ -620,10 +671,9 @@ class MemeStealer(Star):
         pending = self._pending_auto_images.pop(key, None)
         if pending is None:
             umo = str(getattr(event, "unified_msg_origin", "") or "")
-            for pending_key, candidate in list(self._pending_auto_images.items()):
-                if candidate[0] == umo:
-                    pending = self._pending_auto_images.pop(pending_key)
-                    break
+            pending_key = unique_pending_event_key(self._pending_auto_images, umo)
+            if pending_key is not None:
+                pending = self._pending_auto_images.pop(pending_key)
         if pending is None:
             return
 
@@ -711,15 +761,21 @@ class MemeStealer(Star):
                         index: await self._recognize_image(event, temp_path, message_text)
                         for index, temp_path in image_paths
                     }
-                accepted = {
-                    index: vision
-                    for index, vision in visions.items()
-                    if not self._should_skip(vision)
-                }
+                accepted = {}
+                for index, vision in visions.items():
+                    if vision.get("vision_error"):
+                        statuses[index] = "unavailable"
+                        continue
+                    if not self._should_skip(vision):
+                        accepted[index] = vision
                 for index in visions:
                     if index not in accepted:
-                        statuses[index] = "not_meme"
-                        logger.info("[meme_stealer] 图片未被识别为表情包，跳过保存 index=%s", index)
+                        if statuses[index] == "error":
+                            statuses[index] = "not_meme"
+                            logger.info(
+                                "[meme_stealer] 图片未被识别为表情包，跳过保存 index=%s",
+                                index,
+                            )
                 if not accepted:
                     return statuses
 
@@ -771,29 +827,30 @@ class MemeStealer(Star):
                             payload.extension,
                             self._perceptual_duplicate_threshold(),
                         )
-                    if result.status in {"saved", "duplicate"}:
-                        umo = str(getattr(event, "unified_msg_origin", "") or "")
-                        if umo:
-                            self._last_stolen_image[umo] = result.path
-                    statuses[index] = result.status
-                    if result.status == "saved":
-                        catalog_entry = self._catalog_entry_from_vision(
-                            result.path, category, vision, scene
-                        )
-                        catalog_entry["perceptual_hash"] = self.store.image_perceptual_hash(
-                            result.path
-                        )
-                        self.store.upsert_catalog_entry(
-                            category,
-                            catalog_entry,
-                        )
-                        logger.info(
-                            "[meme_stealer] 已收集表情包 category=%s path=%s",
-                            category,
-                            result.path,
-                        )
-                    else:
-                        logger.debug("[meme_stealer] 跳过重复表情包 path=%s", result.path)
+                        if result.status in {"saved", "duplicate"}:
+                            umo = str(getattr(event, "unified_msg_origin", "") or "")
+                            if umo:
+                                self._last_stolen_image[umo] = result.path
+                            self._stolen_image_by_event[event_identity(event)] = result.path
+                        statuses[index] = result.status
+                        if result.status == "saved":
+                            catalog_entry = self._catalog_entry_from_vision(
+                                result.path, category, vision, scene
+                            )
+                            catalog_entry["perceptual_hash"] = self.store.image_perceptual_hash(
+                                result.path
+                            )
+                            self.store.upsert_catalog_entry(
+                                category,
+                                catalog_entry,
+                            )
+                            logger.info(
+                                "[meme_stealer] 已收集表情包 category=%s path=%s",
+                                category,
+                                result.path,
+                            )
+                        else:
+                            logger.debug("[meme_stealer] 跳过重复表情包 path=%s", result.path)
                 return statuses
             except Exception:
                 logger.error("[meme_stealer] 批量处理群聊图片失败", exc_info=True)
@@ -833,7 +890,8 @@ class MemeStealer(Star):
             match = re.fullmatch(r"image_(\d+)", str(item.get("id", "")))
             if match:
                 result[int(match.group(1))] = item
-        if len(result) != len(images):
+        expected_indices = {index for index, _path in images}
+        if not complete_batch_indices(result, expected_indices):
             raise ValueError("batch vision response is missing image ids")
         return result
 
@@ -871,7 +929,7 @@ class MemeStealer(Star):
             match = re.fullmatch(r"image_(\d+)", str(item.get("id", "")))
             if match:
                 result[int(match.group(1))] = item
-        if len(result) != len(visions):
+        if not complete_batch_indices(result, set(visions)):
             raise ValueError("batch scene response is missing image ids")
         return result
 
@@ -911,8 +969,10 @@ class MemeStealer(Star):
                 )
                 records: list[tuple[Path, dict]] = []
                 pending: list[tuple[Path, str]] = []
+                category_signature: list[tuple[str, str]] = []
                 for path in paths:
                     digest = self.store.image_digest(path)
+                    category_signature.append((path.name, digest))
                     old_entry = by_digest.get(digest)
                     if catalog_is_current and self._catalog_entry_is_current(
                         old_entry, provider_id
@@ -993,19 +1053,28 @@ class MemeStealer(Star):
                             len(batch),
                         )
 
-                mapping = (
-                    self.store.renumber_category(category)
-                    if self._bool_config("library_index_rename_files", True)
-                    else {path: path for path, _metadata in records}
-                )
-                entries = []
-                for old_path, metadata in records:
-                    new_path = mapping.get(old_path, old_path)
-                    entry = dict(metadata)
-                    entry.update({"id": new_path.stem, "filename": new_path.name})
-                    entries.append(entry)
-                if catalog_needs_write(old_catalog, entries, index_metadata):
-                    self.store.write_catalog(category, entries, index_metadata)
+                async with self._save_lock:
+                    if self._category_content_signature(category) != tuple(category_signature):
+                        errors += 1
+                        logger.info(
+                            "[meme_stealer] 索引期间分类发生变化，跳过写入并稍后重试 category=%s",
+                            category,
+                        )
+                        continue
+                    mapping = (
+                        self.store.renumber_category(category)
+                        if self._bool_config("library_index_rename_files", True)
+                        else {path: path for path, _metadata in records}
+                    )
+                    entries = []
+                    for old_path, metadata in records:
+                        new_path = mapping.get(old_path, old_path)
+                        entry = dict(metadata)
+                        entry.update({"id": new_path.stem, "filename": new_path.name})
+                        entries.append(entry)
+                    current_catalog = self.store.load_catalog(category)
+                    if catalog_needs_write(current_catalog, entries, index_metadata):
+                        self.store.write_catalog(category, entries, index_metadata)
             final_signature = self._library_source_signature()
             final_key = (provider_id, final_signature)
             if errors:
@@ -1395,8 +1464,8 @@ class MemeStealer(Star):
             )
             return parse_model_json(response_text)
         except Exception as exc:
-            logger.warning("[meme_stealer] 视觉模型失败，转入降级分类: %s", exc)
-            return {"is_meme": True, "confidence": 0, "description": "视觉模型不可用"}
+            logger.warning("[meme_stealer] 视觉模型失败，拒绝保存图片: %s", exc)
+            return vision_failure_result()
 
     async def _classify_scene(
         self,
@@ -1486,6 +1555,9 @@ class MemeStealer(Star):
         if source.startswith("file://"):
             source = unquote(urlparse(source).path)
         path = Path(source)
+        if not self._is_allowed_local_image_path(path):
+            logger.warning("[meme_stealer] 拒绝读取不在允许目录内的本地图片: %s", source)
+            return None
         if not path.is_file():
             logger.debug("[meme_stealer] 图片来源不存在: %s", source)
             return None
@@ -1498,11 +1570,66 @@ class MemeStealer(Star):
             logger.warning("[meme_stealer] local file is not a valid image: %s", path)
         return payload
 
+    def _is_allowed_local_image_path(self, path: Path) -> bool:
+        """Restrict local image reads to AstrBot data/temp roots or configured roots."""
+        if not path.is_absolute():
+            return False
+        configured = self.config.get("local_image_roots", [])
+        if isinstance(configured, str):
+            configured = re.split(r"[,\n]", configured)
+        elif not isinstance(configured, (list, tuple)):
+            configured = []
+        roots = [self.store.root, Path(tempfile.gettempdir())]
+        try:
+            roots.append(self.store.root.parents[1])
+        except IndexError:
+            pass
+        roots.extend(Path(str(item)) for item in configured or [] if str(item).strip())
+        try:
+            candidate = path.resolve(strict=False)
+            resolved_roots = [root.resolve(strict=False) for root in roots]
+        except OSError:
+            return False
+        return any(candidate == root or root in candidate.parents for root in resolved_roots)
+
+    async def _remote_target_is_public(self, source: str) -> bool:
+        """Resolve a remote image host and reject private, local, or unroutable IPs."""
+        if not is_safe_remote_image_url(source):
+            return False
+        parsed = urlparse(source)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        try:
+            port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+            addresses = await asyncio.to_thread(
+                socket.getaddrinfo,
+                hostname,
+                port,
+                type=socket.SOCK_STREAM,
+            )
+        except (OSError, ValueError):
+            return False
+        resolved = {
+            str(info[4][0]).split("%", 1)[0]
+            for info in addresses
+            if info and len(info) > 4 and info[4]
+        }
+        if not resolved:
+            return False
+        try:
+            return all(ip_address(address).is_global for address in resolved)
+        except ValueError:
+            return False
+
     async def _download_image(self, source: str, limit: int) -> ImagePayload | None:
+        if not await self._remote_target_is_public(source):
+            logger.warning("[meme_stealer] 拒绝访问不安全的远程图片地址: %s", source)
+            return None
         timeout = aiohttp.ClientTimeout(total=self._float_config("download_timeout", 20, 5, 120))
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(source) as response:
+                async with session.get(source, allow_redirects=False) as response:
                     response.raise_for_status()
                     content_length = int(response.headers.get("Content-Length", "0") or 0)
                     if content_length > limit:
@@ -1556,16 +1683,10 @@ class MemeStealer(Star):
     def _should_skip(self, vision: dict) -> bool:
         if not self._bool_config("only_capture_memes", True):
             return False
-        is_meme = vision.get("is_meme")
-        if isinstance(is_meme, str):
-            is_meme = is_meme.strip().lower() not in {"false", "no", "0"}
-        if is_meme is not False:
-            return False
-        try:
-            confidence = float(vision.get("confidence", 1))
-        except (TypeError, ValueError):
-            confidence = 1
-        return confidence >= float(self.config.get("meme_rejection_confidence", 0.7) or 0.7)
+        rejection_confidence = self._float_config(
+            "meme_rejection_confidence", 0.7, 0, 1
+        )
+        return should_skip_meme_result(vision, rejection_confidence)
 
     @staticmethod
     def _event_text(event: AstrMessageEvent) -> str:

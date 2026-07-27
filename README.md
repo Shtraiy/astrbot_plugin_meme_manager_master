@@ -28,6 +28,7 @@
 - `only_capture_memes`：开启后跳过视觉模型判定为普通照片的图片。
 - `fallback_category`：模型不可用或返回非法分类时的降级目录，默认 `confused`。
 - `max_images_per_message`、`max_image_size_mb`、`max_concurrent`：控制资源和模型调用成本。
+- `local_image_roots`：允许读取的额外本地图片目录；默认允许 AstrBot 数据目录和系统临时目录，其他路径会被拒绝。
 - `health_check_interval`：依赖插件健康检查和后台索引检查间隔，默认 300 秒（5 分钟）。
 - `auto_send_enabled`：启用后由本插件统一接管自动表情包发送，默认开启。
 - `proactive_send_after_steal`：偷取成功后通过独立主动消息发送最近保存的表情包，默认关闭；开启后自动监听收图也会发送，请谨慎开启。
