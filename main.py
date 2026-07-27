@@ -301,6 +301,16 @@ class MemeStealer(Star):
                 signature.append((category, path.name, stat.st_mtime_ns, stat.st_size))
         return tuple(signature)
 
+    def _schedule_library_retry(self, provider_id: str) -> None:
+        self._library_retry_key = (
+            provider_id,
+            self._library_source_signature(),
+        )
+        self._library_retry_at = time.monotonic() + max(
+            self._float_config("health_check_interval", 300, 10, 600),
+            60,
+        )
+
     @staticmethod
     def _log_library_task_failure(task: asyncio.Task) -> None:
         try:
@@ -919,16 +929,14 @@ class MemeStealer(Star):
                             None, batch_paths, category, provider_id
                         )
                     except Exception as exc:
-                        batch_results = {}
                         logger.warning(
-                            "[meme_stealer] 自动索引批次失败 category=%s count=%s: %s",
+                            "[meme_stealer] 自动索引批次失败，已停止本轮并进入退避 category=%s count=%s: %s",
                             category,
                             len(batch),
                             exc,
                         )
-                        logger.warning(
-                            "[meme_stealer] will retry this library-index batch after the retry delay"
-                        )
+                        self._schedule_library_retry(provider_id)
+                        return
                     for path, digest in batch:
                         metadata = batch_results.get(path)
                         if metadata is None:
@@ -972,11 +980,7 @@ class MemeStealer(Star):
             final_signature = self._library_source_signature()
             final_key = (provider_id, final_signature)
             if errors:
-                self._library_retry_key = final_key
-                self._library_retry_at = time.monotonic() + max(
-                    self._float_config("health_check_interval", 300, 10, 600),
-                    60,
-                )
+                self._schedule_library_retry(provider_id)
             elif final_signature != run_signature:
                 # A file was added/changed while the scan was running. Keep
                 # the completed key at the start signature so the next health
