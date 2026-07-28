@@ -1,4 +1,4 @@
-"""Health checks for the required AstrBot meme_manager plugin."""
+"""Health checks for the required AstrBot meme_manager_master plugin."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any
 
 
 MEME_MANAGER_NAMES = {
-    "meme_manager",
-    "astrbot_plugin_meme_manager",
+    "meme_manager_master",
+    "astrbot_plugin_meme_manager_master",
 }
 
 
@@ -31,7 +31,7 @@ class MemeManagerHealth:
         location = str(self.data_root) if self.data_root else "未知"
         plugin = self.plugin_name or "未找到"
         return (
-            f"meme_manager: {self.status}\n"
+            f"meme_manager_master: {self.status}\n"
             f"插件: {plugin}\n"
             f"数据目录: {location}\n"
             f"分类数: {self.category_count}\n"
@@ -39,7 +39,7 @@ class MemeManagerHealth:
         )
 
 
-def find_loaded_meme_manager(context: Any) -> tuple[bool, str | None]:
+def find_loaded_meme_manager_master(context: Any) -> tuple[bool, str | None]:
     """Use AstrBot's public Context plugin registry to detect a loaded manager."""
     getter = getattr(context, "get_registered_star", None)
     if callable(getter):
@@ -64,12 +64,12 @@ def find_loaded_meme_manager(context: Any) -> tuple[bool, str | None]:
     return False, None
 
 
-def check_meme_manager_health(context: Any, store: Any) -> MemeManagerHealth:
-    loaded, plugin_name = find_loaded_meme_manager(context)
+def check_meme_manager_master_health(context: Any, store: Any) -> MemeManagerHealth:
+    loaded, plugin_name = find_loaded_meme_manager_master(context)
     if not loaded:
         return MemeManagerHealth(
             status="plugin_missing",
-            reason="未检测到已加载的 meme_manager 插件，暂停保存。",
+            reason="未检测到已加载的 meme_manager_master 插件，暂停保存。",
             data_root=Path(store.root),
         )
 
@@ -79,14 +79,14 @@ def check_meme_manager_health(context: Any, store: Any) -> MemeManagerHealth:
     if not root.is_dir() or not memes_dir.is_dir():
         return MemeManagerHealth(
             status="data_missing",
-            reason="meme_manager 数据目录或 memes 子目录不存在，等待其初始化。",
+            reason="meme_manager_master 数据目录或 memes 子目录不存在，等待其初始化。",
             plugin_name=plugin_name,
             data_root=root,
         )
     if not os.access(root, os.R_OK | os.W_OK) or not os.access(memes_dir, os.R_OK | os.W_OK):
         return MemeManagerHealth(
             status="not_writable",
-            reason="meme_manager 数据目录不可读写，暂停保存。",
+            reason="meme_manager_master 数据目录不可读写，暂停保存。",
             plugin_name=plugin_name,
             data_root=root,
         )

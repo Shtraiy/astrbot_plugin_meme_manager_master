@@ -138,12 +138,12 @@ def configured_provider_id(config: Mapping[str, Any], key: str, fallback_key: st
 
 
 def strip_meme_markers(text: str) -> str:
-    """Remove meme_manager's inline markers before its sender sees them."""
+    """Remove meme_manager_master's inline markers before its sender sees them."""
     return re.sub(r"&&[A-Za-z0-9_-]+&&", "", str(text or "")).strip()
 
 
 def extract_meme_markers(text: str) -> list[str]:
-    """Return unique meme_manager categories in marker order."""
+    """Return unique meme_manager_master categories in marker order."""
     return list(dict.fromkeys(re.findall(r"&&([A-Za-z0-9_-]+)&&", str(text or ""))))
 
 

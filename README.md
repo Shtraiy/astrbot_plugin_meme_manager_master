@@ -1,98 +1,41 @@
-# AstrBot 表情包偷取大师
+# 表情包管理大师
 
-监听群聊中的图片消息，使用两个模型完成：
+这是一个参考 AstrBot 原版 `meme_manager` 重构、但拥有独立运行空间的表情包管理插件，保留了群聊图片自动识别、分类和收集能力，并提供 AstrBot 内置 WebUI。
 
-1. 视觉模型识别图片内容、情绪、图片文字，并判断是否像表情包。
-2. 情景模型结合图片描述、群聊文字和 meme_manager 现有分类选择目录。
+## 主要能力
 
-## 与 meme_manager 联动
+- 在 AstrBot WebUI 的插件页面直接打开“表情包管理大师”。
+- 按分类浏览、上传、删除、移动和批量管理图片。
+- 使用 pack 运行时保存表情包，支持默认包、导入导出和会话/人格选包规则。
+- 参考原版 `meme_manager` 的分类标记、语义候选和精确 ID 选图逻辑。
+- 自动识别群聊图片，使用视觉模型判断是否为表情包，再按场景分类保存。
+- 支持 `/偷取`、`/表情管理` 命令组和 `/表情偷取状态` 状态检查。
 
-插件通过 AstrBot 数据路径 API 定位：
+## WebUI
+
+安装并启用插件后，在 AstrBot WebUI 的“插件”页面打开“表情包管理大师”。页面由插件 `pages/` 目录提供，后端 API 使用 AstrBot 的 `context.register_web_api` 注册，不需要额外端口。
+
+管理页面支持分类浏览、图片上传、图片预览、删除、移动、分类描述编辑和 pack 切换；语义页面沿用参考插件的任务、复审和索引入口。
+
+## 数据结构
+
+运行时数据位于：
 
 ```text
-/AstrBot/data/plugin_data/meme_manager/
-├── memes_data.json
-└── memes/
-    └── <category>/
-        └── stolen_<timestamp>_<sha256>.png
+AstrBot/data/plugin_data/meme_manager_master/
+└── packs/
+    └── <pack_id>/
+        ├── manifest.json
+        ├── memes_data.json
+        └── memes/<category>/
 ```
 
-图片会保存到 `memes/<category>/`，同一图片使用 SHA-256 去重；已有的 `memes_data.json` 分类描述不会被覆盖，新分类只会补充默认描述。安装并启用 `anka-afk/astrbot_plugin_meme_manager` 后，重载 meme_manager 使其刷新目录/提示词。
+本插件只迁移自己的旧版 `meme_manager_master/memes/` 和 `memes_data.json` 到 `legacy-migrated` pack，不会读取或覆盖原版 `meme_manager` 的数据。本插件的自动收集会跟随当前默认 pack，避免与 WebUI 管理目录分离。
+
+本插件的内部 ID 是 `meme_manager_master`，管理命令组是 `/表情管理大师`；原版插件的 `meme_manager` 和 `/表情管理` 可以保留，两者不会共用数据目录或 WebUI API 路由。
 
 ## 配置
 
-- `group_whitelist`：群号或完整 UMO 白名单。留空表示全部群，建议生产环境填写需要收集的群。
-- `vision_provider_id`：从 AstrBot 已配置的模型提供商中选择视觉模型，必须支持图片输入；留空时使用当前会话 Provider。
-- `scene_provider_id`：从 AstrBot 已配置的模型提供商中选择“偷取后分类”的情景模型；留空时使用当前会话 Provider。
-- `reply_scene_provider_id`：从 AstrBot 已配置的模型提供商中选择判断机器人回复和匹配候选图片的多模态模型；留空时复用 `scene_provider_id`。
-- `only_capture_memes`：开启后跳过视觉模型判定为普通照片的图片。
-- `fallback_category`：模型不可用或返回非法分类时的降级目录，默认 `confused`。
-- `max_images_per_message`、`max_image_size_mb`、`max_concurrent`：控制资源和模型调用成本。
-- `local_image_roots`：允许读取的额外本地图片目录；默认允许 AstrBot 数据目录和系统临时目录，其他路径会被拒绝。
-- `health_check_interval`：依赖插件健康检查和后台索引检查间隔，默认 300 秒（5 分钟）。
-- `auto_send_enabled`：启用后由本插件统一接管自动表情包发送，默认开启。
-- `proactive_send_after_steal`：偷取成功后通过独立主动消息发送最近保存的表情包，默认关闭；开启后自动监听收图也会发送，请谨慎开启。
-- `auto_send_probability`：情景模型判定适合发送后，实际发送概率，默认 35%。
-- `auto_send_cooldown`：同一会话自动发送的最短间隔，默认 30 秒。
-- `meme_follow_up_window`：发送表情包后，将“还有吗”“还有别的吗”等短句理解为继续索取表情包的时间窗口，默认 300 秒。
-- `auto_send_candidate_limit`：每次发送前交给多模态模型比较的候选图片数，默认 8。
-- `library_index_provider_id`：从 AstrBot 已配置的模型提供商中选择后台整理已有表情包库使用的多模态模型；为空时复用 `vision_provider_id`。后台任务需要明确的 Provider ID。
-- `library_index_enabled`：meme_manager 正常运行后是否自动补齐本地表情包索引。
-- `library_index_progress_step`：后台索引每处理多少张图片写入一次进度日志。
-- `library_index_batch_size`：后台索引一次提交给多模态模型的图片数量，默认 6；Gemini 建议设置为 4～8。
-- `library_index_rename_files`：是否将图片重命名为 `happy_0001.png` 格式。
+基础配置包括识图模型、分类模型、自动收集开关、群组白名单、去重、后台索引和自动发送概率。语义选图配置位于 `semantic` 与 `generation.emotion` 分组；语义模式不可用时会回退到参考插件的分类标记模式。
 
-## meme_manager 依赖检查
-
-插件启动时、每次收到图片前以及定时任务中都会检查 `meme_manager`：
-
-- 是否出现在 AstrBot 已加载插件注册表中；
-- `data/plugin_data/meme_manager/memes/` 是否存在且可读写；
-- `memes_data.json` 是否能正常解析。
-
-检查失败时不会保存图片，避免产生 meme_manager 无法读取的“孤儿文件”。可发送 `/表情偷取状态` 查看当前状态。meme_manager 被安装、启用或重载后，插件会在下一次检查时自动恢复收集。
-
-## 统一发送逻辑
-
-插件在 AstrBot 的发送前钩子中以高优先级运行：先清理 meme_manager 的 `&&happy&&`、`&&shy&&` 等内联标记阻止其发送；随后由 `reply_scene_provider_id` 指定的情景模型判断 `should_send`。只有需要发送时，才根据模型返回的分类进入对应目录，再把该目录中的候选图片和图片索引交给多模态模型，选出最符合当前回复的一张并发送。
-
-模型入口不是在本插件中填写 API Key 或模型名称。以上 Provider 配置项会直接显示 AstrBot 面板中已经配置好的模型提供商，选择后保存即可；`vision_provider_id`、`reply_scene_provider_id` 和 `library_index_provider_id` 都必须支持图片输入；`scene_provider_id` 在只用于偷取分类时可以是文本模型。
-
-因此 meme_manager 的自动发送设置不会再决定最终是否发图；它仍负责 WebUI、分类管理、云同步和文件维护。本插件只接管自动发送出口。发送模型不可用、没有合适分类或分类目录没有图片时，会保持不发送。
-
-## 手动偷取
-
-将图片和命令放在同一条消息中发送：
-
-```text
-/偷取 [图片]
-```
-
-命令会立即执行视觉识别、重复检查、情景分类和保存；如果没有附带图片，会提示重新发送。手动命令仍遵守群聊和白名单限制。
-
-偷取成功后，可以在同一个群里发送 `/发送表情包` 或 `/发刚才的表情包`，插件会直接发出本次会话最近成功保存的图片。
-
-同一条消息包含多张新图片时，插件会先一次性调用视觉模型批量识别，再一次性调用情景模型批量分类，随后逐张保存结果。单张图片仍使用单图提示词；批量 Provider 不支持多图时会自动回退到逐张调用。
-
-## 自动整理已有表情包库
-
-meme_manager 健康检查通过后，插件会按照现有 `memes/<category>/` 路径后台扫描图片。目录名是权威分类，模型只负责补充图片描述、情绪、文字和标签，不会把图片移动到其他分类目录。每个目录会生成：
-
-```text
-index.json   # 机器读取的图片索引
-README.md    # 人类可读的图片管理表
-```
-
-图片默认会在原目录内重命名为 `shy_0001.png`、`happy_0002.jpg` 等稳定编号。后台会按 `library_index_batch_size` 批量调用多模态模型，并把进度写入 AstrBot 日志；模型按图片 ID、文件名或完整结果顺序返回时都能正确关联。整理失败的图片不会删除，会停止当前索引轮次并在退避后再次尝试，避免同一错误连续调用后续批次。索引内容没有变化时不会重复写入 `index.json` 和 `README.md`。
-
-自动回复表情现在由情景模型判断“是否发送”和“选择分类”，随后直接读取对应分类的 `index.json` 选择图片，不再把目录列表或多张候选图片交给 Agent；`auto_send_probability` 和 `auto_send_cooldown` 会在调用前生效，用于避免不必要的请求。
-
-发送表情后，插件会把刚发送图片的文件名、分类、索引描述、情绪和标签作为下一轮 Agent 请求的临时上下文，并明确要求模型优先指向这张图片，避免把更早历史中的其他表情包误认为“刚才的表情”。该上下文不会永久写入会话历史。
-
-插件同时维护当前事件的 meme_send_receipt 发送凭证。只有插件实际建立了表情包发送链，Agent 才会收到 status=sent；没有凭证时，最终回复中的“已发送表情包”类表述会被拦截并改为未发送提示。
-
-插件支持的默认分类包括 `angry`、`happy`、`sad`、`surprised`、`confused`、`color`、`cpu`、`fool`、`givemoney`、`like`、`see`、`shy`、`work`、`reply`、`meow`、`baka`、`morning`、`sleep`、`sigh`。如果 meme_manager 已有自定义分类，插件会优先读取本地目录和 `memes_data.json`。
-
-## 注意
-
-图片会被上传给配置的视觉/情景模型，请确认群成员已知悉并遵守平台、隐私和内容管理要求。插件不会把图片复制进自身目录，卸载插件不会删除已收集的 meme_manager 数据。
+图片会发送给配置的视觉/情感模型，请确认群成员已知悉并遵守平台、隐私和内容管理要求。

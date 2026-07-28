@@ -1,176 +1,98 @@
 {
-  "enabled": {
-    "type": "bool",
-    "description": "启用表情包偷取",
-    "hint": "关闭后暂停自动收集；手动命令仍可按插件逻辑使用。",
-    "default": true
+  "storage": {
+    "type": "object",
+    "description": "表情包存储与图床",
+    "items": {
+      "provider": {"type": "string", "default": "", "options": ["", "stardots", "cloudflare_r2", "webdav"]},
+      "providers": {"type": "object", "description": "图床服务参数"}
+    }
   },
-  "group_whitelist": {
-    "type": "list",
-    "items": { "type": "string" },
-    "description": "群组白名单",
-    "hint": "填写群号或完整 UMO；留空表示允许所有群。",
-    "default": []
+  "community": {
+    "type": "object",
+    "description": "社区资源安装",
+    "items": {
+      "github_accelerator_url": {"type": "string", "default": "https://ghfast.top/"}
+    }
   },
-  "vision_provider_id": {
-    "type": "string",
-    "description": "识图模型",
-    "hint": "用于判断图片是否为表情包，必须支持图片输入；留空使用当前会话模型。",
-    "_special": "select_provider",
-    "default": ""
+  "semantic": {
+    "type": "object",
+    "description": "语义检索与图包语义化",
+    "items": {
+      "enabled": {"type": "bool", "default": false, "description": "启用语义检索"},
+      "top_k": {"type": "int", "default": 5, "min": 1, "max": 20, "description": "候选数量"},
+      "min_score": {"type": "float", "default": 0.25, "min": 0, "max": 1, "description": "最低相似度"},
+      "vision_provider_id": {"type": "string", "default": "", "_special": "select_provider", "description": "语义视觉模型"},
+      "embedding_provider_id": {"type": "string", "default": "", "_special": "select_provider_embedding", "description": "Embedding 模型"}
+    }
   },
-  "scene_provider_id": {
-    "type": "string",
-    "description": "分类模型",
-    "hint": "用于根据聊天场景选择分类；留空使用当前会话模型。",
-    "_special": "select_provider",
-    "default": ""
+  "generation": {
+    "type": "object",
+    "description": "表情包生成与选取",
+    "items": {
+      "emotion": {
+        "type": "object",
+        "items": {
+          "llm": {
+            "type": "object",
+            "items": {
+              "enabled": {"type": "bool", "default": false, "description": "启用情感辅助选图"},
+              "provider_id": {"type": "string", "default": "", "_special": "select_provider", "description": "情感辅助模型"},
+              "context_turns": {"type": "int", "default": 0, "min": 0, "max": 20},
+              "inject_persona": {"type": "bool", "default": false}
+            }
+          },
+          "max_per_message": {"type": "int", "default": 2, "min": 1, "max": 6},
+          "probability": {"type": "int", "default": 50, "min": 1, "max": 100},
+          "strict_max_per_message": {"type": "bool", "default": true}
+        }
+      },
+      "prompt": {
+        "type": "object",
+        "items": {
+          "head": {"type": "text", "default": ""},
+          "tail_before_limit": {"type": "text", "default": ""},
+          "tail_after_limit": {"type": "text", "default": ""}
+        }
+      },
+      "markup": {
+        "type": "object",
+        "items": {
+          "enable_alternative": {"type": "bool", "default": true},
+          "remove_invalid_alternative": {"type": "bool", "default": true},
+          "enable_repeated_detection": {"type": "bool", "default": true}
+        }
+      },
+      "matching": {
+        "type": "object",
+        "items": {
+          "enable_loose_matching": {"type": "bool", "default": true},
+          "high_confidence_emotions": {"type": "list", "items": {"type": "string"}, "default": []}
+        }
+      }
+    }
   },
-  "reply_scene_provider_id": {
-    "type": "string",
-    "description": "自动回复模型",
-    "hint": "用于判断机器人回复是否需要表情包；留空复用分类模型。",
-    "_special": "select_provider",
-    "default": ""
-  },
-  "only_capture_memes": {
-    "type": "bool",
-    "description": "只保存表情包",
-    "hint": "开启后会跳过普通照片和非表情图片。",
-    "default": true
-  },
-  "fallback_category": {
-    "type": "string",
-    "description": "非法分类时的降级目录",
-    "default": "confused"
-  },
-  "max_images_per_message": {
-    "type": "int",
-    "description": "单条消息最多处理图片数",
-    "default": 2,
-    "min": 1,
-    "max": 6
-  },
-  "max_image_size_mb": {
-    "type": "int",
-    "description": "单张图片大小上限 MB",
-    "default": 10,
-    "min": 1,
-    "max": 50
-  },
-  "max_concurrent": {
-    "type": "int",
-    "description": "并发图片处理任务数",
-    "default": 2,
-    "min": 1,
-    "max": 8
-  },
-  "download_timeout": {
-    "type": "float",
-    "description": "远程图片下载超时时间秒",
-    "default": 20,
-    "min": 5,
-    "max": 120
-  },
-  "health_check_interval": {
-    "type": "float",
-    "description": "依赖插件健康检查间隔秒",
-    "default": 300,
-    "min": 10,
-    "max": 600
-  },
-  "auto_send_enabled": {
-    "type": "bool",
-    "description": "自动发送表情包",
-    "hint": "关闭后不再根据聊天内容自动发送。",
-    "default": true
-  },
-  "auto_send_probability": {
-    "type": "float",
-    "description": "自动发送概率百分比",
-    "default": 35,
-    "min": 0,
-    "max": 100
-  },
-  "auto_send_cooldown": {
-    "type": "float",
-    "description": "同一会话自动发送冷却秒数",
-    "default": 30,
-    "min": 0,
-    "max": 3600
-  },
-  "meme_follow_up_window": {
-    "type": "float",
-    "description": "继续索取表情包的上下文窗口秒数",
-    "hint": "在此时间内发送“还有吗”等短句会被理解为继续要表情包。",
-    "default": 300,
-    "min": 10,
-    "max": 1800
-  },
-  "auto_send_candidate_limit": {
-    "type": "int",
-    "description": "自动发送候选分类数量",
-    "default": 8,
-    "min": 2,
-    "max": 16
-  },
-  "library_index_provider_id": {
-    "type": "string",
-    "description": "后台索引模型",
-    "hint": "必须支持图片输入；留空复用识图模型。",
-    "_special": "select_provider",
-    "default": ""
-  },
-  "library_index_enabled": {
-    "type": "bool",
-    "description": "后台整理表情库",
-    "hint": "开启后定期扫描图片并补充描述索引，可能产生额外模型调用。",
-    "default": false
-  },
-  "library_index_progress_step": {
-    "type": "int",
-    "description": "后台索引进度日志间隔",
-    "default": 5,
-    "min": 1,
-    "max": 50
-  },
-  "library_index_batch_size": {
-    "type": "int",
-    "description": "后台索引批次数量",
-    "hint": "每批发送给视觉模型的图片数量，范围 1-12。",
-    "default": 6,
-    "min": 1,
-    "max": 12
-  },
-  "library_index_rename_files": {
-    "type": "bool",
-    "description": "后台索引时规范化文件名",
-    "hint": "将图片重命名为 category_0001.png 格式。",
-    "default": true
-  },
-  "perceptual_dedupe_enabled": {
-    "type": "bool",
-    "description": "启用相似图片去重",
-    "default": true
-  },
-  "perceptual_duplicate_threshold": {
-    "type": "int",
-    "description": "相似图片去重阈值",
-    "default": 6,
-    "min": 0,
-    "max": 16
-  },
-  "meme_rejection_confidence": {
-    "type": "float",
-    "description": "普通图片拒绝置信度",
-    "default": 0.7,
-    "min": 0,
-    "max": 1
-  },
-  "local_image_roots": {
-    "type": "list",
-    "items": { "type": "string" },
-    "description": "额外允许读取的本地图片目录",
-    "default": []
-  }
+  "enabled": {"type": "bool", "default": true, "description": "启用群聊自动收集"},
+  "group_whitelist": {"type": "list", "items": {"type": "string"}, "default": []},
+  "vision_provider_id": {"type": "string", "default": "", "_special": "select_provider", "description": "收集识图模型"},
+  "scene_provider_id": {"type": "string", "default": "", "_special": "select_provider", "description": "收集分类模型"},
+  "only_capture_memes": {"type": "bool", "default": true},
+  "fallback_category": {"type": "string", "default": "confused"},
+  "max_images_per_message": {"type": "int", "default": 2, "min": 1, "max": 6},
+  "max_image_size_mb": {"type": "int", "default": 10, "min": 1, "max": 50},
+  "max_concurrent": {"type": "int", "default": 2, "min": 1, "max": 8},
+  "download_timeout": {"type": "float", "default": 20, "min": 5, "max": 120},
+  "health_check_interval": {"type": "float", "default": 300, "min": 10, "max": 600},
+  "auto_send_enabled": {"type": "bool", "default": true},
+  "auto_send_probability": {"type": "float", "default": 35, "min": 0, "max": 100},
+  "auto_send_cooldown": {"type": "float", "default": 30, "min": 0, "max": 3600},
+  "meme_follow_up_window": {"type": "float", "default": 300, "min": 10, "max": 1800},
+  "library_index_provider_id": {"type": "string", "default": "", "_special": "select_provider"},
+  "library_index_enabled": {"type": "bool", "default": false},
+  "library_index_batch_size": {"type": "int", "default": 6, "min": 1, "max": 12},
+  "library_index_progress_step": {"type": "int", "default": 5, "min": 1, "max": 50},
+  "library_index_rename_files": {"type": "bool", "default": true},
+  "perceptual_dedupe_enabled": {"type": "bool", "default": true},
+  "perceptual_duplicate_threshold": {"type": "int", "default": 6, "min": 0, "max": 16},
+  "meme_rejection_confidence": {"type": "float", "default": 0.7, "min": 0, "max": 1},
+  "local_image_roots": {"type": "list", "items": {"type": "string"}, "default": []}
 }

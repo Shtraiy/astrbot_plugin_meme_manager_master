@@ -1,4 +1,4 @@
-"""Storage adapter for the meme_manager on-disk data contract."""
+"""Storage adapter for the meme_manager_master on-disk data contract."""
 
 from __future__ import annotations
 
@@ -84,11 +84,31 @@ class MemeStore:
     @classmethod
     def from_astrbot(cls) -> "MemeStore":
         try:
-            from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
+            # The reference manager resolves the active runtime pack during
+            # import.  Use that same directory so captured images, WebUI
+            # operations and automatic selection share one filesystem view.
+            from .config import ACTIVE_PACK_DIR
 
-            root = Path(get_astrbot_plugin_data_path()) / "meme_manager"
+            root = Path(ACTIVE_PACK_DIR)
         except Exception:
-            root = Path(__file__).resolve().parent / "data" / "plugin_data" / "meme_manager"
+            try:
+                from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
+
+                root = (
+                    Path(get_astrbot_plugin_data_path())
+                    / "meme_manager_master"
+                    / "packs"
+                    / "builtin-default"
+                )
+            except Exception:
+                root = (
+                    Path(__file__).resolve().parent
+                    / "data"
+                    / "plugin_data"
+                    / "meme_manager_master"
+                    / "packs"
+                    / "builtin-default"
+                )
         return cls(root)
 
     def available_categories(self) -> set[str]:
@@ -102,7 +122,7 @@ class MemeStore:
         return categories or set(DEFAULT_CATEGORY_DESCRIPTIONS)
 
     def category_descriptions(self) -> dict[str, str]:
-        """Return descriptions used by meme_manager's category prompt."""
+        """Return descriptions used by meme_manager_master's category prompt."""
         metadata = self._load_metadata()
         categories = self.available_categories()
         return {
@@ -179,7 +199,7 @@ class MemeStore:
         )
 
     def pick_image(self, category: str) -> Path | None:
-        """Pick one image from a safe meme_manager category directory."""
+        """Pick one image from a safe meme_manager_master category directory."""
         if not _is_safe_segment(category):
             return None
         category_dir = self.memes_dir / category
@@ -421,7 +441,7 @@ class MemeStore:
         lines = [
             f"# {category} 表情包索引",
             "",
-            "此文件由 astrbot_plugin_meme_stealer 自动生成，请勿手动修改 index.json。",
+            "此文件由 astrbot_plugin_meme_manager_master 自动生成，请勿手动修改 index.json。",
             "",
             "| 编号 | 文件 | 情绪 | 描述 | 标签 |",
             "| --- | --- | --- | --- | --- |",
