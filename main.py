@@ -25,6 +25,7 @@ from astrbot.api.star import Context, Star, register
 
 from .collector import (
     complete_batch_indices,
+    contains_meme_send_claim,
     configured_provider_id,
     event_identity,
     explicit_meme_request,
@@ -141,7 +142,7 @@ class ImagePayload:
     "meme_stealer",
     "Shtraiy",
     "自动识别并收集群聊表情包到 meme_manager",
-    "1.4.2",
+    "1.4.4",
 )
 class MemeStealer(Star):
     def __init__(self, context: Context, config: dict | None = None):
@@ -171,6 +172,7 @@ class MemeStealer(Star):
         self._last_stolen_image: dict[str, Path] = {}
         self._stolen_image_by_event: dict[str, Path] = {}
         self._recent_meme_context: dict[str, tuple[float, Path, dict]] = {}
+        self._meme_send_receipts: dict[str, tuple[float, Path, dict]] = {}
 
     async def initialize(self) -> None:
         """Check the required plugin before accepting any image."""
@@ -225,7 +227,29 @@ class MemeStealer(Star):
             image_details = dict(details or self._image_details(image_path))
         except Exception:
             image_details = {"filename": image_path.name, "category": image_path.parent.name}
-        self._recent_meme_context[umo] = (time.monotonic(), image_path, image_details)
+        sent_at = time.monotonic()
+        self._recent_meme_context[umo] = (sent_at, image_path, image_details)
+        self._meme_send_receipts[event_identity(event)] = (
+            sent_at,
+            image_path,
+            image_details,
+        )
+        if len(self._meme_send_receipts) > 1024:
+            oldest = min(self._meme_send_receipts, key=self._meme_send_receipts.get)
+            self._meme_send_receipts.pop(oldest, None)
+
+    def _send_receipt_for_event(self, event: AstrMessageEvent) -> dict | None:
+        """Return the current event's real meme-send receipt, if one exists."""
+        key = event_identity(event)
+        entry = self._meme_send_receipts.get(key)
+        if entry is None:
+            return None
+        sent_at, _image_path, details = entry
+        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        if time.monotonic() - sent_at > window:
+            self._meme_send_receipts.pop(key, None)
+            return None
+        return dict(details)
 
     def _recent_meme_context_for_event(
         self,
@@ -243,7 +267,7 @@ class MemeStealer(Star):
         return image_path, details
 
     def _append_recent_meme_context(self, event: AstrMessageEvent, req) -> None:
-        """Inject the just-sent meme into the next Agent request.
+        """Inject the send receipt and just-sent meme into the next Agent request.
 
         AstrBot decorates the outgoing message chain immediately before send;
         that chain is not guaranteed to be available in the next provider
@@ -253,8 +277,6 @@ class MemeStealer(Star):
         if getattr(req, "_meme_stealer_context_added", False):
             return
         recent = self._recent_meme_context_for_event(event)
-        if recent is None:
-            return
         extra_parts = getattr(req, "extra_user_content_parts", None)
         if not isinstance(extra_parts, list):
             return
@@ -264,29 +286,53 @@ class MemeStealer(Star):
             logger.debug("[meme_stealer] AstrBot TextPart unavailable; skip meme context bridge")
             return
 
-        image_path, details = recent
-        context_text = (
-            "<recent_sent_meme>\n"
-            "本插件刚刚在上一轮向当前会话发送了下面这张表情包。若用户提到“刚才的表情”、"
-            "“这个表情”或“这张图”，必须优先指向它，不要引用更早历史中的其他图片。\n"
-            f"文件：{image_path.name}\n"
-            f"分类：{details.get('category', image_path.parent.name)}\n"
-            f"画面描述：{details.get('description', '') or '暂无描述'}\n"
-            f"情绪：{details.get('emotion', '') or '未知'}\n"
-            f"图片文字：{details.get('text', '') or '无'}\n"
-            f"标签：{', '.join(map(str, details.get('tags', []) or [])) or '无'}\n"
-            "</recent_sent_meme>"
-        )
-        part = TextPart(text=context_text)
-        mark_as_temp = getattr(part, "mark_as_temp", None)
-        if callable(mark_as_temp):
-            part = mark_as_temp()
-        extra_parts.append(part)
+        receipt = self._send_receipt_for_event(event)
+        if receipt is None:
+            receipt_text = (
+                '<meme_send_receipt status="not_sent">\n'
+                "当前事件没有插件生成的表情包发送凭证。禁止在回复中声称本轮已经发送了表情包；"
+                "只有收到 status=sent 的凭证时才可以这样表述。\n"
+                "</meme_send_receipt>"
+            )
+        else:
+            receipt_text = (
+                '<meme_send_receipt status="sent">\n'
+                "当前事件存在插件生成的表情包发送凭证，可以据此确认本轮确实发送了表情包。\n"
+                f"文件：{receipt.get('filename', '')}\n"
+                "</meme_send_receipt>"
+            )
+
+        def append_temp_text(text: str) -> None:
+            part = TextPart(text=text)
+            mark_as_temp = getattr(part, "mark_as_temp", None)
+            if callable(mark_as_temp):
+                part = mark_as_temp()
+            extra_parts.append(part)
+
+        append_temp_text(receipt_text)
+        if recent is not None:
+            image_path, details = recent
+            context_text = (
+                "<recent_sent_meme>\n"
+                "本插件刚刚在上一轮向当前会话发送了下面这张表情包。若用户提到“刚才的表情”、"
+                "“这个表情”或“这张图”，必须优先指向它，不要引用更早历史中的其他图片。\n"
+                f"文件：{image_path.name}\n"
+                f"分类：{details.get('category', image_path.parent.name)}\n"
+                f"画面描述：{details.get('description', '') or '暂无描述'}\n"
+                f"情绪：{details.get('emotion', '') or '未知'}\n"
+                f"图片文字：{details.get('text', '') or '无'}\n"
+                f"标签：{', '.join(map(str, details.get('tags', []) or [])) or '无'}\n"
+                "</recent_sent_meme>"
+            )
+            append_temp_text(context_text)
         try:
             setattr(req, "_meme_stealer_context_added", True)
         except Exception:
             pass
-        logger.debug("[meme_stealer] injected recent sent meme context file=%s", image_path)
+        logger.debug(
+            "[meme_stealer] injected meme receipt/context recent=%s",
+            recent is not None,
+        )
 
     async def _claim_auto_send(
         self,
@@ -344,6 +390,28 @@ class MemeStealer(Star):
 
     def _clear_agent_tool_guard(self, event: AstrMessageEvent) -> None:
         self._agent_tool_guards.pop(event_identity(event), None)
+
+    def _rewrite_unverified_meme_claim(
+        self,
+        event: AstrMessageEvent,
+        chain: list,
+    ) -> None:
+        """Prevent a generated reply from claiming a meme was sent without a receipt."""
+        if self._send_receipt_for_event(event) is not None:
+            return
+        changed = False
+        for component in chain:
+            if not hasattr(component, "text"):
+                continue
+            text = str(getattr(component, "text", "") or "")
+            if not contains_meme_send_claim(text):
+                continue
+            component.text = "我还没有成功发送表情包。"
+            changed = True
+        if changed:
+            logger.warning(
+                "[meme_stealer] blocked unverified meme-send claim because no send receipt exists"
+            )
 
     @staticmethod
     def _disable_default_llm(event: AstrMessageEvent) -> None:
@@ -667,6 +735,7 @@ class MemeStealer(Star):
             or self._is_control_command(event)
             or not await self._manager_ready()
         ):
+            self._rewrite_unverified_meme_claim(event, chain)
             return
 
         umo = str(getattr(event, "unified_msg_origin", "") or "")
@@ -676,12 +745,15 @@ class MemeStealer(Star):
             and not force_send
             and time.monotonic() - self._last_auto_send.get(umo, 0) < cooldown
         ):
+            self._rewrite_unverified_meme_claim(event, chain)
             return
 
         probability = self._float_config("auto_send_probability", 35, 0, 100)
         if not force_send and (probability <= 0 or random.random() * 100 >= probability):
+            self._rewrite_unverified_meme_claim(event, chain)
             return
         if not await self._claim_auto_send(event, force=force_send):
+            self._rewrite_unverified_meme_claim(event, chain)
             return
         image_path = await self._choose_outgoing_meme_from_index(
             event,
@@ -690,6 +762,7 @@ class MemeStealer(Star):
             preferred_categories=marked_categories,
         )
         if image_path is None:
+            self._rewrite_unverified_meme_claim(event, chain)
             logger.debug("[meme_stealer] 情景模型未选择可发送表情包")
             return
         details = self._image_details(image_path)

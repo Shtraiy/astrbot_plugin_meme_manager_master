@@ -89,6 +89,8 @@ README.md    # 人类可读的图片管理表
 
 发送表情后，插件会把刚发送图片的文件名、分类、索引描述、情绪和标签作为下一轮 Agent 请求的临时上下文，并明确要求模型优先指向这张图片，避免把更早历史中的其他表情包误认为“刚才的表情”。该上下文不会永久写入会话历史。
 
+插件同时维护当前事件的 meme_send_receipt 发送凭证。只有插件实际建立了表情包发送链，Agent 才会收到 status=sent；没有凭证时，最终回复中的“已发送表情包”类表述会被拦截并改为未发送提示。
+
 插件支持的默认分类包括 `angry`、`happy`、`sad`、`surprised`、`confused`、`color`、`cpu`、`fool`、`givemoney`、`like`、`see`、`shy`、`work`、`reply`、`meow`、`baka`、`morning`、`sleep`、`sigh`。如果 meme_manager 已有自定义分类，插件会优先读取本地目录和 `memes_data.json`。
 
 ## 注意

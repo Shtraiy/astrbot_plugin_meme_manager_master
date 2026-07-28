@@ -188,21 +188,69 @@ def explicit_meme_request(text: str) -> bool:
             value,
             flags=re.IGNORECASE,
         )
+        or re.search(
+            r"(?:再\s*)?(?:发|发送|来|换)\s*(?:一个|一张|个|张)?\s*"
+            r"[\u4e00-\u9fffA-Za-z0-9 _-]{0,24}"
+            r"(?:表情包|表情|图片|图|meme|猫猫|猫咪)",
+            value,
+            flags=re.IGNORECASE,
+        )
     )
 
 
 def is_meme_follow_up_request(text: str, *, recent_meme: bool) -> bool:
-    """Recognize short requests for another meme only with recent meme context."""
+    """Recognize another-meme requests with an optional description.
+
+    Users commonly say things such as ``再发一个可爱猫猫`` instead of the
+    short ``再来一个``.  This check runs only when a meme was recently sent,
+    and rejects common non-meme targets so ordinary follow-up requests do not
+    enter the image-sending path.
+    """
     if not recent_meme:
         return False
     value = str(text or "").strip()
     if not value or re.search(r"^(?:不要|别|不用|无需|不需要|不想|不要了)", value):
         return False
     value = re.sub(r"[。！!？?，,、~～\s]+$", "", value)
+    if re.search(r"(?:文件|文档|链接|代码|答案|消息|文字|视频|音频|模型)", value):
+        return False
     return bool(
         re.fullmatch(
-            r"(?:还有(?:(?:别的|其他|另外)(?:一个|一张)?|一个|一张)?(?:吗|呢|没有)?|"
-            r"再来(?:一个|一张|个|张)?|换(?:一个|一张|个|张)?)",
+            r"(?:还有(?:(?:别的|其他|另外)?(?:一个|一张|个|张)?"
+            r"[\u4e00-\u9fffA-Za-z0-9 _-]{0,24}(?:吗|呢|没有)?)?|"
+            r"(?:再发|再来|换)(?:一个|一张|个|张)?"
+            r"[\u4e00-\u9fffA-Za-z0-9 _-]{0,24})",
+            value,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def contains_meme_send_claim(text: str) -> bool:
+    """Detect a completed claim that a meme/image was sent.
+
+    This deliberately does not match future or conditional wording such as
+    ``我可以发一个表情包吗``.  It is used as a receipt guard for generated
+    replies, not as a general meme request detector.
+    """
+    value = str(text or "").strip()
+    if not value:
+        return False
+    meme = r"(?:表情包|表情|图片|猫猫|猫咪|这张图|这张图片)"
+    return bool(
+        re.search(
+            rf"{meme}.{{0,16}}(?:发|发送|送)(?:给你|给我|了|啦|出去|好了)",
+            value,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            rf"(?:发|发送|送)(?:了|啦|给你|给我|出去|好了).{{0,16}}{meme}",
+            value,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            rf"(?:已经|已|刚刚|刚才|这就).{{0,4}}(?:发|发送|送|发出|送出)"
+            rf".{{0,16}}{meme}",
             value,
             flags=re.IGNORECASE,
         )
