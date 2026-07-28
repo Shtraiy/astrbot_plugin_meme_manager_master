@@ -141,7 +141,7 @@ class ImagePayload:
     "meme_stealer",
     "Shtraiy",
     "自动识别并收集群聊表情包到 meme_manager",
-    "1.4.1",
+    "1.4.2",
 )
 class MemeStealer(Star):
     def __init__(self, context: Context, config: dict | None = None):
@@ -170,6 +170,7 @@ class MemeStealer(Star):
         self._agent_tool_guards: dict[str, float] = {}
         self._last_stolen_image: dict[str, Path] = {}
         self._stolen_image_by_event: dict[str, Path] = {}
+        self._recent_meme_context: dict[str, tuple[float, Path, dict]] = {}
 
     async def initialize(self) -> None:
         """Check the required plugin before accepting any image."""
@@ -209,6 +210,83 @@ class MemeStealer(Star):
             return False
         window = self._float_config("meme_follow_up_window", 300, 10, 1800)
         return time.monotonic() - sent_at <= window
+
+    def _remember_sent_meme(
+        self,
+        event: AstrMessageEvent,
+        image_path: Path,
+        details: dict | None = None,
+    ) -> None:
+        """Keep a short-lived semantic bridge for the next Agent turn."""
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        if not umo or not image_path.is_file():
+            return
+        try:
+            image_details = dict(details or self._image_details(image_path))
+        except Exception:
+            image_details = {"filename": image_path.name, "category": image_path.parent.name}
+        self._recent_meme_context[umo] = (time.monotonic(), image_path, image_details)
+
+    def _recent_meme_context_for_event(
+        self,
+        event: AstrMessageEvent,
+    ) -> tuple[Path, dict] | None:
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        entry = self._recent_meme_context.get(umo)
+        if not umo or entry is None:
+            return None
+        sent_at, image_path, details = entry
+        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        if time.monotonic() - sent_at > window or not image_path.is_file():
+            self._recent_meme_context.pop(umo, None)
+            return None
+        return image_path, details
+
+    def _append_recent_meme_context(self, event: AstrMessageEvent, req) -> None:
+        """Inject the just-sent meme into the next Agent request.
+
+        AstrBot decorates the outgoing message chain immediately before send;
+        that chain is not guaranteed to be available in the next provider
+        request.  A temporary user content part makes the association explicit
+        without permanently polluting conversation history.
+        """
+        if getattr(req, "_meme_stealer_context_added", False):
+            return
+        recent = self._recent_meme_context_for_event(event)
+        if recent is None:
+            return
+        extra_parts = getattr(req, "extra_user_content_parts", None)
+        if not isinstance(extra_parts, list):
+            return
+        try:
+            from astrbot.core.agent.message import TextPart
+        except ImportError:
+            logger.debug("[meme_stealer] AstrBot TextPart unavailable; skip meme context bridge")
+            return
+
+        image_path, details = recent
+        context_text = (
+            "<recent_sent_meme>\n"
+            "本插件刚刚在上一轮向当前会话发送了下面这张表情包。若用户提到“刚才的表情”、"
+            "“这个表情”或“这张图”，必须优先指向它，不要引用更早历史中的其他图片。\n"
+            f"文件：{image_path.name}\n"
+            f"分类：{details.get('category', image_path.parent.name)}\n"
+            f"画面描述：{details.get('description', '') or '暂无描述'}\n"
+            f"情绪：{details.get('emotion', '') or '未知'}\n"
+            f"图片文字：{details.get('text', '') or '无'}\n"
+            f"标签：{', '.join(map(str, details.get('tags', []) or [])) or '无'}\n"
+            "</recent_sent_meme>"
+        )
+        part = TextPart(text=context_text)
+        mark_as_temp = getattr(part, "mark_as_temp", None)
+        if callable(mark_as_temp):
+            part = mark_as_temp()
+        extra_parts.append(part)
+        try:
+            setattr(req, "_meme_stealer_context_added", True)
+        except Exception:
+            pass
+        logger.debug("[meme_stealer] injected recent sent meme context file=%s", image_path)
 
     async def _claim_auto_send(
         self,
@@ -318,6 +396,7 @@ class MemeStealer(Star):
         )
         if umo:
             self._last_auto_send[umo] = time.monotonic()
+        self._remember_sent_meme(event, image_path)
         self._disable_default_llm(event)
         logger.info(
             "[meme_stealer] explicit meme request handled before default Agent file=%s",
@@ -518,6 +597,7 @@ class MemeStealer(Star):
         try:
             message_chain = MessageChain().file_image(str(image_path))
             await self.context.send_message(umo, message_chain)
+            self._remember_sent_meme(event, image_path)
             logger.info("[meme_stealer] 偷取后主动发送表情包 path=%s", image_path)
         except Exception as exc:
             logger.warning("[meme_stealer] 偷取后主动发送失败: %s", exc, exc_info=True)
@@ -543,6 +623,7 @@ class MemeStealer(Star):
             return
 
         event.stop_event()
+        self._remember_sent_meme(event, image_path)
         yield event.chain_result([Comp.Image.fromFileSystem(str(image_path))])
 
     @filter.command("表情偷取状态")
@@ -623,6 +704,7 @@ class MemeStealer(Star):
         result.chain = list(chain) + [Comp.Image.fromFileSystem(str(image_path))]
         if umo:
             self._last_auto_send[umo] = time.monotonic()
+        self._remember_sent_meme(event, image_path, details)
         self._arm_agent_tool_guard(event)
         logger.info(
             "[meme_stealer] 已锁定表情包，等待正文发送完成 source=%s category=%s file=%s "
@@ -639,7 +721,8 @@ class MemeStealer(Star):
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req) -> None:
-        """Remove the Python image tool before the LLM can call it."""
+        """Inject recent meme context and remove image-producing Agent tools."""
+        self._append_recent_meme_context(event, req)
         if not should_block_agent_tool_for_meme_request(
             "astrbot_execute_python",
             self._event_text(event),
@@ -1392,6 +1475,7 @@ class MemeStealer(Star):
             "filename": path.name,
             "description": str(entry.get("description", "") or "")[:120],
             "emotion": str(entry.get("emotion", "") or "")[:40],
+            "text": str(entry.get("text", "") or "")[:120],
             "tags": [str(tag)[:30] for tag in tags[:5]],
         }
 

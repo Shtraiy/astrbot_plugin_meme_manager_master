@@ -87,6 +87,8 @@ README.md    # 人类可读的图片管理表
 
 自动回复表情现在由情景模型判断“是否发送”和“选择分类”，随后直接读取对应分类的 `index.json` 选择图片，不再把目录列表或多张候选图片交给 Agent；`auto_send_probability` 和 `auto_send_cooldown` 会在调用前生效，用于避免不必要的请求。
 
+发送表情后，插件会把刚发送图片的文件名、分类、索引描述、情绪和标签作为下一轮 Agent 请求的临时上下文，并明确要求模型优先指向这张图片，避免把更早历史中的其他表情包误认为“刚才的表情”。该上下文不会永久写入会话历史。
+
 插件支持的默认分类包括 `angry`、`happy`、`sad`、`surprised`、`confused`、`color`、`cpu`、`fool`、`givemoney`、`like`、`see`、`shy`、`work`、`reply`、`meow`、`baka`、`morning`、`sleep`、`sigh`。如果 meme_manager 已有自定义分类，插件会优先读取本地目录和 `memes_data.json`。
 
 ## 注意
