@@ -1,18 +1,20 @@
-# Configuration
+# 配置说明
 
-The settings page exposes the core options below; advanced runtime options are also available:
+插件设置页只保留表情包偷取和自动选图所需的选项：
 
-| Setting | Purpose |
+| 配置项 | 作用 |
 | --- | --- |
-| `enabled` | Enable or pause automatic collection |
-| `group_whitelist` | Restrict collection to selected groups |
-| `vision_provider_id` | Model used to recognize incoming images |
-| `scene_provider_id` | Model used to choose a meme category |
-| `only_capture_memes` | Skip ordinary photos and non-meme images |
-| `auto_send_enabled` | Allow automatic meme replies |
-| `library_index_enabled` | Allow background library indexing (off by default) |
-| `library_index_batch_size` | Number of images sent to the vision model per indexing batch; range 1-12, default 6 |
+| `enabled` | 启用或暂停群聊自动偷取 |
+| `group_whitelist` | 限制允许偷取的群聊，留空表示全部群聊 |
+| `vision_provider_id` | 判断收到的图片是否为表情包 |
+| `scene_provider_id` | 偷取分类，以及自动回复时的情景识别 |
+| `only_capture_memes` | 跳过普通照片和非表情图片 |
+| `max_images_per_message` | 单条消息最多处理的图片数 |
+| `auto_send_enabled` | 允许根据对话情景自动发送表情包 |
+| `auto_send_probability` | 普通对话的自动发送概率 |
+| `auto_send_cooldown` | 自动发送之间的冷却时间 |
+| `library_index_enabled` | 后台为缺少描述的图片补充索引，默认关闭 |
 
-Download limits, deduplication thresholds, concurrency, and candidate counts remain supported as advanced runtime keys. Existing configurations continue to work after upgrading.
+参考插件迁移来的高级配置仍可被运行时兼容读取，但不再显示在设置页；这包括并发数、下载限制、旧版标记解析、语义索引和旧版提示词等。图床同步相关配置和代码已移除。
 
-Advanced keys can still be kept in the plugin configuration file when needed, such as `max_concurrent`, `download_timeout`, `auto_send_probability`, and `local_image_roots`.
+迁移表情包时，分类目录中的 `index.json` 和 `README.md` 会一并复制。若此前已经生成过空的目标索引，插件启动时会自动用原目录中的非空索引修复，不需要删除迁移标记。

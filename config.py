@@ -96,16 +96,58 @@ def _plugin_data_dir_has_content(plugin_data_dir: Path) -> bool:
 
 
 def _copy_directory_contents(source_dir: Path, target_dir: Path) -> None:
-    """合并复制目录内容，不覆盖已存在的文件。"""
+    """合并复制目录内容，不覆盖有效数据。
+
+    迁移前的初始化可能已经创建了空的 index.json/README.md。普通的
+    ``exists()`` 判断会把这些空文件当成有效文件，导致原索引永远不会被
+    复制过来，所以目录复制对索引文件做一次“空索引可修复”处理。
+    """
     target_dir.mkdir(parents=True, exist_ok=True)
     for item in source_dir.iterdir():
         target_path = target_dir / item.name
         if item.is_dir():
             _copy_directory_contents(item, target_path)
             continue
-        if not target_path.exists():
+        should_copy = not target_path.exists()
+        if item.name == "index.json" and target_path.is_file():
+            should_copy = (
+                _catalog_item_count(item) > 0
+                and _catalog_item_count(target_path) == 0
+            )
+        elif item.name == "README.md" and target_path.is_file():
+            should_copy = item.stat().st_size > 0 and target_path.stat().st_size == 0
+        if should_copy:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target_path)
+
+
+def _catalog_item_count(path: Path) -> int:
+    """Return the number of entries in a legacy or current catalog file."""
+    data = _load_json_file(path, None)
+    if isinstance(data, list):
+        return len(data)
+    if not isinstance(data, dict):
+        return 0
+
+    for key in ("items", "images", "entries", "memes", "data"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return len(value)
+        if isinstance(value, dict):
+            return len(value)
+    return 0
+
+
+def _repair_catalogs_from_source(source_root: Path, target_root: Path) -> None:
+    """Repair catalogs after an earlier migration created empty target files."""
+    if not source_root.is_dir():
+        return
+    for source_index in source_root.rglob("index.json"):
+        relative_category = source_index.parent.relative_to(source_root)
+        _copy_directory_contents(
+            source_index.parent,
+            target_root / relative_category,
+        )
 
 
 def _is_safe_runtime_pack_id(value: str) -> bool:
@@ -218,6 +260,25 @@ def migrate_original_manager_data_if_needed(plugin_data_dir: Path) -> None:
             )
         )
     ):
+        # The first migration may have created empty target indexes before
+        # copying the source pack. Repair those files even when the marker
+        # says the migration has already completed, so users do not need to
+        # delete their marker or manually repeat the migration.
+        if source_pack_ids:
+            for pack_id in source_pack_ids:
+                _repair_catalogs_from_source(
+                    source_packs_dir / pack_id,
+                    plugin_data_dir / "packs" / pack_id,
+                )
+        elif has_legacy_data:
+            legacy_target = plugin_data_dir / "packs" / LEGACY_MIGRATED_PACK_ID / "memes"
+            if source_legacy_memes.is_dir():
+                _repair_catalogs_from_source(source_legacy_memes, legacy_target)
+            for source_category_dir in source_category_dirs:
+                _repair_catalogs_from_source(
+                    source_category_dir,
+                    legacy_target / source_category_dir.name,
+                )
         return
 
     imported_pack_ids: list[str] = []

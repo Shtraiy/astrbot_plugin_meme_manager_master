@@ -1,90 +1,71 @@
 {
-  "community": {
-    "type": "object",
-    "description": "社区资源安装",
-    "items": {
-      "github_accelerator_url": {"type": "string", "default": "https://ghfast.top/"}
-    }
+  "enabled": {
+    "type": "bool",
+    "description": "启用表情包偷取",
+    "hint": "关闭后暂停自动收集；手动命令仍可按插件逻辑使用。",
+    "default": true
   },
-  "semantic": {
-    "type": "object",
-    "description": "语义检索与图包语义化",
-    "items": {
-      "enabled": {"type": "bool", "default": false, "description": "启用语义检索"},
-      "top_k": {"type": "int", "default": 5, "min": 1, "max": 20, "description": "候选数量"},
-      "min_score": {"type": "float", "default": 0.25, "min": 0, "max": 1, "description": "最低相似度"},
-      "vision_provider_id": {"type": "string", "default": "", "_special": "select_provider", "description": "语义视觉模型"},
-      "embedding_provider_id": {"type": "string", "default": "", "_special": "select_provider_embedding", "description": "Embedding 模型"}
-    }
+  "group_whitelist": {
+    "type": "list",
+    "items": { "type": "string" },
+    "description": "群聊白名单",
+    "hint": "填写群号或完整 UMO；留空表示允许所有群。",
+    "default": []
   },
-  "generation": {
-    "type": "object",
-    "description": "表情包生成与选取",
-    "items": {
-      "emotion": {
-        "type": "object",
-        "items": {
-          "llm": {
-            "type": "object",
-            "items": {
-              "enabled": {"type": "bool", "default": false, "description": "启用情感辅助选图"},
-              "provider_id": {"type": "string", "default": "", "_special": "select_provider", "description": "情感辅助模型"},
-              "context_turns": {"type": "int", "default": 0, "min": 0, "max": 20},
-              "inject_persona": {"type": "bool", "default": false}
-            }
-          },
-          "max_per_message": {"type": "int", "default": 2, "min": 1, "max": 6},
-          "probability": {"type": "int", "default": 50, "min": 1, "max": 100},
-          "strict_max_per_message": {"type": "bool", "default": true}
-        }
-      },
-      "prompt": {
-        "type": "object",
-        "items": {
-          "head": {"type": "text", "default": ""},
-          "tail_before_limit": {"type": "text", "default": ""},
-          "tail_after_limit": {"type": "text", "default": ""}
-        }
-      },
-      "markup": {
-        "type": "object",
-        "items": {
-          "enable_alternative": {"type": "bool", "default": true},
-          "remove_invalid_alternative": {"type": "bool", "default": true},
-          "enable_repeated_detection": {"type": "bool", "default": true}
-        }
-      },
-      "matching": {
-        "type": "object",
-        "items": {
-          "enable_loose_matching": {"type": "bool", "default": true},
-          "high_confidence_emotions": {"type": "list", "items": {"type": "string"}, "default": []}
-        }
-      }
-    }
+  "vision_provider_id": {
+    "type": "string",
+    "description": "识图模型",
+    "hint": "用于判断图片是否为表情包，必须支持图片输入；留空使用当前会话模型。",
+    "_special": "select_provider",
+    "default": ""
   },
-  "enabled": {"type": "bool", "default": true, "description": "启用群聊自动收集"},
-  "group_whitelist": {"type": "list", "items": {"type": "string"}, "default": []},
-  "vision_provider_id": {"type": "string", "default": "", "_special": "select_provider", "description": "收集识图模型"},
-  "scene_provider_id": {"type": "string", "default": "", "_special": "select_provider", "description": "收集分类模型"},
-  "only_capture_memes": {"type": "bool", "default": true},
-  "fallback_category": {"type": "string", "default": "confused"},
-  "max_images_per_message": {"type": "int", "default": 2, "min": 1, "max": 6},
-  "max_image_size_mb": {"type": "int", "default": 10, "min": 1, "max": 50},
-  "max_concurrent": {"type": "int", "default": 2, "min": 1, "max": 8},
-  "download_timeout": {"type": "float", "default": 20, "min": 5, "max": 120},
-  "health_check_interval": {"type": "float", "default": 300, "min": 10, "max": 600},
-  "auto_send_enabled": {"type": "bool", "default": true},
-  "auto_send_probability": {"type": "float", "default": 35, "min": 0, "max": 100},
-  "auto_send_cooldown": {"type": "float", "default": 30, "min": 0, "max": 3600},
-  "meme_follow_up_window": {"type": "float", "default": 300, "min": 10, "max": 1800},
-  "library_index_provider_id": {"type": "string", "default": "", "_special": "select_provider"},
-  "library_index_enabled": {"type": "bool", "default": false},
-  "library_index_batch_size": {"type": "int", "default": 6, "min": 1, "max": 12},
-  "library_index_progress_step": {"type": "int", "default": 5, "min": 1, "max": 50},
-  "library_index_rename_files": {"type": "bool", "default": true},
-  "perceptual_dedupe_enabled": {"type": "bool", "default": true},
-  "perceptual_duplicate_threshold": {"type": "int", "default": 6, "min": 0, "max": 16},
-  "meme_rejection_confidence": {"type": "float", "default": 0.7, "min": 0, "max": 1},
-  "local_image_roots": {"type": "list", "items": {"type": "string"}, "default": []}
+  "scene_provider_id": {
+    "type": "string",
+    "description": "情景识别模型",
+    "hint": "用于偷取分类和自动发送选图；留空使用当前会话模型。",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "only_capture_memes": {
+    "type": "bool",
+    "description": "只保存表情包",
+    "hint": "开启后跳过普通照片和非表情图片，推荐保持开启。",
+    "default": true
+  },
+  "max_images_per_message": {
+    "type": "int",
+    "description": "单条消息最多偷取图片数",
+    "hint": "限制一次处理的图片数量，避免群聊中一次性触发过多模型请求。",
+    "default": 2,
+    "min": 1,
+    "max": 6
+  },
+  "auto_send_enabled": {
+    "type": "bool",
+    "description": "根据情景自动发送",
+    "hint": "开启后会根据用户消息和机器人回复判断是否发送合适的表情包。",
+    "default": true
+  },
+  "auto_send_probability": {
+    "type": "float",
+    "description": "自动发送概率",
+    "hint": "普通对话中的自动发送概率；明确要求表情包时会强制尝试发送。",
+    "default": 35,
+    "min": 0,
+    "max": 100
+  },
+  "auto_send_cooldown": {
+    "type": "float",
+    "description": "自动发送冷却时间（秒）",
+    "hint": "防止连续对话中短时间重复发送，0 表示不限制。",
+    "default": 30,
+    "min": 0,
+    "max": 3600
+  },
+  "library_index_enabled": {
+    "type": "bool",
+    "description": "后台补充表情包索引",
+    "hint": "开启后后台为缺少描述的图片补充索引，可能产生额外模型调用；已有 index.json 不会被清空。",
+    "default": false
+  }
 }

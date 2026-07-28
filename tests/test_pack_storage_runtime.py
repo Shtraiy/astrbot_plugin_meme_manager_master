@@ -141,6 +141,45 @@ class PackStorageRuntimeTests(unittest.TestCase):
                 "原版描述",
             )
 
+    def test_original_manager_migration_repairs_empty_index_after_marker(self):
+        import config
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_dir = Path(temp_dir) / "meme_manager"
+            target_dir = Path(temp_dir) / "meme_manager_master"
+            source_category = source_dir / "happy"
+            target_category = (
+                target_dir / "packs" / config.LEGACY_MIGRATED_PACK_ID / "memes" / "happy"
+            )
+            source_category.mkdir(parents=True)
+            target_category.mkdir(parents=True)
+            (source_category / "happy_0001.png").write_bytes(b"source-image")
+            (target_category / "happy_0001.png").write_bytes(b"target-image")
+            (source_category / "index.json").write_text(
+                '{"items": [{"filename": "happy_0001.png", "description": "原始描述"}]}',
+                encoding="utf-8",
+            )
+            (target_category / "index.json").write_text(
+                '{"items": []}',
+                encoding="utf-8",
+            )
+            marker_path = target_dir / "migration" / "original_meme_manager_imported.json"
+            marker_path.parent.mkdir(parents=True)
+            marker_path.write_text(
+                '{"source": "' + str(source_dir).replace("\\", "\\\\") + '", '
+                '"imported_pack_ids": ["legacy-migrated"]}',
+                encoding="utf-8",
+            )
+
+            with patch.object(config, "_original_manager_data_dir", return_value=source_dir):
+                config.migrate_original_manager_data_if_needed(target_dir)
+
+            repaired = MemeStore(target_dir / "packs" / config.LEGACY_MIGRATED_PACK_ID)
+            self.assertEqual(
+                repaired.load_catalog("happy")["items"][0]["description"],
+                "原始描述",
+            )
+
     def test_catalog_round_trip_preserves_category_metadata(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemeStore(Path(temp_dir) / "packs" / "cats")
