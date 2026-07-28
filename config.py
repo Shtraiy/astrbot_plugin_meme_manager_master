@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -96,14 +97,186 @@ def _plugin_data_dir_has_content(plugin_data_dir: Path) -> bool:
 
 def _copy_directory_contents(source_dir: Path, target_dir: Path) -> None:
     """合并复制目录内容，不覆盖已存在的文件。"""
+    target_dir.mkdir(parents=True, exist_ok=True)
     for item in source_dir.iterdir():
         target_path = target_dir / item.name
         if item.is_dir():
-            shutil.copytree(item, target_path, dirs_exist_ok=True)
+            _copy_directory_contents(item, target_path)
             continue
         if not target_path.exists():
             target_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target_path)
+
+
+def _is_safe_runtime_pack_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[a-z0-9._-]{2,64}", str(value or "").strip()))
+
+
+def _is_safe_runtime_category_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]+", str(value or "").strip()))
+
+
+def _original_manager_category_dirs(source_dir: Path) -> list[Path]:
+    """Find old-style categories stored directly under meme_manager/."""
+    reserved = {
+        "packs",
+        "memes",
+        "semantic_indexes",
+        "backup",
+        "migration",
+        "temp",
+    }
+    return sorted(
+        child
+        for child in source_dir.iterdir()
+        if (
+            child.is_dir()
+            and child.name not in reserved
+            and _is_safe_runtime_category_id(child.name)
+            and any(child.iterdir())
+        )
+    )
+
+
+def _original_manager_data_dir() -> Path | None:
+    try:
+        return get_plugin_data_dir("meme_manager")
+    except Exception:
+        return None
+
+
+def _write_import_marker(
+    plugin_data_dir: Path, source_dir: Path, imported_pack_ids: list[str]
+) -> None:
+    _save_json_file(
+        plugin_data_dir / "migration" / "original_meme_manager_imported.json",
+        {
+            "schema_version": RUNTIME_SCHEMA_VERSION,
+            "source": str(source_dir),
+            "imported_pack_ids": sorted(set(imported_pack_ids)),
+            "imported_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def migrate_original_manager_data_if_needed(plugin_data_dir: Path) -> None:
+    """Import original meme_manager data into this plugin's private runtime.
+
+    The import is additive and never overwrites an existing master pack.  It
+    preserves pack manifests, category descriptions, index files, semantic
+    metadata and local vectors by copying the complete pack directory.
+    """
+    source_dir = _original_manager_data_dir()
+    if source_dir is None or not source_dir.is_dir():
+        return
+    if source_dir.resolve() == plugin_data_dir.resolve():
+        return
+
+    source_packs_dir = source_dir / "packs"
+    source_legacy_memes = source_dir / "memes"
+    source_legacy_metadata = source_dir / "memes_data.json"
+    source_category_dirs = _original_manager_category_dirs(source_dir)
+    has_pack_data = source_packs_dir.is_dir() and any(
+        child.is_dir() for child in source_packs_dir.iterdir()
+    )
+    has_legacy_data = source_legacy_memes.is_dir() and any(
+        source_legacy_memes.iterdir()
+    ) or source_legacy_metadata.is_file() or bool(source_category_dirs)
+    if not has_pack_data and not has_legacy_data:
+        return
+
+    marker_path = plugin_data_dir / "migration" / "original_meme_manager_imported.json"
+    marker = _load_json_file(marker_path, {})
+    known_pack_ids = {
+        str(pack_id).strip()
+        for pack_id in marker.get("imported_pack_ids", [])
+    } if isinstance(marker, dict) and str(marker.get("source") or "") == str(source_dir) else set()
+    source_pack_ids = {
+        child.name
+        for child in source_packs_dir.iterdir()
+        if child.is_dir() and _is_safe_runtime_pack_id(child.name)
+    } if has_pack_data else set()
+    if (
+        marker
+        and known_pack_ids
+        and (
+            (
+                source_pack_ids
+                and source_pack_ids.issubset(known_pack_ids)
+                and all(
+                    (plugin_data_dir / "packs" / pack_id).is_dir()
+                    for pack_id in source_pack_ids
+                )
+            )
+            or (
+                has_legacy_data
+                and not source_pack_ids
+                and LEGACY_MIGRATED_PACK_ID in known_pack_ids
+                and _pack_has_files(
+                    plugin_data_dir / "packs" / LEGACY_MIGRATED_PACK_ID
+                )
+            )
+        )
+    ):
+        return
+
+    imported_pack_ids: list[str] = []
+    target_packs_dir = plugin_data_dir / "packs"
+    target_packs_dir.mkdir(parents=True, exist_ok=True)
+
+    if has_pack_data:
+        for source_pack_dir in sorted(source_packs_dir.iterdir()):
+            if not source_pack_dir.is_dir() or not _is_safe_runtime_pack_id(
+                source_pack_dir.name
+            ):
+                continue
+            target_pack_dir = target_packs_dir / source_pack_dir.name
+            _copy_directory_contents(source_pack_dir, target_pack_dir)
+            imported_pack_ids.append(source_pack_dir.name)
+
+        for filename in ("registry.json", "selection_rules.json"):
+            source_file = source_dir / filename
+            target_file = plugin_data_dir / filename
+            if source_file.is_file() and not target_file.exists():
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_file, target_file)
+        source_indexes_dir = source_dir / "semantic_indexes"
+        if source_indexes_dir.is_dir():
+            _copy_directory_contents(
+                source_indexes_dir, plugin_data_dir / "semantic_indexes"
+            )
+    elif has_legacy_data:
+        legacy_pack_dir = target_packs_dir / LEGACY_MIGRATED_PACK_ID
+        legacy_memes_dir = legacy_pack_dir / "memes"
+        if source_legacy_memes.is_dir():
+            _copy_directory_contents(source_legacy_memes, legacy_memes_dir)
+        for source_category_dir in source_category_dirs:
+            _copy_directory_contents(
+                source_category_dir,
+                legacy_memes_dir / source_category_dir.name,
+            )
+        descriptions = _collect_category_descriptions(
+            source_legacy_metadata,
+            legacy_memes_dir,
+            DEFAULT_CATEGORY_DESCRIPTIONS,
+        )
+        _write_pack_compatibility_metadata(legacy_pack_dir, descriptions)
+        _write_pack_manifest(legacy_pack_dir, LEGACY_MIGRATED_PACK_ID, descriptions)
+        imported_pack_ids.append(LEGACY_MIGRATED_PACK_ID)
+
+    if imported_pack_ids:
+        registry_path = plugin_data_dir / "registry.json"
+        rules_path = plugin_data_dir / "selection_rules.json"
+        if not registry_path.is_file():
+            _write_registry(plugin_data_dir, imported_pack_ids[0])
+        if not rules_path.is_file():
+            _write_default_selection_rules(plugin_data_dir, imported_pack_ids[0])
+        _write_import_marker(plugin_data_dir, source_dir, imported_pack_ids)
+        print(
+            "已将原版 meme_manager 表情包导入表情包管理大师: "
+            f"{', '.join(sorted(set(imported_pack_ids)))}",
+            file=sys.stderr,
+        )
 
 
 def migrate_legacy_data_dir_if_needed(plugin_data_dir: Path) -> None:
@@ -389,6 +562,13 @@ def _bootstrap_pack_runtime(plugin_data_dir: Path) -> None:
 
 PLUGIN_DATA_DIR = get_plugin_data_dir()
 migrate_legacy_data_dir_if_needed(PLUGIN_DATA_DIR)
+migrate_original_manager_data_if_needed(PLUGIN_DATA_DIR)
+if _has_legacy_root_runtime_data(PLUGIN_DATA_DIR):
+    _migrate_legacy_root_into_pack(PLUGIN_DATA_DIR)
+    if not (PLUGIN_DATA_DIR / "registry.json").is_file():
+        _write_registry(PLUGIN_DATA_DIR, LEGACY_MIGRATED_PACK_ID)
+    if not (PLUGIN_DATA_DIR / "selection_rules.json").is_file():
+        _write_default_selection_rules(PLUGIN_DATA_DIR, LEGACY_MIGRATED_PACK_ID)
 _bootstrap_pack_runtime(PLUGIN_DATA_DIR)
 BASE_DATA_DIR = PLUGIN_DATA_DIR
 PACKS_DIR = PLUGIN_DATA_DIR / "packs"

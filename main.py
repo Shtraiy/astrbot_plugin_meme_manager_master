@@ -26,6 +26,15 @@ class MemeManager(CaptureMixin, MemeSender):
         # reference manager then initializes packs, WebUI routes and prompts.
         CaptureMixin.__init__(self, context, config)
         MemeSender.__init__(self, context, config)
+        try:
+            repaired = self.store.reconcile_catalogs()
+            if repaired:
+                logger.info(
+                    "[meme_manager_master] 已补齐 %d 个分类的 index.json 与 README.md",
+                    repaired,
+                )
+        except Exception as exc:
+            logger.warning("[meme_manager_master] 分类索引初始化失败: %s", exc)
 
     @filter.event_message_type(EventMessageType.ALL)
     async def capture_images(self, event: AstrMessageEvent, *args, **kwargs):

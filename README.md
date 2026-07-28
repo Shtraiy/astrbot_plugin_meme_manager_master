@@ -28,9 +28,12 @@ AstrBot/data/plugin_data/meme_manager_master/
         ├── manifest.json
         ├── memes_data.json
         └── memes/<category>/
+            └── index.json
 ```
 
 本插件只迁移自己的旧版 `meme_manager_master/memes/` 和 `memes_data.json` 到 `legacy-migrated` pack，不会读取或覆盖原版 `meme_manager` 的数据。本插件的自动收集会跟随当前默认 pack，避免与 WebUI 管理目录分离。
+
+首次启动时，如果检测到原版 `plugin_data/meme_manager/`，会把其中的全部 pack、`memes_data.json`、分类目录、`index.json`、语义元数据、向量索引和选择规则增量导入到本插件目录。也支持把旧版 `memes/` 直接复制到本插件数据目录，启动时会自动迁移为 `legacy-migrated` pack。
 
 本插件的内部 ID 是 `meme_manager_master`，管理命令组是 `/表情管理大师`；原版插件的 `meme_manager` 和 `/表情管理` 可以保留，两者不会共用数据目录或 WebUI API 路由。
 

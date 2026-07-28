@@ -144,6 +144,12 @@ class MemeStore:
         digest = hashlib.sha256(content).hexdigest()
         duplicate = self.find_duplicate(content, perceptual_threshold)
         if duplicate is not None:
+            # A copied/legacy category may contain the image but no catalog
+            # yet.  Keep the duplicate result fast while repairing that
+            # category's two index files on the same code path.
+            duplicate_category = self._category_for_path(duplicate)
+            if duplicate_category:
+                self.ensure_catalog_entry(duplicate_category, duplicate, digest)
             return SaveResult("duplicate", duplicate, digest)
 
         safe_extension = _safe_extension(extension)
@@ -152,6 +158,7 @@ class MemeStore:
         target = target_dir / self._next_filename(category, safe_extension, digest)
         self._atomic_write(target, content)
         self._ensure_category_description(category)
+        self.ensure_catalog_entry(category, target, digest)
         return SaveResult("saved", target, digest)
 
     def find_duplicate(
@@ -253,8 +260,117 @@ class MemeStore:
             if item.is_dir() and _is_safe_segment(item.name)
         }
 
+    def ensure_catalog_entry(
+        self,
+        category: str,
+        path: Path,
+        digest: str | None = None,
+    ) -> None:
+        """Ensure one image is represented in both category index files."""
+        if not _is_safe_segment(category):
+            return
+        image_path = Path(path)
+        category_dir = self.memes_dir / category
+        try:
+            relative = image_path.resolve().relative_to(category_dir.resolve())
+        except ValueError:
+            return
+        if (
+            len(relative.parts) != 1
+            or not image_path.is_file()
+            or image_path.suffix.lower() not in IMAGE_EXTENSIONS
+        ):
+            return
+
+        data = self.load_catalog(category)
+        filename = image_path.name
+        existing_items = [
+            item for item in data.get("items", []) if isinstance(item, dict)
+        ]
+        if any(
+            isinstance(item, dict) and item.get("filename") == filename
+            for item in existing_items
+        ):
+            # Existing rich metadata must never be replaced by a placeholder.
+            if (category_dir / "index.json").is_file() and (category_dir / "README.md").is_file():
+                return
+            metadata = {
+                key: value
+                for key, value in data.items()
+                if key not in {"version", "category", "updated_at", "items"}
+            }
+            self.write_catalog(category, existing_items, metadata)
+            return
+
+        entry = self._minimal_catalog_entry(
+            image_path,
+            digest=digest,
+        )
+        self.upsert_catalog_entry(category, entry)
+
+    def reconcile_catalogs(self) -> int:
+        """Create or repair indexes for every image already on disk.
+
+        Existing entries, including model-generated captions and tags, are
+        preserved.  Only missing image entries or missing index documents are
+        added.  The return value is the number of categories rewritten.
+        """
+        rewritten = 0
+        for category in sorted(self.directory_categories()):
+            category_dir = self.memes_dir / category
+            data = self.load_catalog(category)
+            entries = [
+                item for item in data.get("items", []) if isinstance(item, dict)
+            ]
+            known = {
+                str(item.get("filename"))
+                for item in entries
+                if item.get("filename")
+            }
+            changed = False
+            for image_path in self.image_paths(category):
+                if image_path.name in known:
+                    continue
+                entries.append(self._minimal_catalog_entry(image_path))
+                known.add(image_path.name)
+                changed = True
+
+            index_path = category_dir / "index.json"
+            readme_path = category_dir / "README.md"
+            if changed or not index_path.is_file() or not readme_path.is_file():
+                metadata = {
+                    key: value
+                    for key, value in data.items()
+                    if key not in {"version", "category", "updated_at", "items"}
+                }
+                self.write_catalog(category, entries, metadata)
+                rewritten += 1
+        return rewritten
+
     def image_digest(self, path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _category_for_path(self, path: Path) -> str | None:
+        try:
+            relative = Path(path).resolve().relative_to(self.memes_dir.resolve())
+        except ValueError:
+            return None
+        if len(relative.parts) != 2:
+            return None
+        category = relative.parts[0]
+        return category if _is_safe_segment(category) else None
+
+    @staticmethod
+    def _minimal_catalog_entry(path: Path, digest: str | None = None) -> dict:
+        return {
+            "filename": path.name,
+            "sha256": digest or hashlib.sha256(path.read_bytes()).hexdigest(),
+            "description": "",
+            "emotion": "",
+            "text": "",
+            "tags": [],
+            "status": "pending",
+        }
 
     def load_catalog(self, category: str) -> dict:
         if not _is_safe_segment(category):
