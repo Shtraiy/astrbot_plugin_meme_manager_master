@@ -1730,6 +1730,14 @@ class CaptureMixin:
             roots.append(self.store.root.parents[1])
         except IndexError:
             pass
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            astrbot_data_root = Path(get_astrbot_data_path()).resolve()
+            roots.extend((astrbot_data_root, astrbot_data_root / "temp"))
+        except (ImportError, OSError, TypeError):
+            # AstrBot is optional in the offline test environment.
+            pass
         roots.extend(Path(str(item)) for item in configured or [] if str(item).strip())
         try:
             candidate = path.resolve(strict=False)
