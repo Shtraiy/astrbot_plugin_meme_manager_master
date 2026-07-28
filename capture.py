@@ -194,7 +194,7 @@ class CaptureMixin:
                 logger.warning("[meme_manager_master] meme_manager_master 不可用: %s", health.summary())
         return health
 
-    def _refresh_store_for_active_pack(self) -> None:
+    def _refresh_store_for_active_pack(self) -> bool:
         """Keep collection storage aligned with the manager's default pack."""
         try:
             from .backend.pack_resolver import resolve_pack_context
@@ -203,14 +203,17 @@ class CaptureMixin:
             pack_dir = Path(context.get("pack_dir", self.store.root))
             if pack_dir.resolve() != self.store.root.resolve():
                 self.store = MemeStore(pack_dir)
+                return True
         except Exception:
             # The manager health check below will report an actionable state.
-            return
+            return False
+        return False
 
     async def _manager_ready(self) -> bool:
+        store_changed = self._refresh_store_for_active_pack()
         interval = self._float_config("health_check_interval", 300, 10, 600)
-        if time.monotonic() - self._last_health_check >= interval:
-            await self._refresh_health()
+        if store_changed or time.monotonic() - self._last_health_check >= interval:
+            await self._refresh_health(force=store_changed)
         return self._health.ready
 
     def _recent_meme_sent(self, event: AstrMessageEvent) -> bool:

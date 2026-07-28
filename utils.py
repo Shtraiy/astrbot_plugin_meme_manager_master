@@ -6,8 +6,11 @@ import json
 import logging
 import os
 import random
+import re
 import string
 from typing import Any
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -63,3 +66,27 @@ def probability_hit(value: Any, roll: int | None = None) -> bool:
 def generate_secret_key(length: int = 8) -> str:
     characters = string.ascii_letters + string.digits
     return "".join(random.choice(characters) for _ in range(length))
+
+
+async def get_public_ip() -> str:
+    """Best-effort public IPv4 lookup used by optional integrations."""
+    ipv4_apis = (
+        "http://ipv4.ifconfig.me/ip",
+        "http://api-ipv4.ip.sb/ip",
+        "http://v4.ident.me",
+        "http://ip.qaros.com",
+        "http://ipv4.icanhazip.com",
+        "http://4.icanhazip.com",
+    )
+    async with aiohttp.ClientSession() as session:
+        for api in ipv4_apis:
+            try:
+                async with session.get(api, timeout=5) as response:
+                    if response.status != 200:
+                        continue
+                    value = (await response.text()).strip()
+                    if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", value):
+                        return value
+            except Exception:
+                continue
+    return "[server-public-ip-unavailable]"

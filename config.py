@@ -519,20 +519,36 @@ def _resolve_default_pack_id(plugin_data_dir: Path) -> str:
     return DEFAULT_PACK_ID
 
 
+def get_active_pack_paths() -> dict[str, Path | str]:
+    """Return the currently selected default pack paths at call time."""
+    pack_id = _resolve_default_pack_id(PLUGIN_DATA_DIR)
+    pack_dir = PACKS_DIR / pack_id
+    return {
+        "pack_id": pack_id,
+        "pack_dir": pack_dir,
+        "memes_dir": pack_dir / "memes",
+        "metadata_path": pack_dir / "memes_data.json",
+        "manifest_path": pack_dir / "manifest.json",
+    }
+
+
 def sync_active_pack_metadata(
     category_descriptions: dict[str, str] | None = None,
 ) -> None:
     """将当前表情包的清单与兼容性元数据文件同步。"""
-    active_pack_dir = PACKS_DIR / ACTIVE_PACK_ID
+    active_paths = get_active_pack_paths()
+    active_pack_dir = active_paths["pack_dir"]
     active_pack_dir.mkdir(parents=True, exist_ok=True)
-    (active_pack_dir / "memes").mkdir(parents=True, exist_ok=True)
+    active_paths["memes_dir"].mkdir(parents=True, exist_ok=True)
 
     descriptions = category_descriptions or _collect_category_descriptions(
-        MEMES_DATA_PATH,
-        MEMES_DIR,
-        DEFAULT_CATEGORY_DESCRIPTIONS if ACTIVE_PACK_ID == DEFAULT_PACK_ID else None,
+        active_paths["metadata_path"],
+        active_paths["memes_dir"],
+        DEFAULT_CATEGORY_DESCRIPTIONS
+        if active_paths["pack_id"] == DEFAULT_PACK_ID
+        else None,
     )
-    _write_pack_manifest(active_pack_dir, ACTIVE_PACK_ID, descriptions)
+    _write_pack_manifest(active_pack_dir, active_paths["pack_id"], descriptions)
 
 
 def _bootstrap_pack_runtime(plugin_data_dir: Path) -> None:

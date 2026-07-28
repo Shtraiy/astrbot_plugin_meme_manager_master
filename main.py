@@ -10,6 +10,7 @@ from astrbot.api.star import Context, register
 
 from .capture import CaptureMixin
 from .manager_base import MemeSender
+from .storage import MemeStore
 
 
 @register(
@@ -27,7 +28,12 @@ class MemeManager(CaptureMixin, MemeSender):
         CaptureMixin.__init__(self, context, config)
         MemeSender.__init__(self, context, config)
         try:
-            repaired = self.store.reconcile_catalogs()
+            repaired = 0
+            packs_root = self.store.root.parent
+            if packs_root.is_dir():
+                for pack_dir in packs_root.iterdir():
+                    if pack_dir.is_dir():
+                        repaired += MemeStore(pack_dir).reconcile_catalogs()
             if repaired:
                 logger.info(
                     "[meme_manager_master] 已补齐 %d 个分类的 index.json 与 README.md",

@@ -4,7 +4,43 @@
     "description": "表情包存储与图床",
     "items": {
       "provider": {"type": "string", "default": "", "options": ["", "stardots", "cloudflare_r2", "webdav"]},
-      "providers": {"type": "object", "description": "图床服务参数", "items": {}}
+      "providers": {
+        "type": "object",
+        "description": "图床服务参数",
+        "items": {
+          "stardots": {
+            "type": "object",
+            "items": {
+              "key": {"type": "string", "default": ""},
+              "secret": {"type": "string", "default": ""},
+              "space": {"type": "string", "default": "memes"},
+              "list_cache_ttl": {"type": "int", "default": 60, "min": 0, "max": 300}
+            }
+          },
+          "cloudflare_r2": {
+            "type": "object",
+            "items": {
+              "account_id": {"type": "string", "default": ""},
+              "access_key_id": {"type": "string", "default": ""},
+              "secret_access_key": {"type": "string", "default": ""},
+              "bucket_name": {"type": "string", "default": ""},
+              "public_url": {"type": "string", "default": ""}
+            }
+          },
+          "webdav": {
+            "type": "object",
+            "items": {
+              "url": {"type": "string", "default": ""},
+              "username": {"type": "string", "default": ""},
+              "password": {"type": "string", "default": ""},
+              "base_path": {"type": "string", "default": "memes"},
+              "public_url": {"type": "string", "default": ""},
+              "verify_ssl": {"type": "bool", "default": true},
+              "timeout": {"type": "int", "default": 30, "min": 1, "max": 300}
+            }
+          }
+        }
+      }
     }
   },
   "community": {

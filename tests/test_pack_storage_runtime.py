@@ -3,10 +3,25 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from storage import MemeStore
+from storage import MemeStore, is_safe_category_segment
 
 
 class PackStorageRuntimeTests(unittest.TestCase):
+    def test_unicode_category_names_share_the_same_safe_storage_contract(self):
+        self.assertTrue(is_safe_category_segment("猫猫表情"))
+        self.assertFalse(is_safe_category_segment("../outside"))
+        self.assertFalse(is_safe_category_segment("bad:name"))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "packs" / "cats")
+            saved = store.save_image(b"unicode-category", "猫猫表情", ".png", None)
+            self.assertTrue(saved.path.is_file())
+            self.assertEqual(store.pick_image("猫猫表情"), saved.path)
+            self.assertEqual(
+                store.load_catalog("猫猫表情")["items"][0]["filename"],
+                saved.path.name,
+            )
+
     def test_capture_store_isolated_inside_pack_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pack_dir = Path(temp_dir) / "packs" / "cats"
@@ -68,6 +83,33 @@ class PackStorageRuntimeTests(unittest.TestCase):
                 "详细描述",
             )
             self.assertTrue(saved.path.parent.joinpath("README.md").is_file())
+
+    def test_reconcile_removes_catalog_entries_for_deleted_images(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "packs" / "cats")
+            saved = store.save_image(b"catalog-content", "happy", ".png", None)
+            store.upsert_catalog_entry(
+                "happy",
+                {"filename": saved.path.name, "description": "保留"},
+            )
+            saved.path.unlink()
+
+            self.assertEqual(store.reconcile_catalogs(), 1)
+            self.assertEqual(store.load_catalog("happy")["items"], [])
+
+    def test_load_catalog_accepts_bom_and_legacy_mapping_shape(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            category_dir = Path(temp_dir) / "packs" / "cats" / "memes" / "happy"
+            category_dir.mkdir(parents=True)
+            category_dir.joinpath("index.json").write_text(
+                '{"images": {"old.png": {"description": "旧描述"}}}',
+                encoding="utf-8-sig",
+            )
+
+            catalog = MemeStore(category_dir.parent.parent).load_catalog("happy")
+
+            self.assertEqual(catalog["items"][0]["filename"], "old.png")
+            self.assertEqual(catalog["items"][0]["description"], "旧描述")
 
     def test_original_manager_direct_categories_are_migrated_with_indexes(self):
         import config

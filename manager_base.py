@@ -25,6 +25,7 @@ from .backend.semantic_storage import load_metadata, semantic_metadata_is_comple
 from .backend.semantic_task import SemanticTaskManager
 from .config import (
     DEFAULT_CATEGORY_DESCRIPTIONS,
+    get_active_pack_paths,
     MEMES_DATA_PATH,
     MEMES_DIR,
     PLUGIN_DATA_DIR,
@@ -767,7 +768,10 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
             ).strip()
             if runtime_memes_dir:
                 return runtime_memes_dir
-        return str(MEMES_DIR)
+        try:
+            return str(get_active_pack_paths()["memes_dir"])
+        except Exception:
+            return str(MEMES_DIR)
 
     def _get_manageable_categories(self) -> set[str]:
         return (
@@ -892,7 +896,10 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         self.category_mapping = runtime_category_mapping(
             context_mapping
             if isinstance(context_mapping, dict)
-            else load_json(MEMES_DATA_PATH, DEFAULT_CATEGORY_DESCRIPTIONS)
+            else load_json(
+                get_active_pack_paths().get("metadata_path", MEMES_DATA_PATH),
+                DEFAULT_CATEGORY_DESCRIPTIONS,
+            )
         )
         self.category_mapping_string = dict_to_string(self.category_mapping)
         self._apply_persona_prompts()

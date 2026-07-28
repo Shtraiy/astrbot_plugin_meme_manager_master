@@ -312,8 +312,9 @@ class MemeStore:
         """Create or repair indexes for every image already on disk.
 
         Existing entries, including model-generated captions and tags, are
-        preserved.  Only missing image entries or missing index documents are
-        added.  The return value is the number of categories rewritten.
+        preserved. Missing image entries are added and entries for deleted
+        files are removed. The return value is the number of categories
+        rewritten.
         """
         rewritten = 0
         for category in sorted(self.directory_categories()):
@@ -328,6 +329,20 @@ class MemeStore:
                 if item.get("filename")
             }
             changed = False
+            image_names = {path.name for path in self.image_paths(category)}
+            filtered_entries = [
+                item
+                for item in entries
+                if str(item.get("filename") or "") in image_names
+            ]
+            if len(filtered_entries) != len(entries):
+                entries = filtered_entries
+                known = {
+                    str(item.get("filename"))
+                    for item in entries
+                    if item.get("filename")
+                }
+                changed = True
             for image_path in self.image_paths(category):
                 if image_path.name in known:
                     continue
@@ -377,11 +392,34 @@ class MemeStore:
             return {"version": 1, "category": category, "items": []}
         path = self.memes_dir / category / "index.json"
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             return {"version": 1, "category": category, "items": []}
-        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        if isinstance(data, list):
+            data = {"version": 1, "category": category, "items": data}
+        if not isinstance(data, dict):
             return {"version": 1, "category": category, "items": []}
+        raw_items = data.get("items")
+        if not isinstance(raw_items, list):
+            for legacy_key in ("images", "entries", "memes", "data"):
+                candidate = data.get(legacy_key)
+                if isinstance(candidate, (list, dict)):
+                    raw_items = candidate
+                    break
+        if isinstance(raw_items, dict):
+            normalized_items = []
+            for filename, value in raw_items.items():
+                if isinstance(value, dict):
+                    item = dict(value)
+                    item.setdefault("filename", str(filename))
+                else:
+                    item = {"filename": str(filename), "description": str(value or "")}
+                normalized_items.append(item)
+            raw_items = normalized_items
+        if not isinstance(raw_items, list):
+            raw_items = []
+        data["category"] = str(data.get("category") or category)
+        data["items"] = [item for item in raw_items if isinstance(item, dict)]
         return data
 
     def write_catalog(
@@ -580,8 +618,24 @@ class MemeStore:
         cls._atomic_write(path, (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode())
 
 
+def is_safe_category_segment(value: str) -> bool:
+    """Validate one on-disk category segment, including Unicode names."""
+    normalized = str(value or "")
+    if (
+        not normalized
+        or normalized != normalized.strip()
+        or normalized in {".", ".."}
+        or "/" in normalized
+        or "\\" in normalized
+        or any(ord(char) < 32 for char in normalized)
+        or any(char in normalized for char in '<>:"|?*')
+    ):
+        return False
+    return Path(normalized).name == normalized
+
+
 def _is_safe_segment(value: str) -> bool:
-    return bool(value and value == value.strip() and re.fullmatch(r"[A-Za-z0-9_-]+", value))
+    return is_safe_category_segment(value)
 
 
 def _safe_extension(extension: str) -> str:

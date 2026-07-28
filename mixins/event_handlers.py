@@ -9,6 +9,7 @@ import ssl
 import tempfile
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -439,7 +440,9 @@ class EventHandlerMixin:
         message: str | list | MessageChain,
     ) -> dict:
         """对外兼容接口：清理消息中的表情标记并准备待发送表情图片。"""
-        pack_context = self._resolve_runtime_pack_context(event=event)
+        # Manual WebUI/command uploads belong to the selected default pack,
+        # not to a session/persona-specific read-only selection rule.
+        pack_context = self._default_pack_context()
         context_mapping = pack_context.get("category_mapping")
         active_category_mapping = (
             runtime_category_mapping(context_mapping)
@@ -541,7 +544,10 @@ class EventHandlerMixin:
             yield event.plain_result("请发送图片文件来进行上传哦。")
             return
         category = upload_state["category"]
-        pack_id = str(MEMES_DIR.parent.name or "").strip()
+        pack_context = self._resolve_runtime_pack_context(event=event)
+        pack_id = str(pack_context.get("pack_id") or "").strip()
+        pack_dir = Path(pack_context.get("pack_dir") or MEMES_DIR.parent)
+        save_dir = Path(pack_context.get("memes_dir") or MEMES_DIR) / category
         try:
             self.semantic_task_manager.begin_external_pack_operation(
                 pack_id, "接收并保存表情图片"
@@ -549,7 +555,6 @@ class EventHandlerMixin:
         except RuntimeError as exc:
             yield event.plain_result(f"⚠️ {exc}")
             return
-        save_dir = os.path.join(MEMES_DIR, category)
         try:
             os.makedirs(save_dir, exist_ok=True)
             saved_files = []
@@ -583,7 +588,7 @@ class EventHandlerMixin:
                     }
                     ext = ext_mapping.get(file_type, ".bin")
                     filename = f"{timestamp}_{idx}{ext}"
-                    save_path = os.path.join(save_dir, filename)
+                    save_path = save_dir / filename
                     with open(save_path, "wb") as f:
                         f.write(content)
                     saved_files.append(filename)
@@ -604,7 +609,7 @@ class EventHandlerMixin:
             yield event.chain_result(result_msg)
             await self.reload_emotions()
             if saved_files:
-                invalidate_semantic_metadata(MEMES_DIR.parent)
+                invalidate_semantic_metadata(pack_dir)
         except Exception as e:
             yield event.plain_result(f"保存失败了：{str(e)}")
         finally:
@@ -1323,7 +1328,6 @@ class EventHandlerMixin:
             logger.error(f"处理消息装饰失败: {str(e)}")
             logger.error(traceback.format_exc())
 
-    @filter.after_message_sent()
     async def _after_message_sent_impl(self, event: AstrMessageEvent):
         """消息发送后处理。用于发送未混合的表情图片。"""
         pending_images = event.get_extra("meme_manager_master_pending_images")

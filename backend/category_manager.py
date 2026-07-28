@@ -9,37 +9,53 @@ from ..config import (
     MEMES_DATA_PATH,
     MEMES_DIR,
     sync_active_pack_metadata,
+    get_active_pack_paths,
 )
 from ..utils import ensure_dir_exists, load_json, save_json
+from ..storage import MemeStore, is_safe_category_segment
 from .semantic_storage import invalidate_semantic_metadata
 
 logger = logging.getLogger(__name__)
 
 
+def _reconcile_active_catalogs() -> None:
+    """Keep the active pack's per-category JSON/README indexes in sync."""
+    try:
+        MemeStore(Path(get_active_pack_paths()["pack_dir"]).resolve()).reconcile_catalogs()
+    except Exception as exc:
+        logger.warning("同步分类索引失败: %s", exc, exc_info=True)
+
+
 def is_safe_category_name(category: str) -> bool:
     """Return whether category stays within one memes directory segment."""
-    if not category or category != category.strip():
-        return False
-    if category in {".", ".."}:
-        return False
-    return (
-        "/" not in category and "\\" not in category and Path(category).name == category
-    )
+    return is_safe_category_segment(category)
 
 
 class CategoryManager:
+    @staticmethod
+    def _active_paths() -> dict[str, Path | str]:
+        try:
+            return get_active_pack_paths()
+        except Exception:
+            return {
+                "memes_dir": Path(MEMES_DIR),
+                "metadata_path": Path(MEMES_DATA_PATH),
+                "manifest_path": Path(ACTIVE_PACK_MANIFEST_PATH),
+            }
+
     def __init__(self):
         """初始化类别管理器"""
-        ensure_dir_exists(MEMES_DIR)
+        ensure_dir_exists(self._active_paths()["memes_dir"])
         self._ensure_data_file()
         self.descriptions = self._load_descriptions()
 
     def _ensure_data_file(self) -> None:
         """确保 memes_data.json 文件存在，不存在时基于当前包内容初始化。"""
-        if not os.path.exists(MEMES_DATA_PATH):
+        paths = self._active_paths()
+        if not paths["metadata_path"].exists():
             initial_descriptions = self._build_initial_descriptions()
-            save_json(initial_descriptions, MEMES_DATA_PATH)
-            logger.info(f"初始化类别描述文件: {MEMES_DATA_PATH}")
+            save_json(initial_descriptions, str(paths["metadata_path"]))
+            logger.info(f"初始化类别描述文件: {paths['metadata_path']}")
             sync_active_pack_metadata(initial_descriptions)
 
     def _build_initial_descriptions(self) -> dict[str, str]:
@@ -49,8 +65,9 @@ class CategoryManager:
 
         # 1) 优先读取当前包 manifest 的分类描述（官方包通常只带 manifest）
         try:
-            if ACTIVE_PACK_MANIFEST_PATH.is_file():
-                with ACTIVE_PACK_MANIFEST_PATH.open(encoding="utf-8-sig") as file_obj:
+            manifest_path = self._active_paths()["manifest_path"]
+            if manifest_path.is_file():
+                with manifest_path.open(encoding="utf-8-sig") as file_obj:
                     manifest = json.load(file_obj)
                 categories = (
                     manifest.get("categories", {}) if isinstance(manifest, dict) else {}
@@ -77,18 +94,18 @@ class CategoryManager:
 
     def _load_descriptions(self) -> dict[str, str]:
         """加载类别描述配置"""
-        if not os.path.exists(MEMES_DATA_PATH):
+        metadata_path = self._active_paths()["metadata_path"]
+        if not metadata_path.exists():
             self._ensure_data_file()
-        return load_json(MEMES_DATA_PATH, {})
+        return load_json(str(metadata_path), {})
 
     def reload_descriptions(self) -> dict[str, str]:
         """Reload category descriptions from disk."""
         self.descriptions = self._load_descriptions()
         return self.descriptions
 
-    @staticmethod
-    def _invalidate_semantic_if_present() -> None:
-        pack_dir = Path(MEMES_DIR).resolve().parent
+    def _invalidate_semantic_if_present(self) -> None:
+        pack_dir = Path(self._active_paths()["pack_dir"]).resolve()
         if not (pack_dir / "semantic_metadata.json").is_file():
             return
         try:
@@ -99,11 +116,12 @@ class CategoryManager:
     def get_local_categories(self) -> set[str]:
         """获取本地文件夹中的类别"""
         try:
-            ensure_dir_exists(MEMES_DIR)
+            memes_dir = self._active_paths()["memes_dir"]
+            ensure_dir_exists(memes_dir)
             return {
                 d
-                for d in os.listdir(MEMES_DIR)
-                if os.path.isdir(os.path.join(MEMES_DIR, d))
+                for d in os.listdir(memes_dir)
+                if os.path.isdir(os.path.join(memes_dir, d))
             }
         except Exception as e:
             logger.error(f"获取本地类别失败: {e}")
@@ -131,9 +149,11 @@ class CategoryManager:
             self.reload_descriptions()
             old_description = str(self.descriptions.get(category) or "")
             self.descriptions[category] = description  # 更新内存中的 descriptions
-            saved = save_json(self.descriptions, MEMES_DATA_PATH)
+            metadata_path = self._active_paths()["metadata_path"]
+            saved = save_json(self.descriptions, str(metadata_path))
             if saved:
                 sync_active_pack_metadata(self.descriptions)
+                _reconcile_active_catalogs()
                 if " ".join(old_description.split()) != " ".join(
                     str(description).split()
                 ):
@@ -151,8 +171,12 @@ class CategoryManager:
             if not is_safe_category_name(category):
                 return False
 
-            os.makedirs(os.path.join(MEMES_DIR, category), exist_ok=True)
-            return self.update_description(category, description)
+            memes_dir = self._active_paths()["memes_dir"]
+            os.makedirs(os.path.join(memes_dir, category), exist_ok=True)
+            saved = self.update_description(category, description)
+            if saved:
+                _reconcile_active_catalogs()
+            return saved
         except Exception as e:
             logger.error(f"创建类别失败: {e}")
             return False
@@ -171,8 +195,9 @@ class CategoryManager:
             ):
                 return False
 
-            old_path = Path(MEMES_DIR) / old_name
-            new_path = Path(MEMES_DIR) / new_name
+            memes_dir = self._active_paths()["memes_dir"]
+            old_path = memes_dir / old_name
+            new_path = memes_dir / new_name
             if new_name != old_name and new_path.exists():
                 return False
 
@@ -187,9 +212,11 @@ class CategoryManager:
             if os.path.exists(old_path):
                 os.rename(old_path, new_path)
 
-            saved = save_json(self.descriptions, MEMES_DATA_PATH)
+            metadata_path = self._active_paths()["metadata_path"]
+            saved = save_json(self.descriptions, str(metadata_path))
             if saved:
                 sync_active_pack_metadata(self.descriptions)
+                _reconcile_active_catalogs()
                 self._invalidate_semantic_if_present()
             return saved
         except Exception as e:
@@ -206,14 +233,15 @@ class CategoryManager:
             # 从配置中删除
             if category in self.descriptions:
                 del self.descriptions[category]
-                save_json(self.descriptions, MEMES_DATA_PATH)
+                save_json(self.descriptions, str(self._active_paths()["metadata_path"]))
 
             # 删除文件夹
-            category_path = os.path.join(MEMES_DIR, category)
+            category_path = os.path.join(self._active_paths()["memes_dir"], category)
             if os.path.exists(category_path):
                 shutil.rmtree(category_path)
 
             sync_active_pack_metadata(self.descriptions)
+            _reconcile_active_catalogs()
             self._invalidate_semantic_if_present()
             return True
         except Exception as e:
@@ -230,9 +258,12 @@ class CategoryManager:
             if category not in self.descriptions:
                 return False
             del self.descriptions[category]
-            saved = save_json(self.descriptions, MEMES_DATA_PATH)
+            saved = save_json(
+                self.descriptions, str(self._active_paths()["metadata_path"])
+            )
             if saved:
                 sync_active_pack_metadata(self.descriptions)
+                _reconcile_active_catalogs()
                 self._invalidate_semantic_if_present()
             return saved
         except Exception as e:
@@ -264,12 +295,16 @@ class CategoryManager:
                 changed = True
 
             if changed:
-                saved = save_json(self.descriptions, MEMES_DATA_PATH)
+                saved = save_json(
+                    self.descriptions, str(self._active_paths()["metadata_path"])
+                )
                 if saved:
                     sync_active_pack_metadata(self.descriptions)
+                    _reconcile_active_catalogs()
                     self._invalidate_semantic_if_present()
                 return saved
             sync_active_pack_metadata(self.descriptions)
+            _reconcile_active_catalogs()
             return True
         except Exception as e:
             logger.error(f"同步文件系统失败: {e}")

@@ -12,14 +12,14 @@ from ..backend.models import (
     get_emoji_by_category,
 )
 from ..backend.pack_storage import install_first_official_pack_from_index
-from ..config import COMMUNITY_INDEX_URL, MEMES_DIR
+from ..config import COMMUNITY_INDEX_URL
 
 
 class CommandMixin:
     """表情包管理命令组及所有管理命令"""
 
     def _assert_default_pack_mutation_allowed(self, operation: str) -> str:
-        pack_id = str(MEMES_DIR.parent.name or "").strip()
+        pack_id = str(self._default_pack_context()["pack_id"] or "").strip()
         if pack_id:
             self.semantic_task_manager.assert_pack_mutation_allowed(pack_id, operation)
         return pack_id
@@ -494,7 +494,13 @@ class CommandMixin:
                     # 显示本地图库统计
                     local_stats = {}
                     local_total = 0
-                    local_memes_dir = str(getattr(sync_client, "local_dir", MEMES_DIR))
+                    local_memes_dir = str(
+                        getattr(
+                            sync_client,
+                            "local_dir",
+                            self._default_pack_context()["memes_dir"],
+                        )
+                    )
                     if os.path.exists(local_memes_dir):
                         for category in os.listdir(local_memes_dir):
                             category_path = os.path.join(local_memes_dir, category)
@@ -586,7 +592,8 @@ class CommandMixin:
             return
 
         pack_id = str(
-            getattr(self, "_img_sync_pack_id", "") or MEMES_DIR.parent.name
+            getattr(self, "_img_sync_pack_id", "")
+            or self._default_pack_context()["pack_id"]
         ).strip()
         try:
             self.semantic_task_manager.begin_external_pack_operation(
@@ -648,7 +655,8 @@ class CommandMixin:
             return
 
         pack_id = str(
-            getattr(self, "_img_sync_pack_id", "") or MEMES_DIR.parent.name
+            getattr(self, "_img_sync_pack_id", "")
+            or self._default_pack_context()["pack_id"]
         ).strip()
         try:
             self.semantic_task_manager.begin_external_pack_operation(
@@ -686,9 +694,13 @@ class CommandMixin:
             local_total = 0
 
             local_memes_dir = str(
-                getattr(sync_client, "local_dir", MEMES_DIR)
+                getattr(
+                    sync_client,
+                    "local_dir",
+                    self._default_pack_context()["memes_dir"],
+                )
                 if sync_client
-                else MEMES_DIR
+                else self._default_pack_context()["memes_dir"]
             )
             if os.path.exists(local_memes_dir):
                 for category in os.listdir(local_memes_dir):
