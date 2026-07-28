@@ -29,7 +29,12 @@ from .config import (
     MEMES_DIR,
     PLUGIN_DATA_DIR,
 )
-from .image_host.img_sync import ImageSync
+try:
+    from .image_host.img_sync import ImageSync
+except ModuleNotFoundError:
+    # Image hosting is optional.  The local WebUI and meme runtime must still
+    # load when the optional reference image_host package is not bundled.
+    ImageSync = None
 from .init import init_plugin
 from .mixins.commands import CommandMixin
 from .mixins.event_handlers import EventHandlerMixin
@@ -432,6 +437,11 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
 
     def _ensure_img_sync_for_pack(self, preferred_pack_id: str | None = None):
         if not (self.img_sync_config and self.img_sync_provider_type):
+            return None
+        if ImageSync is None:
+            logger.warning(
+                "图床同步已配置，但插件缺少可选 image_host 运行模块；已跳过图床同步"
+            )
             return None
 
         running_process = (
