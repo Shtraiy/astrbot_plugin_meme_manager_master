@@ -1,7 +1,4 @@
 aiohttp>=3.9.0
 Pillow>=10.0.0
-tqdm
-boto3
-botocore
 requests
 faiss-cpu

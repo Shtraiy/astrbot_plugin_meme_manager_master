@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image as PILImage
-from quart import jsonify, make_response, request, send_file
+from quart import jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from astrbot.api import logger
@@ -76,7 +76,6 @@ WEBUI_LOG_PREFIX = f"[{PLUGIN_NAME}][WebUI]"
 MAX_PREVIEW_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_ORIGINAL_IMAGE_BYTES = 32 * 1024 * 1024
 PREVIEW_IMAGE_MAX_DIMENSION = 512
-IMG_HOST_STATUS_CACHE_TTL_SECONDS = 15
 PACK_IMPORT_SESSION_TTL_SECONDS = 60 * 60
 MAX_PACK_ARCHIVE_BYTES = 1024 * 1024 * 1024
 MAX_PACK_UPLOAD_REQUEST_BYTES = MAX_PACK_ARCHIVE_BYTES + 1024 * 1024
@@ -173,48 +172,6 @@ class WebAPIMixin:
             "sync/config", self._api_sync_config, ["POST"], "同步配置与文件系统"
         )
 
-        self._register_webui_api(
-            "img_host/sync/status",
-            self._api_img_host_sync_status,
-            ["GET"],
-            "图床同步状态",
-        )
-        self._register_webui_api(
-            "img_host/sync/upload",
-            self._api_img_host_sync_upload,
-            ["POST"],
-            "开始上传至图床",
-        )
-        self._register_webui_api(
-            "img_host/sync/download",
-            self._api_img_host_sync_download,
-            ["POST"],
-            "开始从图床下载",
-        )
-        self._register_webui_api(
-            "img_host/sync/overwrite_to_remote",
-            self._api_img_host_sync_overwrite_to_remote,
-            ["POST"],
-            "覆盖远程图床（以本地为准）",
-        )
-        self._register_webui_api(
-            "img_host/sync/overwrite_from_remote",
-            self._api_img_host_sync_overwrite_from_remote,
-            ["POST"],
-            "覆盖本地（以远程为准）",
-        )
-        self._register_webui_api(
-            "img_host/sync/progress",
-            self._api_img_host_sync_progress,
-            ["GET"],
-            "同步进度 SSE 流",
-        )
-        self._register_webui_api(
-            "img_host/sync/task_status",
-            self._api_img_host_sync_task_status,
-            ["GET"],
-            "当前同步任务状态",
-        )
 
         self._register_webui_api(
             "meme_image", self._api_serve_meme_image, ["GET"], "直接返回表情图片文件"
@@ -480,8 +437,6 @@ class WebAPIMixin:
         return pack_id
 
     def _semantic_operation_guard(self, pack_id: str, operation: str) -> None:
-        if getattr(self, "_img_host_local_operation", None):
-            self._get_img_host_sync_task_status()
         manager = getattr(self, "semantic_task_manager", None)
         if manager is not None:
             manager.assert_pack_mutation_allowed(pack_id, operation)
@@ -722,27 +677,6 @@ class WebAPIMixin:
         except Exception as exc:
             logger.error("图片变更后刷新语义元数据失败: %s", exc, exc_info=True)
 
-    def _finish_img_host_local_operation(self) -> None:
-        active = getattr(self, "_img_host_local_operation", None)
-        if not isinstance(active, dict):
-            return
-        pack_id = str(active.get("pack_id") or "").strip()
-        manager = getattr(self, "semantic_task_manager", None)
-        if manager is not None and pack_id:
-            pack_dir = PACKS_DIR / pack_id
-            if (pack_dir / "semantic_metadata.json").is_file():
-                try:
-                    invalidate_semantic_metadata(pack_dir)
-                except Exception as exc:
-                    logger.error(
-                        "图床任务结束后刷新语义元数据失败: %s",
-                        exc,
-                        exc_info=True,
-                    )
-            manager.end_external_pack_operation(pack_id)
-        self._img_host_local_operation = None
-
-    @staticmethod
     def _resolve_webui_pack_view_context() -> dict | None:
         managed_pack_id = str(request.args.get("managed_pack_id") or "").strip()
         if not managed_pack_id:
@@ -1321,336 +1255,6 @@ class WebAPIMixin:
             logger.error(f"配置同步失败: {e}")
             return jsonify({"message": f"配置同步失败: {str(e)}"}), 500
 
-    def _get_provider_label(self) -> str:
-        if self.img_sync_provider_type == "cloudflare_r2":
-            return "Cloudflare R2"
-        if self.img_sync_provider_type == "stardots":
-            return "StarDots"
-        if self.img_sync and hasattr(self.img_sync, "provider"):
-            return self.img_sync.provider.__class__.__name__
-        return "未知图床"
-
-    @staticmethod
-    def _resolve_requested_sync_pack_id(payload: dict | None = None) -> str:
-        managed_pack_id = str(request.args.get("managed_pack_id") or "").strip()
-        if managed_pack_id:
-            return managed_pack_id
-        if isinstance(payload, dict):
-            for key in ("managed_pack_id", "pack_id"):
-                value = str(payload.get(key) or "").strip()
-                if value:
-                    return value
-        return ""
-
-    def _get_img_host_sync_task_status(self) -> dict:
-        if not self.img_sync:
-            self._finish_img_host_local_operation()
-            return {
-                "available": False,
-                "running": False,
-                "completed": True,
-                "success": False,
-                "message": "图床服务未配置",
-            }
-
-        process = getattr(self.img_sync, "sync_process", None)
-        if not process:
-            self._finish_img_host_local_operation()
-            if self._last_img_host_sync_task_status:
-                return self._last_img_host_sync_task_status.copy()
-            return {
-                "available": True,
-                "running": False,
-                "completed": True,
-                "success": None,
-                "message": "当前没有同步任务",
-            }
-
-        status = {
-            "available": True,
-            "pid": process.pid,
-            "exit_code": process.exitcode,
-        }
-        if process.is_alive():
-            status.update(
-                {
-                    "running": True,
-                    "completed": False,
-                    "success": None,
-                    "message": "同步任务运行中",
-                }
-            )
-            return status
-
-        exit_code = process.exitcode
-        try:
-            process.join(timeout=0)
-        except Exception as exc:
-            logger.warning(f"回收图床同步进程失败: {exc}")
-        self.img_sync.sync_process = None
-        self._finish_img_host_local_operation()
-
-        status.update(
-            {
-                "running": False,
-                "completed": True,
-                "success": exit_code == 0,
-                "exit_code": exit_code,
-                "message": "同步任务已完成" if exit_code == 0 else "同步任务失败",
-            }
-        )
-        self._last_img_host_sync_task_status = status.copy()
-        return status
-
-    def _ensure_img_host_status_cache(self) -> dict[str, dict]:
-        cache = getattr(self, "_img_host_sync_status_cache", None)
-        if isinstance(cache, dict):
-            return cache
-        cache = {}
-        self._img_host_sync_status_cache = cache
-        return cache
-
-    def _invalidate_img_host_status_cache(self, pack_id: str | None = None) -> None:
-        cache = self._ensure_img_host_status_cache()
-        if not pack_id:
-            cache.clear()
-            return
-        target_pack_id = str(pack_id).strip()
-        keys_to_remove = [key for key in cache if key.startswith(f"{target_pack_id}::")]
-        for key in keys_to_remove:
-            cache.pop(key, None)
-
-    def _get_img_host_status_cache_ttl(self) -> int:
-        raw_value = self._read_config_value(
-            ("sync", "status_cache_ttl_seconds"),
-            default=IMG_HOST_STATUS_CACHE_TTL_SECONDS,
-            legacy_keys=("img_host_status_cache_ttl_seconds",),
-        )
-        try:
-            ttl = int(raw_value)
-        except (TypeError, ValueError):
-            return IMG_HOST_STATUS_CACHE_TTL_SECONDS
-        return max(0, min(ttl, 300))
-
-    @staticmethod
-    def _make_img_host_status_cache_key(pack_id: str, local_dir: Path | str) -> str:
-        normalized_pack_id = str(pack_id or "").strip() or "__default__"
-        normalized_local_dir = str(local_dir or "").replace("\\", "/").rstrip("/")
-        return f"{normalized_pack_id}::{normalized_local_dir}"
-
-    def _start_img_host_sync_task(self, task: str, pack_id: str | None = None) -> dict:
-        sync_client = self._ensure_img_sync_for_pack(pack_id)
-        if not sync_client:
-            raise RuntimeError("图床服务未配置")
-
-        status = self._get_img_host_sync_task_status()
-        if not status.get("available", False):
-            raise RuntimeError(status.get("message") or "图床服务未配置")
-        if status.get("running"):
-            raise RuntimeError("已有同步任务正在运行，请等待当前任务完成")
-
-        self._invalidate_img_host_status_cache(pack_id)
-        self._last_img_host_sync_task_status = None
-        changes_local_files = task in {"overwrite_from_remote", "download"}
-        effective_pack_id = str(
-            pack_id
-            or getattr(self, "_img_sync_pack_id", "")
-            or self._default_pack_context()["pack_id"]
-        ).strip()
-        manager = getattr(self, "semantic_task_manager", None)
-        if changes_local_files and manager is not None and effective_pack_id:
-            operation_name = (
-                "从远端覆盖本地表情包"
-                if task == "overwrite_from_remote"
-                else "从图床下载表情包"
-            )
-            manager.begin_external_pack_operation(effective_pack_id, operation_name)
-            self._img_host_local_operation = {
-                "pack_id": effective_pack_id,
-                "operation": operation_name,
-            }
-        try:
-            sync_client.sync_process = sync_client._start_sync_process(task)
-        except Exception:
-            if changes_local_files:
-                self._finish_img_host_local_operation()
-            raise
-        return self._get_img_host_sync_task_status()
-
-    async def _api_img_host_sync_status(self):
-        try:
-            pack_id = self._resolve_requested_sync_pack_id()
-            sync_client = self._ensure_img_sync_for_pack(pack_id)
-            if not sync_client:
-                return jsonify({"error": "图床服务未配置"}), 400
-
-            task_status = self._get_img_host_sync_task_status()
-            cache_ttl = self._get_img_host_status_cache_ttl()
-            cache_key = self._make_img_host_status_cache_key(
-                pack_id, getattr(sync_client, "local_dir", "")
-            )
-            cache_store = self._ensure_img_host_status_cache()
-            now = time.monotonic()
-            if not task_status.get("running") and cache_ttl > 0:
-                cached_entry = cache_store.get(cache_key)
-                if (
-                    cached_entry
-                    and (now - cached_entry.get("created_at", 0.0)) < cache_ttl
-                ):
-                    cached_payload = dict(cached_entry.get("payload") or {})
-                    cached_payload["status_cache_hit"] = True
-                    cached_payload["status_cache_ttl"] = cache_ttl
-                    return jsonify(cached_payload)
-
-            status = sync_client.check_status()
-            status["upload_count"] = len(status.get("to_upload", []))
-            status["download_count"] = len(status.get("to_download", []))
-            status["remote_extra_count"] = len(status.get("to_delete_remote", []))
-            status["local_extra_count"] = len(status.get("to_delete_local", []))
-            status["provider_label"] = self._get_provider_label()
-            status["status_cache_hit"] = False
-            status["status_cache_ttl"] = cache_ttl
-            if pack_id:
-                status["managed_pack_id"] = pack_id
-
-            if not task_status.get("running") and cache_ttl > 0:
-                cache_store[cache_key] = {
-                    "created_at": now,
-                    "payload": dict(status),
-                }
-            return jsonify(status)
-        except Exception as e:
-            error_text = str(e)
-            lower_error_text = error_text.lower()
-            is_rate_limited = any(
-                keyword in lower_error_text
-                for keyword in (
-                    "exceed times limit",
-                    "rate limit",
-                    "too many requests",
-                    "调用频次",
-                    "调用次数",
-                    "请求频率",
-                )
-            )
-            if is_rate_limited:
-                return (
-                    jsonify(
-                        {
-                            "error": "图床接口触发频率限制，请稍后再试",
-                            "details": error_text,
-                        }
-                    ),
-                    429,
-                )
-            return jsonify({"error": error_text}), 500
-
-    async def _api_img_host_sync_upload(self):
-        try:
-            payload = await request.get_json(silent=True)
-            pack_id = self._resolve_requested_sync_pack_id(payload)
-            if not self._ensure_img_sync_for_pack(pack_id):
-                return jsonify({"message": "图床服务未配置"}), 400
-            task_status = self._start_img_host_sync_task("upload", pack_id=pack_id)
-            return jsonify({"success": True, "task": task_status})
-        except Exception as e:
-            status_code = (
-                409
-                if any(
-                    marker in str(e)
-                    for marker in ("已有同步任务", "语义任务", "语义队列")
-                )
-                else 500
-            )
-            return jsonify({"message": str(e)}), status_code
-
-    async def _api_img_host_sync_overwrite_to_remote(self):
-        try:
-            payload = await request.get_json(silent=True)
-            pack_id = self._resolve_requested_sync_pack_id(payload)
-            if not self._ensure_img_sync_for_pack(pack_id):
-                return jsonify({"message": "图床服务未配置"}), 400
-            task_status = self._start_img_host_sync_task(
-                "overwrite_to_remote", pack_id=pack_id
-            )
-            return jsonify({"success": True, "task": task_status})
-        except Exception as e:
-            status_code = (
-                409
-                if any(
-                    marker in str(e)
-                    for marker in ("已有同步任务", "语义任务", "语义队列")
-                )
-                else 500
-            )
-            return jsonify({"message": str(e)}), status_code
-
-    async def _api_img_host_sync_overwrite_from_remote(self):
-        try:
-            payload = await request.get_json(silent=True)
-            pack_id = self._resolve_requested_sync_pack_id(payload)
-            if not self._ensure_img_sync_for_pack(pack_id):
-                return jsonify({"message": "图床服务未配置"}), 400
-            task_status = self._start_img_host_sync_task(
-                "overwrite_from_remote", pack_id=pack_id
-            )
-            return jsonify({"success": True, "task": task_status})
-        except Exception as e:
-            status_code = (
-                409
-                if any(
-                    marker in str(e)
-                    for marker in ("已有同步任务", "语义任务", "语义队列")
-                )
-                else 500
-            )
-            return jsonify({"message": str(e)}), status_code
-
-    async def _api_img_host_sync_download(self):
-        try:
-            payload = await request.get_json(silent=True)
-            pack_id = self._resolve_requested_sync_pack_id(payload)
-            if not self._ensure_img_sync_for_pack(pack_id):
-                return jsonify({"message": "图床服务未配置"}), 400
-            task_status = self._start_img_host_sync_task("download", pack_id=pack_id)
-            return jsonify({"success": True, "task": task_status})
-        except Exception as e:
-            status_code = (
-                409
-                if any(
-                    marker in str(e)
-                    for marker in ("已有同步任务", "语义任务", "语义队列")
-                )
-                else 500
-            )
-            return jsonify({"message": str(e)}), status_code
-
-    async def _api_img_host_sync_task_status(self):
-        return jsonify(self._get_img_host_sync_task_status())
-
-    async def _api_img_host_sync_progress(self):
-        async def generate():
-            while True:
-                status = self._get_img_host_sync_task_status()
-                yield f"data: {json.dumps(status)}\n\n"
-                if status.get("completed"):
-                    return
-                if status.get("running"):
-                    await asyncio.sleep(1)
-                else:
-                    return
-
-        response = await make_response(
-            generate(),
-            {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-            },
-        )
-        response.timeout = None
-        return response
-
     async def _api_serve_meme_image(self):
         category = str(request.args.get("category", "") or "").strip()
         filename = str(request.args.get("filename", "") or "").strip()
@@ -2066,7 +1670,6 @@ class WebAPIMixin:
     async def _api_semantic_status(self):
         try:
             pack_id = await self._semantic_request_pack_id()
-            self._get_img_host_sync_task_status()
             result = self.semantic_task_manager.status(pack_id)
             metadata = load_metadata(PACKS_DIR / pack_id)
             provider = EmbeddingAdapter(
@@ -2131,7 +1734,6 @@ class WebAPIMixin:
         try:
             data = await request.get_json() or {}
             pack_id = await self._semantic_request_pack_id(data)
-            self._get_img_host_sync_task_status()
             external_data = (
                 data.get("external_metadata")
                 if isinstance(data.get("external_metadata"), dict)
@@ -2174,7 +1776,6 @@ class WebAPIMixin:
         try:
             data = await request.get_json() or {}
             pack_id = await self._semantic_request_pack_id(data)
-            self._get_img_host_sync_task_status()
             result = await self.semantic_task_manager.start(
                 pack_id,
                 mode="retry_failed",
@@ -2195,7 +1796,6 @@ class WebAPIMixin:
         try:
             data = await request.get_json() or {}
             pack_id = await self._semantic_request_pack_id(data)
-            self._get_img_host_sync_task_status()
             if action == "resume":
                 result = await self.semantic_task_manager.resume(
                     pack_id, concurrency=data.get("concurrency")
@@ -2217,7 +1817,6 @@ class WebAPIMixin:
         try:
             data = await request.get_json() or {}
             pack_id = await self._semantic_request_pack_id(data)
-            self._get_img_host_sync_task_status()
             result = await self.semantic_task_manager.rebuild_index(
                 pack_id, force=bool(data.get("force", False))
             )

@@ -75,7 +75,7 @@
           <p class="eyebrow">Meme Pack Manager</p>
           <h1><i class="fas fa-face-grin-beam icon"></i>表情包管理</h1>
           <p class="page-subtitle">
-            支持批量选择、拖拽移动、图床同步和移动端管理。
+            支持批量选择、拖拽移动和移动端管理。
           </p>
           <div class="manage-pack-switch-row">
             <div class="panel-toggle-group" role="group" aria-label="页面视图">
@@ -179,70 +179,6 @@
           </div>
         </div>
 
-        <hr class="sync-divider" />
-
-        <div class="sync-panel">
-          <h4><i class="fas fa-cloud icon"></i>图床同步</h4>
-          <div class="sync-status">
-            <div class="sync-provider-summary">
-              <p>
-                <i class="fas fa-server icon"></i>图床服务商:
-                <span id="img-host-provider">--</span>
-              </p>
-              <p>
-                <i class="fas fa-images icon"></i>云端图片数:
-                <span id="remote-image-count">--</span> 张
-              </p>
-              <p>
-                <i class="fas fa-hard-drive icon"></i>云端占用:
-                <span id="remote-storage-size">--</span>
-              </p>
-            </div>
-            <div class="sync-metrics-summary">
-              <p class="sync-metric-item">
-                <i class="fas fa-upload icon"></i>
-                <span class="sync-metric-label">待上传</span>
-                <span class="sync-metric-value"
-                  ><span id="upload-count">0</span> 个文件</span
-                >
-              </p>
-              <p class="sync-metric-item">
-                <i class="fas fa-download icon"></i>
-                <span class="sync-metric-label">待下载</span>
-                <span class="sync-metric-value"
-                  ><span id="download-count">0</span> 个文件</span
-                >
-              </p>
-              <p class="sync-metric-item">
-                <i class="fas fa-cloud icon"></i>
-                <span class="sync-metric-label">云端多出</span>
-                <span class="sync-metric-value"
-                  ><span id="remote-extra-count">0</span> 个文件</span
-                >
-              </p>
-              <p class="sync-metric-item">
-                <i class="fas fa-folder-plus icon"></i>
-                <span class="sync-metric-label">本地多出</span>
-                <span class="sync-metric-value"
-                  ><span id="local-extra-count">0</span> 个文件</span
-                >
-              </p>
-            </div>
-            <p id="img-host-sync-progress" class="sync-progress-message hidden">
-              <i class="fas fa-spinner fa-spin icon"></i>
-              <span id="img-host-sync-progress-text">同步准备中...</span>
-            </p>
-            <button id="upload-sync-btn">
-              <i class="fas fa-cloud-arrow-up icon"></i>同步到云端
-            </button>
-            <button id="force-upload-sync-btn" class="danger">
-              <i class="fas fa-triangle-exclamation icon"></i>强制同步云端
-            </button>
-            <button id="download-sync-btn">
-              <i class="fas fa-cloud-arrow-down icon"></i>从云端同步
-            </button>
-          </div>
-        </div>
       </aside>
 
       <aside class="directory-panel" id="app-directory-panel">

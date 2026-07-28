@@ -74,8 +74,6 @@ async function initApp() {
         "meme_image_data",
         "meme_image_semantic",
         "semantic/reviews",
-        "img_host/sync/status",
-        "img_host/sync/task_status",
       ].includes(endpoint)
     ) {
       mergedParams.managed_pack_id = managedPackId;
@@ -97,9 +95,6 @@ async function initApp() {
       throw new Error(
         "当前为管理视图模式，仅支持浏览。请切回默认管理包后再执行编辑操作。",
       );
-    }
-    if (selectedPackId && endpoint.startsWith("img_host/sync/")) {
-      mergedBody.managed_pack_id = selectedPackId;
     }
     if (selectedPackId && endpoint.startsWith("semantic/")) {
       mergedBody.pack_id = selectedPackId;
@@ -322,10 +317,6 @@ async function initApp() {
   );
   const dangerModalConfirmBtn = document.getElementById(
     "danger-modal-confirm-btn",
-  );
-  const imgHostSyncProgress = document.getElementById("img-host-sync-progress");
-  const imgHostSyncProgressText = document.getElementById(
-    "img-host-sync-progress-text",
   );
   const managePackSelect = document.getElementById("manage-pack-select");
   const packSemanticStatus = document.getElementById("pack-semantic-status");
@@ -2468,16 +2459,12 @@ async function initApp() {
   async function refreshUi({
     emojis = false,
     syncStatus = false,
-    imgHostStatus = false,
   } = {}) {
     if (emojis) {
       await Promise.all([fetchEmojis(), refreshManagePackSummaries()]);
     }
     if (syncStatus) {
       await checkSyncStatus(false);
-    }
-    if (imgHostStatus) {
-      await checkImgHostSyncStatus(false);
     }
   }
 
@@ -3980,7 +3967,7 @@ async function initApp() {
     });
 
     if (movedCount > 0) {
-      await refreshUi({ emojis: true, imgHostStatus: true });
+      await refreshUi({ emojis: true });
     } else {
       updateSelectionUI();
     }
@@ -4054,7 +4041,7 @@ async function initApp() {
     }
 
     if (copiedCount > 0) {
-      await refreshUi({ emojis: true, imgHostStatus: true });
+      await refreshUi({ emojis: true });
     }
 
     if (
@@ -4148,160 +4135,6 @@ async function initApp() {
 
       event.preventDefault();
       await moveEmojiItemsToCategory(category, payload.items);
-    });
-  }
-
-  function setImgHostSyncProgress(message, state = "info") {
-    if (!imgHostSyncProgress || !imgHostSyncProgressText) {
-      return;
-    }
-
-    imgHostSyncProgress.classList.remove(
-      "hidden",
-      "sync-progress-success",
-      "sync-progress-error",
-      "sync-progress-warning",
-    );
-    if (state === "success") {
-      imgHostSyncProgress.classList.add("sync-progress-success");
-    } else if (state === "error") {
-      imgHostSyncProgress.classList.add("sync-progress-error");
-    } else if (state === "warning") {
-      imgHostSyncProgress.classList.add("sync-progress-warning");
-    }
-    imgHostSyncProgressText.textContent = message;
-  }
-
-  function hideImgHostSyncProgress(delay = 0) {
-    if (!imgHostSyncProgress) {
-      return;
-    }
-    window.setTimeout(() => {
-      imgHostSyncProgress.classList.add("hidden");
-    }, delay);
-  }
-
-  async function waitForSyncCompletion(actionLabel = "同步") {
-    return new Promise((resolve, reject) => {
-      let done = false;
-      let subscriptionId = null;
-      let pollTimer = null;
-      let timeoutTimer = null;
-
-      const cleanup = async () => {
-        if (pollTimer) {
-          clearInterval(pollTimer);
-          pollTimer = null;
-        }
-        if (timeoutTimer) {
-          clearTimeout(timeoutTimer);
-          timeoutTimer = null;
-        }
-        if (subscriptionId && window.AstrBotPluginPage.unsubscribeSSE) {
-          try {
-            await window.AstrBotPluginPage.unsubscribeSSE(subscriptionId);
-          } catch (error) {
-            console.warn("取消同步进度订阅失败:", error);
-          }
-        }
-      };
-
-      const finish = (error, result) => {
-        if (done) return;
-        done = true;
-        void cleanup();
-        if (error) {
-          reject(error);
-        } else {
-          resolve(result);
-        }
-      };
-
-      const handleStatus = (status) => {
-        if (!status || done) return;
-
-        if (status.running) {
-          setImgHostSyncProgress(`${actionLabel}进行中...`, "info");
-          return;
-        }
-
-        if (!status.completed) {
-          return;
-        }
-
-        if (status.success === false) {
-          const message =
-            status.exit_code != null
-              ? `${actionLabel}失败，进程退出码：${status.exit_code}`
-              : `${actionLabel}失败`;
-          finish(new Error(message));
-          return;
-        }
-
-        if (status.success === true) {
-          finish(null, status);
-          return;
-        }
-
-        finish(new Error("没有检测到正在运行的同步任务"));
-      };
-
-      const pollStatus = async () => {
-        try {
-          const status = await apiGet("img_host/sync/task_status");
-          handleStatus(status);
-        } catch (error) {
-          console.warn("轮询同步状态失败:", error);
-        }
-      };
-
-      timeoutTimer = window.setTimeout(
-        () => {
-          finish(
-            new Error(`${actionLabel}超时，请查看 AstrBot 日志确认结果。`),
-          );
-        },
-        30 * 60 * 1000,
-      );
-
-      pollTimer = window.setInterval(pollStatus, 2000);
-      void pollStatus();
-
-      const syncParams = {};
-      const currentManagedPackId = String(
-        activeManagePackId ||
-          managePackSelect?.value ||
-          managedPackIdFromUrl ||
-          "",
-      ).trim();
-      if (currentManagedPackId) {
-        syncParams.managed_pack_id = currentManagedPackId;
-      }
-
-      window.AstrBotPluginPage.subscribeSSE(
-        "img_host/sync/progress",
-        {
-          onOpen: () =>
-            setImgHostSyncProgress(`${actionLabel}进行中...`, "info"),
-          onMessage: ({ parsed }) => handleStatus(parsed),
-          onError: () =>
-            setImgHostSyncProgress(
-              "实时进度连接异常，已切换轮询确认结果。",
-              "warning",
-            ),
-        },
-        syncParams,
-      )
-        .then((id) => {
-          subscriptionId = id;
-        })
-        .catch((error) => {
-          console.warn("订阅同步进度失败，改用轮询:", error);
-          setImgHostSyncProgress(
-            "实时进度不可用，正在轮询同步结果。",
-            "warning",
-          );
-        });
     });
   }
 
@@ -5736,94 +5569,6 @@ async function initApp() {
     }
   }
 
-  async function syncToRemote() {
-    const btn = document.getElementById("upload-sync-btn");
-    try {
-      setButtonBusy(btn, "上传中, 这可能需要很久...");
-      setImgHostSyncProgress("正在启动上传同步...", "info");
-
-      await apiPost("img_host/sync/upload");
-      await waitForSyncCompletion("上传同步");
-      await refreshUi({ syncStatus: true, imgHostStatus: true });
-      setImgHostSyncProgress("上传同步已完成。", "success");
-      hideImgHostSyncProgress(3000);
-      showToast("云端上传同步已完成。", "success", "同步成功");
-    } catch (error) {
-      console.error("同步到云端失败:", error);
-      setImgHostSyncProgress(error.message, "error");
-      showToast(error.message, "error", "同步失败");
-    } finally {
-      restoreButton(btn);
-    }
-  }
-
-  async function forceSyncToRemote() {
-    const confirmed = await showDangerConfirm({
-      title: "强制同步云端",
-      description:
-        "该操作会让云端图库与当前本地图库完全一致：上传本地缺失文件，并删除云端多出的文件。本地已经删除的图片会从云端删除。",
-      actionLabel: "确认强制同步云端",
-      countdown: 5,
-    });
-    if (!confirmed) {
-      return;
-    }
-
-    const btn = document.getElementById("force-upload-sync-btn");
-    try {
-      setButtonBusy(btn, "强制同步中...");
-      setImgHostSyncProgress("正在启动强制同步云端...", "warning");
-
-      await apiPost("img_host/sync/overwrite_to_remote");
-      await waitForSyncCompletion("强制同步云端");
-      await refreshUi({ syncStatus: true, imgHostStatus: true });
-      setImgHostSyncProgress("强制同步云端已完成。", "success");
-      hideImgHostSyncProgress(3000);
-      showToast("强制同步云端已完成。", "success", "同步成功");
-    } catch (error) {
-      console.error("强制同步云端失败:", error);
-      setImgHostSyncProgress(error.message, "error");
-      showToast(error.message, "error", "同步失败");
-    } finally {
-      restoreButton(btn);
-    }
-  }
-
-  async function syncFromRemote() {
-    const btn = document.getElementById("download-sync-btn");
-    try {
-      setButtonBusy(btn, "下载中...");
-      setImgHostSyncProgress("正在启动下载同步...", "info");
-
-      await apiPost("img_host/sync/download");
-      await waitForSyncCompletion("下载同步");
-      await refreshUi({ emojis: true, syncStatus: true, imgHostStatus: true });
-      setImgHostSyncProgress("下载同步已完成。", "success");
-      hideImgHostSyncProgress(3000);
-      showToast("云端下载同步已完成。", "success", "同步成功");
-    } catch (error) {
-      console.error("从云端同步失败:", error);
-      setImgHostSyncProgress(error.message, "error");
-      showToast(error.message, "error", "同步失败");
-    } finally {
-      restoreButton(btn);
-    }
-  }
-
-  // 同步按钮的事件监听器
-  document
-    .getElementById("check-sync-btn")
-    .addEventListener("click", checkSyncStatus);
-  document
-    .getElementById("upload-sync-btn")
-    .addEventListener("click", syncToRemote);
-  document
-    .getElementById("force-upload-sync-btn")
-    .addEventListener("click", forceSyncToRemote);
-  document
-    .getElementById("download-sync-btn")
-    .addEventListener("click", syncFromRemote);
-
   // 同步配置的函数
   async function syncConfig() {
     try {
@@ -6079,102 +5824,8 @@ async function initApp() {
   initialStatusTimerId = window.setTimeout(() => {
     initialStatusTimerId = null;
     void checkSyncStatus(false);
-    void checkImgHostSyncStatus(false);
   }, 180);
 
-  // 检查图床同步状态
-  async function checkImgHostSyncStatus(showAlert = true) {
-    const uploadCountElement = document.getElementById("upload-count");
-    const downloadCountElement = document.getElementById("download-count");
-    const remoteExtraCountElement =
-      document.getElementById("remote-extra-count");
-    const localExtraCountElement = document.getElementById("local-extra-count");
-    const providerElement = document.getElementById("img-host-provider");
-    const remoteImageCountElement =
-      document.getElementById("remote-image-count");
-    const remoteStorageSizeElement = document.getElementById(
-      "remote-storage-size",
-    );
-
-    try {
-      const data = await apiGet("img_host/sync/status");
-
-      const uploadCount = data.upload_count ?? data.to_upload?.length ?? 0;
-      const downloadCount =
-        data.download_count ?? data.to_download?.length ?? 0;
-      const remoteExtraCount =
-        data.remote_extra_count ?? data.to_delete_remote?.length ?? 0;
-      const localExtraCount =
-        data.local_extra_count ?? data.to_delete_local?.length ?? 0;
-      const remoteImageCount =
-        data.remote_image_count ??
-        data.remote_count ??
-        data.remote_images?.length ??
-        0;
-      let remoteStorageText = "未知";
-      if (typeof data.remote_total_bytes === "number") {
-        remoteStorageText = formatBytes(data.remote_total_bytes);
-      } else if (typeof data.remote_total_bytes_estimated === "number") {
-        remoteStorageText = `${formatBytes(data.remote_total_bytes_estimated)}（本地估算）`;
-      }
-
-      if (uploadCountElement) {
-        uploadCountElement.textContent = uploadCount;
-      }
-      if (downloadCountElement) {
-        downloadCountElement.textContent = downloadCount;
-      }
-      if (remoteExtraCountElement) {
-        remoteExtraCountElement.textContent = remoteExtraCount;
-      }
-      if (localExtraCountElement) {
-        localExtraCountElement.textContent = localExtraCount;
-      }
-      if (providerElement) {
-        providerElement.textContent = data.provider_label || "未知图床";
-      }
-      if (remoteImageCountElement) {
-        remoteImageCountElement.textContent = remoteImageCount;
-      }
-      if (remoteStorageSizeElement) {
-        remoteStorageSizeElement.textContent = remoteStorageText;
-      }
-
-      if (showAlert) {
-        showToast(
-          `${data.provider_label || "图床"}：云端 ${remoteImageCount} 张，待上传 ${uploadCount} 个，待下载 ${downloadCount} 个，云端多出 ${remoteExtraCount} 个。`,
-          "info",
-          "图床状态已刷新",
-        );
-      }
-    } catch (error) {
-      console.error("检查图床同步状态失败:", error);
-      if (uploadCountElement) {
-        uploadCountElement.textContent = "--";
-      }
-      if (downloadCountElement) {
-        downloadCountElement.textContent = "--";
-      }
-      if (remoteExtraCountElement) {
-        remoteExtraCountElement.textContent = "--";
-      }
-      if (localExtraCountElement) {
-        localExtraCountElement.textContent = "--";
-      }
-      if (providerElement) {
-        providerElement.textContent = "--";
-      }
-      if (remoteImageCountElement) {
-        remoteImageCountElement.textContent = "--";
-      }
-      if (remoteStorageSizeElement) {
-        remoteStorageSizeElement.textContent = "--";
-      }
-      if (showAlert) {
-        showToast(error.message, "error", "检查失败");
-      }
-    }
-  }
 }
 
 initApp();

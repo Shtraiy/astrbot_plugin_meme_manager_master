@@ -743,38 +743,6 @@ input[type="file"] {
   gap: 10px;
 }
 
-.sync-divider {
-  margin: 20px 0;
-  border: none;
-  border-top: 1px solid #dee2e6;
-}
-
-.sync-provider-summary {
-  margin-bottom: 12px;
-  padding: 12px;
-  border: 1px solid rgba(52, 152, 219, 0.12);
-  border-radius: 10px;
-  background: linear-gradient(
-    180deg,
-    rgba(248, 251, 255, 0.95),
-    rgba(241, 247, 255, 0.92)
-  );
-}
-
-.sync-provider-summary p {
-  margin: 0 0 8px;
-  color: #4b5563;
-}
-
-.sync-provider-summary p:last-child {
-  margin-bottom: 0;
-}
-
-.sync-provider-summary span {
-  font-weight: 700;
-  color: #1f2937;
-}
-
 #sync-status {
   margin-top: 10px;
   padding: 10px;
@@ -800,78 +768,6 @@ input[type="file"] {
 
 #check-sync-btn:hover {
   background-color: #0056b3;
-}
-
-#upload-sync-btn {
-  background-color: #28a745;
-}
-
-#upload-sync-btn:hover {
-  background-color: #218838;
-}
-
-#download-sync-btn {
-  background-color: #17a2b8;
-}
-
-#download-sync-btn:hover {
-  background-color: #138496;
-}
-
-#force-upload-sync-btn {
-  background-color: #dc2626;
-}
-
-#force-upload-sync-btn:hover {
-  background-color: #b91c1c;
-}
-
-.sync-progress-message {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 12px 0;
-  padding: 10px 12px;
-  border: 1px solid rgba(37, 99, 235, 0.18);
-  border-radius: 8px;
-  background: rgba(37, 99, 235, 0.08);
-  color: #1d4ed8;
-  line-height: 1.45;
-}
-
-.sync-progress-success {
-  border-color: rgba(22, 163, 74, 0.22);
-  background: rgba(22, 163, 74, 0.1);
-  color: #15803d;
-}
-
-.sync-progress-warning {
-  border-color: rgba(217, 119, 6, 0.22);
-  background: rgba(217, 119, 6, 0.1);
-  color: #b45309;
-}
-
-.sync-progress-error {
-  border-color: rgba(220, 38, 38, 0.22);
-  background: rgba(220, 38, 38, 0.1);
-  color: #b91c1c;
-}
-
-/* 添加同步状态指示器 */
-.sync-status-indicator {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 5px;
-}
-
-.sync-status-pending {
-  background-color: #ffc107;
-}
-
-.sync-status-synced {
-  background-color: #28a745;
 }
 
 .mapping-input {
@@ -2813,7 +2709,6 @@ button.secondary,
 button.danger,
 .selection-toolbar-actions button.danger,
 #delete-manage-pack-btn,
-#force-upload-sync-btn,
 .delete-category-btn,
 .clear-category-btn {
   background: linear-gradient(135deg, #d45244, var(--ui-danger));
@@ -2912,49 +2807,6 @@ button.danger,
   min-width: 44px;
   height: 40px;
   border-radius: 12px;
-}
-
-.sync-metrics-summary {
-  margin-top: 10px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(52, 152, 219, 0.14);
-  border-radius: 10px;
-  background: linear-gradient(
-    180deg,
-    rgba(248, 251, 255, 0.96),
-    rgba(241, 247, 255, 0.93)
-  );
-}
-
-.sync-metric-item {
-  display: grid;
-  grid-template-columns: 18px 1fr auto;
-  gap: 8px;
-  align-items: center;
-  margin: 0;
-  padding: 3px 0;
-  color: #4b5563;
-}
-
-.sync-metric-item + .sync-metric-item {
-  border-top: 1px dashed rgba(148, 163, 184, 0.22);
-  margin-top: 5px;
-  padding-top: 8px;
-}
-
-.sync-metric-item .icon {
-  margin-right: 0;
-  text-align: center;
-}
-
-.sync-metric-label {
-  color: #4b5563;
-}
-
-.sync-metric-value {
-  font-weight: 700;
-  color: #1f2937;
 }
 
 /* Mobile sidebar behavior: keep control panel right below the sidebar trigger */

@@ -602,10 +602,6 @@ class EventHandlerMixin:
                     f"✅ 已经成功收录了 {len(saved_files)} 张新表情到「{category}」图库！"
                 )
             ]
-            if self.img_sync:
-                result_msg.append(
-                    Plain("\n☁️ 检测到已配置图床，如需同步到云端请使用命令：同步到云端")
-                )
             yield event.chain_result(result_msg)
             await self.reload_emotions()
             if saved_files:

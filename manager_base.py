@@ -30,12 +30,6 @@ from .config import (
     MEMES_DIR,
     PLUGIN_DATA_DIR,
 )
-try:
-    from .image_host.img_sync import ImageSync
-except ModuleNotFoundError:
-    # Image hosting is optional.  The local WebUI and meme runtime must still
-    # load when the optional reference image_host package is not bundled.
-    ImageSync = None
 from .init import init_plugin
 from .mixins.commands import CommandMixin
 from .mixins.event_handlers import EventHandlerMixin
@@ -101,74 +95,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
 
         # 初始化类别管理器
         self.category_manager = CategoryManager()
-
-        # 图床初始化
-        self.img_sync = None
-        self.img_sync_config = None
-        self.img_sync_provider_type = None
-        self._img_sync_pack_id = ""
-        self._last_img_host_sync_task_status = None
-        image_host_type = self._get_image_host_type()
-        webdav_config = self._get_webdav_config()
-        if image_host_type == "stardots" and self._has_required_config(
-            webdav_config, ["url", "username", "password"]
-        ):
-            image_host_type = "webdav"
-            logger.info("检测到完整 WebDAV 配置，自动启用 WebDAV 图床。")
-
-        if image_host_type == "stardots":
-            stardots_config = self._get_provider_config("stardots")
-            if stardots_config.get("key") and stardots_config.get("secret"):
-                stardots_config["provider"] = "stardots"
-                self.img_sync_config = {
-                    "key": stardots_config["key"],
-                    "secret": stardots_config["secret"],
-                    "space": stardots_config.get("space", "memes"),
-                    "list_cache_ttl": stardots_config.get("list_cache_ttl", 60),
-                    "provider": "stardots",
-                }
-                self.img_sync_provider_type = "stardots"
-        elif image_host_type == "cloudflare_r2":
-            r2_config = self._get_provider_config("cloudflare_r2")
-            required_fields = [
-                "account_id",
-                "access_key_id",
-                "secret_access_key",
-                "bucket_name",
-            ]
-            if all(r2_config.get(field) for field in required_fields):
-                if r2_config.get("public_url"):
-                    r2_config["public_url"] = r2_config["public_url"].rstrip("/")
-                r2_config["provider"] = "cloudflare_r2"
-                self.img_sync_config = dict(r2_config)
-                self.img_sync_provider_type = "cloudflare_r2"
-                self._r2_bucket_name = r2_config.get("bucket_name")
-        elif image_host_type == "webdav":
-            required_fields = ["url", "username", "password"]
-            if all(webdav_config.get(field) for field in required_fields):
-                if webdav_config.get("url"):
-                    webdav_config["url"] = str(webdav_config["url"]).rstrip("/")
-                if webdav_config.get("public_url"):
-                    webdav_config["public_url"] = str(
-                        webdav_config["public_url"]
-                    ).rstrip("/")
-                webdav_config["provider"] = "webdav"
-                self.img_sync_config = dict(webdav_config)
-                self.img_sync_provider_type = "webdav"
-                self._webdav_url = webdav_config.get("url")
-            else:
-                missing_fields = [
-                    field for field in required_fields if not webdav_config.get(field)
-                ]
-                logger.warning(
-                    "WebDAV 图床未初始化，缺少必要配置项: %s。当前已读取字段: %s",
-                    ", ".join(missing_fields),
-                    ", ".join(sorted(webdav_config.keys())) or "无",
-                )
-
-        # 图床客户端按当前默认/目标表情包动态构建，避免固定绑定插件启动时目录。
-        if self.img_sync_config and self.img_sync_provider_type:
-            self._ensure_img_sync_for_pack()
 
         # 上传与待发送状态
         self.upload_states = {}
@@ -328,20 +254,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
     async def after_message_sent(self, event: AstrMessageEvent):
         return await self._after_message_sent_impl(event)
 
-    def _get_image_host_type(self) -> str:
-        image_host = self._read_config_value(
-            ("storage", "provider"),
-            default="stardots",
-            legacy_keys=("image_host",),
-        )
-        if isinstance(image_host, dict):
-            image_host = (
-                image_host.get("name")
-                or image_host.get("value")
-                or image_host.get("type", "stardots")
-            )
-        return str(image_host or "stardots").strip().lower()
-
     def _read_path(self, path: tuple[str, ...], missing=None):
         current = self.config
         for key in path:
@@ -373,104 +285,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
                 return value
 
         return default
-
-    def _get_provider_config(self, provider_key: str) -> dict:
-        merged_config = {}
-        legacy_config = self._read_path(("image_host_config", provider_key), {})
-        modern_config = self._read_path(("storage", "providers", provider_key), {})
-        if isinstance(legacy_config, dict):
-            merged_config.update(legacy_config)
-        if isinstance(modern_config, dict):
-            merged_config.update(modern_config)
-        return merged_config
-
-    def _get_nested_config(self, *keys: str) -> dict:
-        current = self.config
-        for key in keys:
-            if not isinstance(current, dict):
-                return {}
-            current = current.get(key, {})
-        return current if isinstance(current, dict) else {}
-
-    def _has_required_config(self, config: dict, required_fields: list[str]) -> bool:
-        return all(config.get(field) not in (None, "") for field in required_fields)
-
-    def _get_webdav_config(self) -> dict:
-        webdav_config = dict(self._get_provider_config("webdav"))
-        if not webdav_config:
-            webdav_config = dict(self._get_nested_config("webdav"))
-        aliases = {
-            "url": ["webdav_url", "endpoint", "base_url", "host"],
-            "username": ["webdav_username", "user", "account"],
-            "password": ["webdav_password", "pass", "token", "access_token"],
-            "base_path": ["webdav_base_path", "path", "root_path", "remote_path"],
-            "public_url": ["webdav_public_url", "cdn_url"],
-            "verify_ssl": ["webdav_verify_ssl", "ssl_verify"],
-            "timeout": ["webdav_timeout"],
-        }
-        for target_key, alias_keys in aliases.items():
-            if webdav_config.get(target_key) not in (None, ""):
-                continue
-            for alias_key in alias_keys:
-                value = webdav_config.get(alias_key, self.config.get(alias_key))
-                if value not in (None, ""):
-                    webdav_config[target_key] = value
-                    break
-        return webdav_config
-
-    def _resolve_sync_pack_target(self, preferred_pack_id: str | None = None):
-        from .backend.pack_resolver import get_pack_paths, resolve_pack_id
-
-        pack_id = str(preferred_pack_id or "").strip()
-        if pack_id:
-            paths = get_pack_paths(pack_id)
-            pack_dir = paths["pack_dir"]
-            if pack_dir.is_dir():
-                memes_dir = paths["memes_dir"]
-                memes_dir.mkdir(parents=True, exist_ok=True)
-                return pack_id, memes_dir
-
-        resolved_pack_id = resolve_pack_id()
-        paths = get_pack_paths(resolved_pack_id)
-        memes_dir = paths["memes_dir"]
-        memes_dir.mkdir(parents=True, exist_ok=True)
-        return resolved_pack_id, memes_dir
-
-    def _ensure_img_sync_for_pack(self, preferred_pack_id: str | None = None):
-        if not (self.img_sync_config and self.img_sync_provider_type):
-            return None
-        if ImageSync is None:
-            logger.warning(
-                "图床同步已配置，但插件缺少可选 image_host 运行模块；已跳过图床同步"
-            )
-            return None
-
-        running_process = (
-            getattr(self.img_sync, "sync_process", None) if self.img_sync else None
-        )
-        if running_process and running_process.is_alive():
-            return self.img_sync
-
-        target_pack_id, target_memes_dir = self._resolve_sync_pack_target(
-            preferred_pack_id
-        )
-
-        current_dir = None
-        if self.img_sync and getattr(self.img_sync, "local_dir", None):
-            try:
-                current_dir = Path(self.img_sync.local_dir).resolve()
-            except Exception:
-                current_dir = None
-
-        if current_dir != target_memes_dir.resolve():
-            self.img_sync = ImageSync(
-                config=self.img_sync_config,
-                local_dir=target_memes_dir,
-                provider_type=self.img_sync_provider_type,
-            )
-
-        self._img_sync_pack_id = target_pack_id
-        return self.img_sync
 
     def _build_meme_prompt(self, category_mapping_string: str | None = None) -> str:
         mapping_string = category_mapping_string or self.category_mapping_string
@@ -985,5 +799,3 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         for index, persona in enumerate(personas):
             key = self._get_persona_key(persona, index)
             persona["prompt"] = self.persona_base_prompts[key]
-        if self.img_sync:
-            self.img_sync.stop_sync()
