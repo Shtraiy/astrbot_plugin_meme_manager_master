@@ -3,10 +3,24 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from storage import MemeStore, is_safe_category_segment
+from storage import MemeStore, is_safe_category_segment, scan_pack_emojis
 
 
 class PackStorageRuntimeTests(unittest.TestCase):
+    def test_webui_scan_uses_runtime_image_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memes_dir = Path(temp_dir) / "memes"
+            category_dir = memes_dir / "happy"
+            category_dir.mkdir(parents=True)
+            (category_dir / "z.webp").write_bytes(b"webp")
+            (category_dir / "a.BMP").write_bytes(b"bmp")
+            (category_dir / "index.json").write_text("{}", encoding="utf-8")
+
+            self.assertEqual(
+                scan_pack_emojis(memes_dir),
+                {"happy": ["a.BMP", "z.webp"]},
+            )
+
     def test_unicode_category_names_share_the_same_safe_storage_contract(self):
         self.assertTrue(is_safe_category_segment("猫猫表情"))
         self.assertFalse(is_safe_category_segment("../outside"))

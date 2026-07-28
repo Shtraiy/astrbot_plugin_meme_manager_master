@@ -61,7 +61,7 @@ from ..backend.semantic_storage import (
     load_metadata,
     metadata_items,
 )
-from ..storage import IMAGE_EXTENSIONS, is_safe_category_segment
+from ..storage import IMAGE_EXTENSIONS, is_safe_category_segment, scan_pack_emojis
 from ..config import (
     COMMUNITY_INDEX_URL,
     get_active_pack_paths,
@@ -677,6 +677,7 @@ class WebAPIMixin:
         except Exception as exc:
             logger.error("图片变更后刷新语义元数据失败: %s", exc, exc_info=True)
 
+    @staticmethod
     def _resolve_webui_pack_view_context() -> dict | None:
         managed_pack_id = str(request.args.get("managed_pack_id") or "").strip()
         if not managed_pack_id:
@@ -703,25 +704,7 @@ class WebAPIMixin:
 
     @staticmethod
     def _scan_pack_emojis(memes_dir: Path) -> dict:
-        emojis = {}
-        if not memes_dir.is_dir():
-            return emojis
-        for category_dir in memes_dir.iterdir():
-            if not category_dir.is_dir():
-                continue
-            category = category_dir.name
-            files = []
-            for file_path in category_dir.iterdir():
-                if file_path.is_file() and file_path.suffix.lower() in {
-                    ".png",
-                    ".jpg",
-                    ".jpeg",
-                    ".gif",
-                    ".webp",
-                }:
-                    files.append(file_path.name)
-            emojis[category] = files
-        return emojis
+        return scan_pack_emojis(memes_dir)
 
     @staticmethod
     def _load_pack_descriptions(view_context: dict) -> dict:

@@ -12,6 +12,7 @@ from ipaddress import ip_address
 import math
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -114,6 +115,29 @@ def is_safe_remote_image_url(value: Any) -> bool:
             return True
     except ValueError:
         return False
+
+
+def is_supported_image_source(value: Any) -> bool:
+    """Return whether an image source uses a protocol the plugin understands.
+
+    This is deliberately only a protocol/shape check.  Remote URLs still need
+    the DNS/rebinding checks performed by the downloader, and local files must
+    be checked against the caller's allowed directories before opening them.
+    """
+    source = str(value or "").strip()
+    if not source:
+        return False
+    if source.startswith(("data:image/", "base64://")):
+        return True
+    parsed = urlparse(source)
+    scheme = parsed.scheme.lower()
+    if scheme in {"http", "https"}:
+        return is_safe_remote_image_url(source)
+    if scheme == "file":
+        return bool(parsed.path)
+    if scheme:
+        return False
+    return Path(source).is_absolute()
 
 
 def complete_batch_indices(actual: Any, expected: Any) -> bool:

@@ -634,6 +634,26 @@ def is_safe_category_segment(value: str) -> bool:
     return Path(normalized).name == normalized
 
 
+def scan_pack_emojis(memes_dir: Path | str) -> dict[str, list[str]]:
+    """Scan one pack using the same image contract as runtime selection."""
+    root = Path(memes_dir)
+    if not root.is_dir():
+        return {}
+
+    result: dict[str, list[str]] = {}
+    for category_dir in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
+        if not category_dir.is_dir() or not is_safe_category_segment(category_dir.name):
+            continue
+        result[category_dir.name] = [
+            path.name
+            for path in sorted(
+                category_dir.iterdir(), key=lambda item: item.name.casefold()
+            )
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+        ]
+    return result
+
+
 def _is_safe_segment(value: str) -> bool:
     return is_safe_category_segment(value)
 

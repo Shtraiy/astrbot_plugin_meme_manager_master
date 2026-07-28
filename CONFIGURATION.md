@@ -14,6 +14,7 @@
 | `auto_send_probability` | 普通对话的自动发送概率 |
 | `auto_send_cooldown` | 自动发送之间的冷却时间 |
 | `library_index_enabled` | 后台为缺少描述的图片补充索引，默认关闭 |
+| `library_index_provider_id` | 后台补充 `index.json` 描述时使用的模型，留空沿用 `vision_provider_id` |
 
 参考插件迁移来的高级配置仍可被运行时兼容读取，但不再显示在设置页；这包括并发数、下载限制、旧版标记解析、语义索引和旧版提示词等。图床同步相关配置和代码已移除。
 

@@ -63,7 +63,10 @@ async function initApp() {
   async function apiGet(endpoint, params = {}) {
     const mergedParams = { ...params };
     const managedPackId = String(
-      activeManagePackId || managePackSelect?.value || "",
+      activeManagePackId ||
+        managePackSelect?.value ||
+        managedPackIdFromUrl ||
+        "",
     ).trim();
     if (
       managedPackId &&
@@ -84,7 +87,10 @@ async function initApp() {
   async function apiPost(endpoint, body = {}) {
     const mergedBody = { ...body };
     const selectedPackId = String(
-      activeManagePackId || managePackSelect?.value || "",
+      activeManagePackId ||
+        managePackSelect?.value ||
+        managedPackIdFromUrl ||
+        "",
     ).trim();
     if (
       selectedPackId &&

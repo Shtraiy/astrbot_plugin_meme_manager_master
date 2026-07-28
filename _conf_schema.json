@@ -67,5 +67,12 @@
     "description": "后台补充表情包索引",
     "hint": "开启后后台为缺少描述的图片补充索引，可能产生额外模型调用；已有 index.json 不会被清空。",
     "default": false
+  },
+  "library_index_provider_id": {
+    "type": "string",
+    "description": "后台索引模型",
+    "hint": "用于后台补充 index.json 描述和分类索引；留空时使用识图模型。",
+    "_special": "select_provider",
+    "default": ""
   }
 }
