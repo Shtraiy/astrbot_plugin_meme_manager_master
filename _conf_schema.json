@@ -4,7 +4,7 @@
     "description": "表情包存储与图床",
     "items": {
       "provider": {"type": "string", "default": "", "options": ["", "stardots", "cloudflare_r2", "webdav"]},
-      "providers": {"type": "object", "description": "图床服务参数"}
+      "providers": {"type": "object", "description": "图床服务参数", "items": {}}
     }
   },
   "community": {
