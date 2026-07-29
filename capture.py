@@ -182,6 +182,7 @@ class CaptureMixin:
         self._stolen_image_by_event: dict[str, Path] = {}
         self._recent_meme_context: dict[str, tuple[float, Path, dict]] = {}
         self._meme_send_receipts: dict[str, tuple[float, Path, dict]] = {}
+        self._explicit_meme_requests: dict[str, tuple[float, str]] = {}
 
     async def initialize(self) -> None:
         """Check the required plugin before accepting any image."""
@@ -238,6 +239,36 @@ class CaptureMixin:
             return False
         window = self._float_config("meme_follow_up_window", 300, 10, 1800)
         return time.monotonic() - sent_at <= window
+
+    def _remember_explicit_request(self, event: AstrMessageEvent) -> None:
+        """Keep direct meme intent available across Agent continuation events."""
+        message_text = self._event_text(event)
+        if not explicit_meme_request(message_text):
+            return
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        if not umo:
+            return
+        self._explicit_meme_requests[umo] = (time.monotonic(), message_text)
+
+    def _explicit_request_active(self, event: AstrMessageEvent) -> bool:
+        """Return whether this event belongs to a recent direct meme request."""
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        if not umo:
+            return False
+        entry = self._explicit_meme_requests.get(umo)
+        if entry is None:
+            return False
+        requested_at, _message_text = entry
+        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        if time.monotonic() - requested_at > window:
+            self._explicit_meme_requests.pop(umo, None)
+            return False
+        return True
+
+    def _clear_explicit_request(self, event: AstrMessageEvent) -> None:
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        if umo:
+            self._explicit_meme_requests.pop(umo, None)
 
     def _remember_sent_meme(
         self,
@@ -454,6 +485,7 @@ class CaptureMixin:
         message_text: str,
     ) -> None:
         """Handle a direct meme request before the default Agent can use tools."""
+        self._clear_explicit_request(event)
         setattr(event, "_meme_manager_master_explicit_handled", True)
         if not await self._manager_ready():
             event.set_result(
@@ -613,6 +645,7 @@ class CaptureMixin:
         AstrBot's pipeline may forward extra handler arguments.  This listener
         only needs the event, so accept and ignore those compatibility args.
         """
+        self._remember_explicit_request(event)
         if getattr(event, "_meme_manager_master_manual", False):
             return
         if not self._bool_config("enabled", True):
@@ -769,9 +802,18 @@ class CaptureMixin:
             if cleaned:
                 plain_texts.append(cleaned)
         event_text = self._event_text(event)
-        force_send = explicit_meme_request(event_text) or is_meme_follow_up_request(
-            event_text,
-            recent_meme=self._recent_meme_sent(event),
+        explicit_request_fallback = self._explicit_request_active(event)
+        if explicit_request_fallback:
+            # Consume the bridge here so an unrelated later reply in this chat
+            # cannot inherit the previous direct-send intent.
+            self._clear_explicit_request(event)
+        force_send = (
+            explicit_meme_request(event_text)
+            or explicit_request_fallback
+            or is_meme_follow_up_request(
+                event_text,
+                recent_meme=self._recent_meme_sent(event),
+            )
         )
 
         # Marker cleanup always happens, even if our own sender is disabled.
@@ -842,6 +884,7 @@ class CaptureMixin:
 
     async def on_llm_request(self, event: AstrMessageEvent, req) -> None:
         """Inject recent meme context and remove image-producing Agent tools."""
+        self._remember_explicit_request(event)
         message_text = self._event_text(event)
         if explicit_meme_request(message_text):
             await self._handle_explicit_meme_request(event, message_text)

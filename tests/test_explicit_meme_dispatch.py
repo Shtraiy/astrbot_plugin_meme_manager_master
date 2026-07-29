@@ -17,6 +17,16 @@ class ExplicitMemeDispatchTests(unittest.TestCase):
         explicit = source.index("await self._handle_explicit_meme_request", hook)
         self.assertLess(explicit, source.index("tool_set =", hook))
 
+    def test_explicit_request_is_available_to_decorating_fallback(self):
+        source = (ROOT / "capture.py").read_text(encoding="utf-8")
+        self.assertIn("self._remember_explicit_request(event)", source)
+        self.assertIn("self._explicit_request_active(event)", source)
+        decorating = source.index("async def on_decorating_result")
+        self.assertLess(
+            source.index("_explicit_request_active(event)", decorating),
+            source.index("_rewrite_unverified_meme_claim", decorating),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
