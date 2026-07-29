@@ -27,6 +27,12 @@ class ExplicitMemeDispatchTests(unittest.TestCase):
             source.index("_rewrite_unverified_meme_claim", decorating),
         )
 
+    def test_explicit_result_is_restored_if_agent_continuation_overwrites_it(self):
+        source = (ROOT / "capture.py").read_text(encoding="utf-8")
+        self.assertIn("self._forced_meme_results", source)
+        self.assertIn("_restore_forced_meme_result", source)
+        self.assertIn("event.stop_event()", source)
+
 
 if __name__ == "__main__":
     unittest.main()

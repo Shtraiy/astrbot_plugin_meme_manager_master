@@ -183,6 +183,7 @@ class CaptureMixin:
         self._recent_meme_context: dict[str, tuple[float, Path, dict]] = {}
         self._meme_send_receipts: dict[str, tuple[float, Path, dict]] = {}
         self._explicit_meme_requests: dict[str, tuple[float, str]] = {}
+        self._forced_meme_results: dict[str, tuple[float, Path, dict]] = {}
 
     async def initialize(self) -> None:
         """Check the required plugin before accepting any image."""
@@ -269,6 +270,41 @@ class CaptureMixin:
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         if umo:
             self._explicit_meme_requests.pop(umo, None)
+
+    def _remember_forced_meme_result(
+        self,
+        event: AstrMessageEvent,
+        image_path: Path,
+        details: dict,
+    ) -> None:
+        """Keep an explicit-send result until the final response stage."""
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        if not umo or not image_path.is_file():
+            return
+        self._forced_meme_results[umo] = (time.monotonic(), image_path, dict(details))
+
+    def _restore_forced_meme_result(self, event: AstrMessageEvent) -> bool:
+        """Restore a local meme if an Agent continuation overwrote event.result."""
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        entry = self._forced_meme_results.get(umo)
+        result = event.get_result()
+        if not umo or entry is None or result is None:
+            return False
+        sent_at, image_path, _details = entry
+        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        if time.monotonic() - sent_at > window or not image_path.is_file():
+            self._forced_meme_results.pop(umo, None)
+            return False
+        result.chain = [
+            Comp.Plain("找到一个合适的表情包，发给你啦～"),
+            Comp.Image.fromFileSystem(str(image_path)),
+        ]
+        self._forced_meme_results.pop(umo, None)
+        logger.info(
+            "[meme_manager_master] restored explicit meme result before final send file=%s",
+            image_path,
+        )
+        return True
 
     def _remember_sent_meme(
         self,
@@ -476,8 +512,7 @@ class CaptureMixin:
         should_call_llm = getattr(event, "should_call_llm", None)
         if callable(should_call_llm):
             should_call_llm(False)
-        else:
-            event.stop_event()
+        event.stop_event()
 
     async def _handle_explicit_meme_request(
         self,
@@ -511,6 +546,8 @@ class CaptureMixin:
             return
 
         umo = str(getattr(event, "unified_msg_origin", "") or "")
+        details = self._image_details(image_path)
+        self._remember_forced_meme_result(event, image_path, details)
         self._arm_agent_tool_guard(event)
         event.set_result(
             event.chain_result(
@@ -522,7 +559,7 @@ class CaptureMixin:
         )
         if umo:
             self._last_auto_send[umo] = time.monotonic()
-        self._remember_sent_meme(event, image_path)
+        self._remember_sent_meme(event, image_path, details)
         self._disable_default_llm(event)
         logger.info(
             "[meme_manager_master] explicit meme request handled before default Agent file=%s",
@@ -778,9 +815,11 @@ class CaptureMixin:
 
     async def on_decorating_result(self, event: AstrMessageEvent) -> None:
         """Replace meme_manager_master's marker sender with this plugin's sender."""
+        result = event.get_result()
+        if result and self._restore_forced_meme_result(event):
+            return
         if getattr(event, "_meme_manager_master_explicit_handled", False):
             return
-        result = event.get_result()
         chain = getattr(result, "chain", None) if result else None
         if not chain:
             return
