@@ -4,7 +4,7 @@ import asyncio
 import re
 from pathlib import Path
 
-from astrbot.api import llm_tool, logger
+from astrbot.api import logger
 from astrbot.api.all import *
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import EventMessageType
@@ -15,12 +15,6 @@ from astrbot.api.star import Context, Star
 from .backend.category_manager import CategoryManager
 from .backend.semantic_index import EmbeddingAdapter, index_is_ready
 from .backend.semantic_models import runtime_category_mapping
-from .backend.semantic_query import (
-    candidate_records,
-    dumps_result,
-    remember_candidates,
-    search_memes,
-)
 from .backend.semantic_storage import load_metadata, semantic_metadata_is_complete
 from .backend.semantic_task import SemanticTaskManager
 from .config import (
@@ -721,68 +715,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
             self._reload_personas()
         except Exception as e:
             logger.error(f"重新加载表情配置失败: {str(e)}")
-
-    @llm_tool(name="search_memes")
-    async def search_memes_tool(self, event: AstrMessageEvent, query: str) -> str:
-        """搜索与 Bot 当前表达意图相符的表情包。
-
-        Args:
-            query(string): Bot 自己准备表达的情绪、态度、动作和潜台词，不要直接复制用户原话。
-        """
-        if (
-            not self._semantic_mode_active(event)
-            or str(event.get_extra("meme_manager_master_semantic_mode") or "") != "tool"
-        ):
-            return dumps_result({"ok": False, "reason": "语义查询未启用或索引不可用"})
-        if bool(event.get_extra("meme_manager_master_semantic_search_completed")):
-            return dumps_result(
-                {
-                    "ok": False,
-                    "reason": "本轮已经完成唯一一次搜索，请直接根据上次候选完成最终回复",
-                }
-            )
-        event.set_extra("meme_manager_master_semantic_search_completed", True)
-        provider_request = event.get_extra("provider_request")
-        if provider_request is not None:
-            self._remove_semantic_tool(provider_request)
-        context = self._resolve_runtime_pack_context(event=event)
-        if str(context.get("pack_id") or "") != str(
-            event.get_extra("meme_manager_master_semantic_verified_pack_id") or ""
-        ):
-            return dumps_result({"ok": False, "reason": "当前语义图包已经变化"})
-        try:
-            result = await search_memes(
-                context["pack_dir"],
-                PLUGIN_DATA_DIR,
-                str(context["pack_id"]),
-                query,
-                self._resolve_embedding_provider(str(context["pack_id"])),
-                top_k=self.semantic_top_k,
-                min_score=self.semantic_min_score,
-                _verified_complete=True,
-            )
-            records = candidate_records(
-                context["pack_dir"], result.get("candidates") or []
-            )
-            remember_candidates(event, records)
-            event.set_extra(
-                "meme_manager_master_semantic_default_id",
-                str(records[0].get("id") or "") if records else "",
-            )
-            event.set_extra("meme_manager_master_semantic_query", str(query or ""))
-            return dumps_result(
-                {
-                    **result,
-                    "instruction": (
-                        "本轮唯一一次搜索已经完成，禁止再次调用 search_memes。"
-                        "候选非空时选择一张，只在最终回复最后一行输出 "
-                        "&&meme:候选ID&&，不要解释 ID、caption 或 tags。"
-                    ),
-                }
-            )
-        except Exception as exc:
-            logger.error("语义表情查询失败: %s", exc, exc_info=True)
-            return dumps_result({"ok": False, "reason": "语义查询失败"})
 
     async def terminate(self):
         initial_task = getattr(self, "_semantic_initial_rebuild_task", None)

@@ -13,6 +13,11 @@ class LegacyTagDispatchTests(unittest.TestCase):
         source = (Path(__file__).parents[1] / "manager_base.py").read_text(encoding="utf-8")
         self.assertIn("self.semantic_enabled = False", source)
 
+    def test_retired_semantic_search_tool_is_not_registered(self):
+        source = (Path(__file__).parents[1] / "manager_base.py").read_text(encoding="utf-8")
+        self.assertNotIn('@llm_tool(name="search_memes")', source)
+        self.assertNotIn("async def search_memes_tool", source)
+
 
 if __name__ == "__main__":
     unittest.main()
