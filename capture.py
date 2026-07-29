@@ -438,8 +438,23 @@ class CaptureMixin:
         async with self._auto_send_claim_lock:
             now = time.monotonic()
             if key in self._auto_send_claims:
-                logger.debug("[meme_manager_master] 跳过同一事件的重复表情包发送 event=%s", key)
-                return False
+                explicit_handled = bool(
+                    getattr(event, "_meme_manager_master_explicit_handled", False)
+                )
+                if not force or explicit_handled:
+                    logger.debug(
+                        "[meme_manager_master] 跳过同一事件的重复表情包发送 event=%s",
+                        key,
+                    )
+                    return False
+                # AstrBot may reuse an event identity for a new direct request
+                # captured as an Agent follow-up. A forced request is allowed
+                # to claim that reused identity again.
+                self._auto_send_claims.pop(key, None)
+                logger.debug(
+                    "[meme_manager_master] 允许新的显式表情包请求复用事件标识 event=%s",
+                    key,
+                )
             umo = str(getattr(event, "unified_msg_origin", "") or "")
             cooldown = self._float_config("auto_send_cooldown", 30, 0, 3600)
             if not force and umo and cooldown:
@@ -521,8 +536,8 @@ class CaptureMixin:
     ) -> None:
         """Handle a direct meme request before the default Agent can use tools."""
         self._clear_explicit_request(event)
-        setattr(event, "_meme_manager_master_explicit_handled", True)
         if not await self._manager_ready():
+            setattr(event, "_meme_manager_master_explicit_handled", True)
             event.set_result(
                 event.plain_result("本地表情包管理器当前不可用，暂时无法发送表情包。")
             )
@@ -531,6 +546,7 @@ class CaptureMixin:
         if not await self._claim_auto_send(event, force=True):
             self._disable_default_llm(event)
             return
+        setattr(event, "_meme_manager_master_explicit_handled", True)
 
         image_path = await self._choose_outgoing_meme_from_index(
             event,
@@ -682,6 +698,10 @@ class CaptureMixin:
         AstrBot's pipeline may forward extra handler arguments.  This listener
         only needs the event, so accept and ignore those compatibility args.
         """
+        message_text = self._event_text(event)
+        if explicit_meme_request(message_text):
+            # A follow-up request may reuse the same AstrBot event object.
+            setattr(event, "_meme_manager_master_explicit_handled", False)
         self._remember_explicit_request(event)
         if getattr(event, "_meme_manager_master_manual", False):
             return

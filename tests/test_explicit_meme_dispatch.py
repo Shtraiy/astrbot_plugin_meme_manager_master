@@ -33,6 +33,16 @@ class ExplicitMemeDispatchTests(unittest.TestCase):
         self.assertIn("_restore_forced_meme_result", source)
         self.assertIn("event.stop_event()", source)
 
+    def test_new_explicit_message_can_reclaim_a_reused_event_identity(self):
+        source = (ROOT / "capture.py").read_text(encoding="utf-8")
+        claim = source.index("async def _claim_auto_send")
+        self.assertIn("explicit_handled", source[claim : claim + 900])
+        on_message = source.index("async def on_message")
+        self.assertIn(
+            "_meme_manager_master_explicit_handled",
+            source[on_message : on_message + 900],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
