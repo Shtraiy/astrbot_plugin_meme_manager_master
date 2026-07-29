@@ -1064,6 +1064,7 @@ class EventHandlerMixin:
             event.get_platform_name() == "webchat"
             and result is not None
             and result.result_content_type == ResultContentType.STREAMING_RESULT
+            and str(response.completion_text or "").strip()
         ):
             try:
                 await event.send(MessageChain([Plain(response.completion_text)]))
@@ -1116,6 +1117,7 @@ class EventHandlerMixin:
             event.get_platform_name() == "webchat"
             and result is not None
             and result.result_content_type == ResultContentType.STREAMING_RESULT
+            and str(response.completion_text or "").strip()
         ):
             try:
                 await event.send(MessageChain([Plain(response.completion_text)]))
@@ -1293,30 +1295,9 @@ class EventHandlerMixin:
             event.set_extra("meme_manager_master_semantic_selected_ids", None)
 
             # 第三步：更新消息链
-            if cleaned_components:
+            if original_chain is not None:
                 # 直接使用组件列表，不要包装在 MessageChain 中
                 result.chain = cleaned_components
-            elif original_chain:
-                # 如果原本有内容但清理后为空，也要更新（避免发送带标签的空消息）
-                # 进行最后的防御性清理
-                if isinstance(original_chain, str):
-                    final_cleaned = re.sub(
-                        r"&&+", "", original_chain
-                    )  # 清除残留的&&符号
-                    if final_cleaned.strip():
-                        result.chain = [Plain(final_cleaned.strip())]
-                elif isinstance(original_chain, MessageChain):
-                    # 对 MessageChain 中的每个 Plain 组件进行最后清理
-                    final_components = []
-                    for component in original_chain.chain:
-                        if isinstance(component, Plain):
-                            final_cleaned = re.sub(r"&&+", "", component.text)
-                            if final_cleaned.strip():
-                                final_components.append(Plain(final_cleaned.strip()))
-                        else:
-                            final_components.append(component)
-                    if final_components:
-                        result.chain = final_components
 
             logger.debug("[meme_manager_master] on_decorating_result 处理完成")
 

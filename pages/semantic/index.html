@@ -118,6 +118,52 @@
         <div id="status" class="status-grid" aria-live="polite"></div>
       </section>
 
+      <section class="panel capture-workspace-panel">
+        <div class="panel-header capture-workspace-header">
+          <div>
+            <p class="section-kicker">Capture inbox / catalog ledger</p>
+            <h2><i class="fas fa-inbox icon"></i>偷取与分类索引</h2>
+            <p class="panel-hint">
+              新偷取的图片先进入待处理区；目录索引完成后会进入左侧的近期索引。重复偷取允许保留活动记录，但分类阶段会按图片内容去重，不重复消耗模型调用。
+            </p>
+          </div>
+          <div class="capture-workspace-actions">
+            <button type="button" class="secondary" id="capture-index-button">
+              <i class="fas fa-wand-magic-sparkles icon"></i>手动分类索引待处理项
+            </button>
+            <button type="button" class="ghost" id="capture-refresh-button">
+              <i class="fas fa-arrows-rotate icon"></i>刷新偷取记录
+            </button>
+          </div>
+        </div>
+        <div id="capture-summary" class="capture-summary" aria-live="polite"></div>
+        <div id="capture-folders" class="capture-folders" aria-live="polite"></div>
+        <div class="capture-columns">
+          <article class="capture-column capture-indexed-column">
+            <div class="capture-column-heading">
+              <div>
+                <span class="capture-column-label">近期分类索引</span>
+                <h3>已经整理好的表情</h3>
+              </div>
+              <span class="badge" id="capture-indexed-count">0</span>
+            </div>
+            <p class="capture-column-hint">这些图片已经有目录索引，可直接被发送决策使用。</p>
+            <div id="capture-indexed-items" class="capture-cards"></div>
+          </article>
+          <article class="capture-column capture-pending-column">
+            <div class="capture-column-heading">
+              <div>
+                <span class="capture-column-label">刚偷取 · 待处理</span>
+                <h3>等待人工或模型索引</h3>
+              </div>
+              <span class="badge badge-warm" id="capture-pending-count">0</span>
+            </div>
+            <p class="capture-column-hint">重复记录会显示为“待去重”，点击上方按钮后会在分类阶段自动合并。</p>
+            <div id="capture-pending-items" class="capture-cards"></div>
+          </article>
+        </div>
+      </section>
+
       <section class="panel records-panel">
         <div class="panel-header">
           <h2><i class="fas fa-list-check icon"></i>最近记录</h2>

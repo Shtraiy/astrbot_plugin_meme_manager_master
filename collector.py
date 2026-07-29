@@ -53,6 +53,16 @@ BLOCKED_AGENT_TOOLS_AFTER_MEME = frozenset({
 })
 
 
+def drop_empty_text_components(components: Sequence[Any]) -> list[Any]:
+    """Remove blank text components while preserving images and other parts."""
+    return [
+        component
+        for component in components
+        if not hasattr(component, "text")
+        or bool(str(getattr(component, "text", "") or "").strip())
+    ]
+
+
 def vision_failure_result() -> dict[str, Any]:
     """Represent an unavailable vision model as a high-confidence rejection."""
     return {

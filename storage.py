@@ -29,6 +29,24 @@ _IMAGE_FORMAT_EXTENSIONS = {
 }
 
 
+def image_preview_mode(
+    *,
+    file_size: int,
+    mime_type: str,
+    requested_size: str,
+    raw_preview_limit: int,
+    source_limit: int,
+) -> str:
+    """Choose how the WebUI should represent an image preview."""
+    if requested_size == "original":
+        return "reject" if file_size > source_limit else "original"
+    if file_size > source_limit:
+        return "reject"
+    if mime_type == "image/gif" and file_size <= raw_preview_limit:
+        return "original"
+    return "thumbnail"
+
+
 def detect_image_extension(content: bytes) -> str | None:
     """Validate image bytes and return an extension based on its real format."""
     if Image is None or not content:

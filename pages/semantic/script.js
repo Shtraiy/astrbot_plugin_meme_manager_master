@@ -9,6 +9,14 @@ async function initSemanticPage() {
   const otherTasksWarning = document.querySelector("#other-tasks-warning");
   const packSelect = document.querySelector("#pack");
   const statusBox = document.querySelector("#status");
+  const captureSummary = document.querySelector("#capture-summary");
+  const captureFolders = document.querySelector("#capture-folders");
+  const captureIndexedItems = document.querySelector("#capture-indexed-items");
+  const capturePendingItems = document.querySelector("#capture-pending-items");
+  const captureIndexedCount = document.querySelector("#capture-indexed-count");
+  const capturePendingCount = document.querySelector("#capture-pending-count");
+  const captureIndexButton = document.querySelector("#capture-index-button");
+  const captureRefreshButton = document.querySelector("#capture-refresh-button");
   const recordsBox = document.querySelector("#items");
   const recordCount = document.querySelector("#record-count");
   const recordsPrev = document.querySelector("#records-prev");
@@ -47,6 +55,7 @@ async function initSemanticPage() {
   let activePreviewKey = "";
   let activePreviewRequests = 0;
   const previewQueue = [];
+  let captureIndexSubmitting = false;
 
   function setDialog(
     open,
@@ -640,6 +649,143 @@ async function initSemanticPage() {
     });
   }
 
+  function renderCaptureEmpty(container, message) {
+    container.replaceChildren();
+    const empty = document.createElement("div");
+    empty.className = "capture-empty";
+    empty.textContent = message;
+    container.append(empty);
+  }
+
+  function renderCaptureCard(item, container) {
+    const card = document.createElement("article");
+    card.className = `capture-card${item.duplicate ? " is-duplicate" : ""}`;
+    const previewButton = document.createElement("button");
+    previewButton.type = "button";
+    previewButton.className = "capture-card-preview";
+    previewButton.title = "点击放大查看表情包";
+    const previewImage = document.createElement("img");
+    previewImage.alt = `表情包预览：${item.relative_path || item.filename || ""}`;
+    const previewText = document.createElement("span");
+    previewText.textContent = "加载预览";
+    const cachedPreview = previewCache.get(`${previewKey(item)}:preview`);
+    if (cachedPreview) {
+      previewImage.src = cachedPreview;
+      previewButton.append(previewImage);
+    } else {
+      previewButton.append(previewText);
+      void loadRecordImage(item)
+        .then((dataUrl) => {
+          if (!previewButton.isConnected) return;
+          previewImage.src = dataUrl;
+          previewButton.replaceChildren(previewImage);
+        })
+        .catch(() => {
+          if (previewButton.isConnected) previewText.textContent = "预览失败";
+        });
+    }
+    previewButton.addEventListener("click", () => {
+      const dataUrl =
+        previewCache.get(`${previewKey(item)}:preview`) ||
+        previewImage.src ||
+        "";
+      void openImagePreview(item, dataUrl);
+    });
+
+    const body = document.createElement("div");
+    body.className = "capture-card-body";
+    const meta = document.createElement("div");
+    meta.className = "capture-card-meta";
+    const category = document.createElement("span");
+    category.className = "capture-category";
+    category.textContent = item.category || "未分类";
+    const status = document.createElement("span");
+    status.className = `capture-status${item.duplicate ? " duplicate" : ""}`;
+    status.textContent = item.duplicate
+      ? "重复待去重"
+      : item.indexed
+        ? "已索引"
+        : "待分类";
+    meta.append(category, status);
+    const filename = document.createElement("h4");
+    filename.textContent = item.filename || "未命名图片";
+    const description = document.createElement("p");
+    description.className = "capture-description";
+    description.textContent = item.description || "暂无描述，等待分类索引";
+    const detail = document.createElement("p");
+    detail.className = "capture-detail";
+    const tags = Array.isArray(item.tags) ? item.tags.filter(Boolean).join("、") : "";
+    detail.textContent = [item.emotion, tags ? `标签：${tags}` : ""]
+      .filter(Boolean)
+      .join(" · ") || (item.duplicate_of ? `已有文件：${item.duplicate_of}` : "等待处理");
+    body.append(meta, filename, description, detail);
+    card.append(previewButton, body);
+    container.append(card);
+  }
+
+  function renderCaptureWorkspace(data) {
+    const summary = data?.summary || {};
+    captureSummary.replaceChildren();
+    [
+      ["已索引", summary.indexed || 0, "cool"],
+      ["待分类", summary.pending || 0, "warm"],
+      ["重复待去重", summary.duplicate || 0, "warm"],
+      ["已完成文件夹", `${summary.complete_folders || 0} / ${summary.folder_total || 0}`, "cool"],
+    ].forEach(([label, value, tone]) => {
+      const metric = document.createElement("div");
+      metric.className = `capture-stat ${tone}`;
+      const name = document.createElement("span");
+      name.textContent = label;
+      const strong = document.createElement("strong");
+      strong.textContent = String(value);
+      metric.append(name, strong);
+      captureSummary.append(metric);
+    });
+    const state = data?.library_index || {};
+    const stateNote = document.createElement("p");
+    stateNote.className = "capture-state-note";
+    stateNote.textContent = state.message || "目录索引尚未运行";
+    captureSummary.append(stateNote);
+
+    captureFolders.replaceChildren();
+    (Array.isArray(data?.folders) ? data.folders : []).forEach((folder) => {
+      const chip = document.createElement("span");
+      chip.className = `capture-folder-chip${folder.complete ? " complete" : ""}`;
+      chip.textContent = `${folder.category} · ${folder.indexed}/${folder.total}`;
+      chip.title = folder.complete
+        ? "该文件夹索引已完成，不会重复调用模型"
+        : `待分类 ${folder.pending || 0} 张`;
+      captureFolders.append(chip);
+    });
+    if (!captureFolders.children.length) {
+      const empty = document.createElement("span");
+      empty.className = "capture-folder-empty";
+      empty.textContent = "还没有可展示的偷取分类目录";
+      captureFolders.append(empty);
+    }
+
+    const indexed = Array.isArray(data?.indexed_items) ? data.indexed_items : [];
+    const pending = Array.isArray(data?.pending_items) ? data.pending_items : [];
+    captureIndexedCount.textContent = `${summary.indexed || 0} 张`;
+    capturePendingCount.textContent = `${(summary.pending || 0) + (summary.duplicate || 0)} 条`;
+    if (!indexed.length) renderCaptureEmpty(captureIndexedItems, "暂无已完成的偷取索引");
+    else {
+      captureIndexedItems.replaceChildren();
+      indexed.forEach((item) => renderCaptureCard(item, captureIndexedItems));
+    }
+    if (!pending.length) renderCaptureEmpty(capturePendingItems, "当前没有待处理偷取图片");
+    else {
+      capturePendingItems.replaceChildren();
+      pending.forEach((item) => renderCaptureCard(item, capturePendingItems));
+    }
+    captureIndexButton.disabled =
+      captureIndexSubmitting ||
+      state.status === "running" ||
+      !state.active_pack ||
+      !(summary.pending || summary.duplicate);
+    captureRefreshButton.disabled = captureIndexSubmitting;
+  }
+
   function withCurrentAuthParams(targetPath, extraParams = {}) {
     const nextUrl = new URL(targetPath, window.location.href);
     const currentParams = new URLSearchParams(window.location.search);
@@ -700,10 +846,12 @@ async function initSemanticPage() {
     if (recordsStatus !== "all") itemParams.status = recordsStatus;
     let statusData;
     let recordsData;
+    let captureData;
     try {
-      [statusData, recordsData] = await Promise.all([
+      [statusData, recordsData, captureData] = await Promise.all([
         apiGet("semantic/status", params),
         apiGet("semantic/items", itemParams),
+        apiGet("semantic/capture-workspace", params),
       ]);
     } catch (error) {
       if (
@@ -721,6 +869,7 @@ async function initSemanticPage() {
     if (!statusData.last_error) lastModalError = "";
     renderStatus(statusData);
     renderRecords(recordsData);
+    renderCaptureWorkspace(captureData);
     if (statusData.last_error) {
       void reportError("语义任务提示", statusData.last_error);
     }
@@ -847,6 +996,42 @@ async function initSemanticPage() {
       runAction(apiPost, button.dataset.action),
     ),
   );
+  captureRefreshButton.addEventListener("click", async () => {
+    if (captureIndexSubmitting) return;
+    try {
+      await loadStatus(apiGet);
+    } catch (error) {
+      await reportError("刷新偷取记录失败", error);
+    }
+  });
+  captureIndexButton.addEventListener("click", async () => {
+    if (!packSelect.value || captureIndexSubmitting) return;
+    const confirmed = await showDialog(
+      "开始分类索引偷取图片",
+      "只会处理待分类图片；已经完成文件夹索引的内容会被标记跳过，重复偷取记录会在分类阶段自动去重。是否开始？",
+      { confirmText: "开始处理" },
+    );
+    if (!confirmed) return;
+    captureIndexSubmitting = true;
+    captureIndexButton.disabled = true;
+    showNotice("正在提交偷取图片分类索引……");
+    try {
+      const result = await apiPost("semantic/capture-index", {
+        pack_id: packSelect.value,
+      });
+      showToast(result?.message || "分类索引已开始");
+      showNotice(result?.message || "分类索引已开始");
+    } catch (error) {
+      await reportError("启动偷取索引失败", error);
+    } finally {
+      captureIndexSubmitting = false;
+      try {
+        await loadStatus(apiGet);
+      } catch (error) {
+        await reportError("刷新偷取索引状态失败", error);
+      }
+    }
+  });
   recordsPrev.addEventListener("click", async () => {
     if (recordsCurrentPage <= 1 || requestRunning) return;
     recordsCurrentPage -= 1;

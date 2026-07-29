@@ -26,6 +26,7 @@ from .collector import (
     complete_batch_indices,
     contains_meme_send_claim,
     configured_provider_id,
+    drop_empty_text_components,
     event_identity,
     explicit_meme_request,
     extract_meme_markers,
@@ -41,6 +42,7 @@ from .collector import (
     vision_failure_result,
     whitelist_allows,
 )
+from .capture_activity import mark_capture_events_indexed, record_capture_event
 from .health import MemeManagerHealth, check_meme_manager_master_health
 from .indexing import catalog_needs_write, normalize_library_results
 from .storage import MemeStore, detect_image_extension
@@ -159,6 +161,14 @@ class CaptureMixin:
         self._library_completed_key: tuple[str, tuple] | None = None
         self._library_retry_key: tuple[str, tuple] | None = None
         self._library_retry_at = 0.0
+        self._library_index_state = {
+            "status": "idle",
+            "processed": 0,
+            "total": 0,
+            "classified": 0,
+            "errors": 0,
+            "message": "尚未开始目录索引",
+        }
         self._last_auto_send: dict[str, float] = {}
         self._auto_send_claims: dict[str, float] = {}
         self._auto_send_umo_claims: dict[str, float] = {}
@@ -701,6 +711,10 @@ class CaptureMixin:
         chain = getattr(result, "chain", None) if result else None
         if not chain:
             return
+        chain = drop_empty_text_components(list(chain))
+        result.chain = chain
+        if not chain:
+            return
 
         plain_texts: list[str] = []
         marked_categories: list[str] = []
@@ -766,7 +780,9 @@ class CaptureMixin:
                     continue
                 component.text = confirmation if not replaced else ""
                 replaced = True
-        result.chain = list(chain) + [Comp.Image.fromFileSystem(str(image_path))]
+        result.chain = drop_empty_text_components(chain) + [
+            Comp.Image.fromFileSystem(str(image_path))
+        ]
         if umo:
             self._last_auto_send[umo] = time.monotonic()
         self._remember_sent_meme(event, image_path, details)
@@ -868,9 +884,19 @@ class CaptureMixin:
                     statuses[index] = "unavailable"
                     continue
                 threshold = self._perceptual_duplicate_threshold()
-                if self.store.find_duplicate(payload.content, threshold) is not None:
+                duplicate_path = self.store.find_duplicate(payload.content, threshold)
+                if duplicate_path is not None:
                     logger.debug("[meme_manager_master] 图片在识别前已存在，跳过模型调用")
                     statuses[index] = "duplicate"
+                    duplicate_category = duplicate_path.parent.name
+                    record_capture_event(
+                        self.store.root,
+                        category=duplicate_category,
+                        filename=duplicate_path.name,
+                        digest=self.store.image_digest(duplicate_path),
+                        status="duplicate",
+                        duplicate_of=f"{duplicate_category}/{duplicate_path.name}",
+                    )
                     continue
                 if any(
                     self.store.is_similar(payload.content, previous.content, threshold)
@@ -989,12 +1015,29 @@ class CaptureMixin:
                                 category,
                                 catalog_entry,
                             )
+                            record_capture_event(
+                                self.store.root,
+                                category=category,
+                                filename=result.path.name,
+                                digest=result.digest,
+                                status="pending",
+                            )
                             logger.info(
                                 "[meme_manager_master] 已收集表情包 category=%s path=%s",
                                 category,
                                 result.path,
                             )
                         else:
+                            if result.status == "duplicate":
+                                duplicate_category = result.path.parent.name
+                                record_capture_event(
+                                    self.store.root,
+                                    category=duplicate_category,
+                                    filename=result.path.name,
+                                    digest=result.digest,
+                                    status="duplicate",
+                                    duplicate_of=f"{duplicate_category}/{result.path.name}",
+                                )
                             logger.debug("[meme_manager_master] 跳过重复表情包 path=%s", result.path)
                 return statuses
             except Exception:
@@ -1083,9 +1126,19 @@ class CaptureMixin:
         if self._library_lock.locked():
             return
         async with self._library_lock:
+            self._library_index_state.update(
+                status="running",
+                processed=0,
+                total=0,
+                classified=0,
+                errors=0,
+                message="正在检查分类目录……",
+            )
             categories = sorted(self.store.directory_categories())
             total = sum(len(self.store.image_paths(category)) for category in categories)
+            self._library_index_state["total"] = total
             if not total:
+                self._library_index_state.update(status="idle", message="没有待索引图片")
                 return
             provider_id = configured_provider_id(
                 self.config,
@@ -1093,6 +1146,9 @@ class CaptureMixin:
                 "vision_provider_id",
             )
             if not provider_id:
+                self._library_index_state.update(
+                    status="blocked", message="未配置目录索引视觉模型"
+                )
                 return
             run_signature = self._library_source_signature()
             processed = 0
@@ -1218,8 +1274,34 @@ class CaptureMixin:
                         entry.update({"id": new_path.stem, "filename": new_path.name})
                         entries.append(entry)
                     current_catalog = self.store.load_catalog(category)
-                    if catalog_needs_write(current_catalog, entries, index_metadata):
-                        self.store.write_catalog(category, entries, index_metadata)
+                    category_complete = bool(entries) and all(
+                        bool(entry.get("indexed")) for entry in entries
+                    )
+                    indexed_at = (
+                        int(current_catalog.get("classification_indexed_at") or time.time())
+                        if catalog_is_current and not pending
+                        else int(time.time())
+                    )
+                    catalog_metadata = {
+                        **index_metadata,
+                        "classification_index_complete": category_complete,
+                        "classification_indexed_at": indexed_at,
+                        "classification_index_file_total": len(entries),
+                    }
+                    if catalog_needs_write(current_catalog, entries, catalog_metadata):
+                        self.store.write_catalog(category, entries, catalog_metadata)
+                    if category_complete:
+                        mark_capture_events_indexed(
+                            self.store.root,
+                            category=category,
+                            digests={str(entry.get("sha256")) for entry in entries},
+                        )
+                    self._library_index_state.update(
+                        processed=processed,
+                        classified=classified,
+                        errors=errors,
+                        message=f"正在处理 {category}",
+                    )
             final_signature = self._library_source_signature()
             final_key = (provider_id, final_signature)
             if errors:
@@ -1240,6 +1322,13 @@ class CaptureMixin:
                 total,
                 classified,
                 errors,
+            )
+            self._library_index_state.update(
+                status="completed" if not errors else "completed_with_errors",
+                processed=processed,
+                classified=classified,
+                errors=errors,
+                message="目录索引完成" if not errors else "目录索引完成，但有图片待重试",
             )
 
     async def _describe_library_batch(
@@ -1560,6 +1649,7 @@ class CaptureMixin:
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "indexed": False,
             "index_source": "capture",
+            "captured_at": int(time.time()),
         }
 
     @staticmethod
@@ -1568,13 +1658,14 @@ class CaptureMixin:
             "index_version": LIBRARY_INDEX_VERSION,
             "index_prompt_version": LIBRARY_INDEX_PROMPT_VERSION,
             "index_provider_id": provider_id,
+            "classification_index_complete": True,
         }
 
     @staticmethod
     def _catalog_entry_is_current(entry: dict | None, provider_id: str) -> bool:
         if not isinstance(entry, dict) or not entry.get("indexed", False):
             return False
-        metadata = MemeStealer._library_index_metadata(provider_id)
+        metadata = CaptureMixin._library_index_metadata(provider_id)
         return all(entry.get(key) == value for key, value in metadata.items())
 
     def _perceptual_duplicate_threshold(self) -> int | None:
@@ -1815,7 +1906,7 @@ class CaptureMixin:
         match = re.match(r"data:image/([a-zA-Z0-9.+-]+);base64,(.+)", source, re.DOTALL)
         if not match:
             return None
-        return MemeStealer._decode_base64(match.group(2), limit)
+        return CaptureMixin._decode_base64(match.group(2), limit)
 
     @staticmethod
     def _decode_base64(value: str, limit: int) -> ImagePayload | None:
@@ -1823,7 +1914,7 @@ class CaptureMixin:
             content = base64.b64decode(value, validate=True)
         except (binascii.Error, ValueError):
             return None
-        return MemeStealer._payload_from_content(content, limit)
+        return CaptureMixin._payload_from_content(content, limit)
 
     @staticmethod
     def _payload_from_content(content: bytes, limit: int) -> ImagePayload | None:
@@ -1857,7 +1948,7 @@ class CaptureMixin:
                 return str(getter() or "")
             except Exception:
                 pass
-        return MemeStealer._event_text(event)
+        return CaptureMixin._event_text(event)
 
     def _whitelist(self) -> list[str]:
         value = self.config.get("group_whitelist", [])
