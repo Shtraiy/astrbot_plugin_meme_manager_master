@@ -5,7 +5,7 @@ from __future__ import annotations
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import EventMessageType
-from astrbot.api.provider import LLMResponse, ProviderRequest
+from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, register
 
 from .capture import CaptureMixin
@@ -52,24 +52,12 @@ class MemeManager(CaptureMixin, MemeSender):
             yield result
 
     @filter.on_llm_request(priority=99999)
-    async def inject_meme_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
-        await MemeSender.inject_meme_prompt(self, event, req)
+    async def prepare_meme_request(self, event: AstrMessageEvent, req: ProviderRequest):
         await CaptureMixin.on_llm_request(self, event, req)
-
-    @filter.on_llm_response(priority=99999)
-    async def resp(self, event: AstrMessageEvent, response: LLMResponse):
-        return await MemeSender.resp(self, event, response)
 
     @filter.on_decorating_result(priority=100000)
     async def on_decorating_result(self, event: AstrMessageEvent):
-        # The reference sender is the sole outgoing image authority.  This
-        # prevents the legacy random sender from racing semantic exact-ID
-        # selection and producing duplicate images.
-        return await MemeSender.on_decorating_result(self, event)
-
-    @filter.after_message_sent()
-    async def after_message_sent(self, event: AstrMessageEvent):
-        return await MemeSender.after_message_sent(self, event)
+        return await CaptureMixin.on_decorating_result(self, event)
 
     @filter.command("偷取", priority=100000)
     async def steal_command(self, event: AstrMessageEvent):

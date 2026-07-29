@@ -42,7 +42,11 @@ from .collector import (
     vision_failure_result,
     whitelist_allows,
 )
-from .capture_activity import mark_capture_events_indexed, record_capture_event
+from .capture_activity import (
+    index_metadata_matches,
+    mark_capture_events_indexed,
+    record_capture_event,
+)
 from .health import MemeManagerHealth, check_meme_manager_master_health
 from .indexing import catalog_needs_write, normalize_library_results
 from .storage import MemeStore, detect_image_extension
@@ -509,6 +513,9 @@ class CaptureMixin:
             return
         source_signature = self._library_source_signature()
         run_key = (provider_id, source_signature)
+        if self._library_catalogs_are_complete(provider_id, source_signature):
+            self._library_completed_key = run_key
+            return
         now = time.monotonic()
         if run_key == self._library_completed_key:
             return
@@ -532,6 +539,39 @@ class CaptureMixin:
                     continue
                 signature.append((category, path.name, digest))
         return tuple(signature)
+
+    def _library_catalogs_are_complete(
+        self,
+        provider_id: str,
+        source_signature: tuple,
+    ) -> bool:
+        """Avoid starting a background model task for an already indexed pack."""
+        categories = sorted(self.store.directory_categories())
+        if not categories or not source_signature:
+            return False
+        expected = self._library_index_metadata(provider_id)
+        by_category: dict[str, list[tuple[str, str]]] = {}
+        for category, filename, digest in source_signature:
+            by_category.setdefault(category, []).append((filename, digest))
+        for category in categories:
+            catalog = self.store.load_catalog(category)
+            if not catalog.get("classification_index_complete"):
+                return False
+            if not index_metadata_matches(catalog, expected):
+                return False
+            if catalog.get("classification_index_file_total") != len(
+                by_category.get(category, [])
+            ):
+                return False
+            by_digest = {
+                str(item.get("sha256")): item
+                for item in catalog.get("items", [])
+                if isinstance(item, dict) and item.get("sha256")
+            }
+            for _filename, digest in by_category.get(category, []):
+                if not self._catalog_entry_is_current(by_digest.get(digest), provider_id):
+                    return False
+        return True
 
     def _category_content_signature(self, category: str) -> tuple[tuple[str, str], ...]:
         """Return content identities used to detect writes during indexing."""
@@ -802,6 +842,10 @@ class CaptureMixin:
 
     async def on_llm_request(self, event: AstrMessageEvent, req) -> None:
         """Inject recent meme context and remove image-producing Agent tools."""
+        message_text = self._event_text(event)
+        if explicit_meme_request(message_text):
+            await self._handle_explicit_meme_request(event, message_text)
+            return
         self._append_recent_meme_context(event, req)
         if not should_block_agent_tool_for_meme_request(
             "astrbot_execute_python",
@@ -1164,9 +1208,8 @@ class CaptureMixin:
                     if isinstance(item, dict) and item.get("sha256")
                 }
                 index_metadata = self._library_index_metadata(provider_id)
-                catalog_is_current = all(
-                    old_catalog.get(key) == value
-                    for key, value in index_metadata.items()
+                catalog_is_current = index_metadata_matches(
+                    old_catalog, index_metadata
                 )
                 records: list[tuple[Path, dict]] = []
                 pending: list[tuple[Path, str]] = []
@@ -1274,7 +1317,7 @@ class CaptureMixin:
                         entry.update({"id": new_path.stem, "filename": new_path.name})
                         entries.append(entry)
                     current_catalog = self.store.load_catalog(category)
-                    category_complete = bool(entries) and all(
+                    category_complete = all(
                         bool(entry.get("indexed")) for entry in entries
                     )
                     indexed_at = (
@@ -1666,7 +1709,7 @@ class CaptureMixin:
         if not isinstance(entry, dict) or not entry.get("indexed", False):
             return False
         metadata = CaptureMixin._library_index_metadata(provider_id)
-        return all(entry.get(key) == value for key, value in metadata.items())
+        return index_metadata_matches(entry, metadata)
 
     def _perceptual_duplicate_threshold(self) -> int | None:
         if not self._bool_config("perceptual_dedupe_enabled", True):

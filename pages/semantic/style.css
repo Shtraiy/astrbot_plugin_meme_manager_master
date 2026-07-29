@@ -347,6 +347,15 @@ button:disabled {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.capture-pack-field {
+  display: grid;
+  gap: 6px;
+  min-width: min(230px, 100%);
+}
+.capture-pack-field label {
+  color: var(--muted);
+  font-size: 12px;
+}
 .capture-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(130px, 1fr));

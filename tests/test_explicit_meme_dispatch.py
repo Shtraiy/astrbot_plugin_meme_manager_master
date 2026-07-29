@@ -1,0 +1,22 @@
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).parents[1]
+
+
+class ExplicitMemeDispatchTests(unittest.TestCase):
+    def test_explicit_request_is_handled_before_reference_prompt_injection(self):
+        source = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("await CaptureMixin.on_llm_request", source)
+        self.assertNotIn("MemeSender.inject_meme_prompt", source)
+
+    def test_capture_llm_hook_dispatches_explicit_request(self):
+        source = (ROOT / "capture.py").read_text(encoding="utf-8")
+        hook = source.index("async def on_llm_request")
+        explicit = source.index("await self._handle_explicit_meme_request", hook)
+        self.assertLess(explicit, source.index("tool_set =", hook))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -13,10 +13,20 @@ from typing import Any
 CAPTURE_ACTIVITY_FILENAME = "capture_activity.json"
 CAPTURE_ACTIVITY_VERSION = 1
 MAX_CAPTURE_ACTIVITY_ITEMS = 500
+INDEX_COMPLETION_MARKER = "classification_index_complete"
 
 
 def _path(pack_dir: Path) -> Path:
     return Path(pack_dir) / CAPTURE_ACTIVITY_FILENAME
+
+
+def index_metadata_matches(data: dict[str, Any], expected: dict[str, Any]) -> bool:
+    """Match the model/index version while tolerating pre-marker catalogs."""
+    return all(
+        data.get(key) == value
+        for key, value in expected.items()
+        if key != INDEX_COMPLETION_MARKER
+    )
 
 
 def load_capture_activity(pack_dir: Path) -> dict[str, Any]:

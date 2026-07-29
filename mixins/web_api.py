@@ -1800,7 +1800,7 @@ class WebAPIMixin:
                     item["activity_status"] = "pending"
                     category_pending.append(item)
             complete = bool(catalog.get("classification_index_complete")) and (
-                bool(paths) and indexed_count == len(paths)
+                indexed_count == len(paths)
             )
             folders.append(
                 {

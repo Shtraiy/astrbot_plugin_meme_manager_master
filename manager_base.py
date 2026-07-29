@@ -51,13 +51,10 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         self.config = config or {}
 
         # 语义任务管理器只负责在实际操作时调用模型；缺少模型不会阻止旧版插件启动。
-        self.semantic_enabled = bool(
-            self._read_config_value(
-                ("semantic", "enabled"),
-                default=False,
-                legacy_keys=("semantic_enabled",),
-            )
-        )
+        # The standalone vector-semantic route has been retired.  Runtime
+        # selection now uses the category catalog and CaptureMixin's scene
+        # decision path, so never start semantic rebuilds from old config.
+        self.semantic_enabled = False
         self.semantic_vision_provider_id = str(
             self._read_config_value(
                 ("semantic", "vision_provider_id"),
