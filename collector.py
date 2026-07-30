@@ -182,53 +182,60 @@ def extract_meme_markers(text: str) -> list[str]:
 
 
 def explicit_meme_request(text: str) -> bool:
-    """Detect a direct request to send a meme/image, excluding negative requests."""
+    """Detect a direct meme request while preserving later positive clauses."""
     value = str(text or "").strip()
     if not value:
         return False
-    if re.search(
-        r"(?:不要|别|不用|无需|不需要|不想)\s*(?:再\s*)?(?:发|发送|来|换)\s*(?:一个|一张|个|张)?",
-        value,
-        flags=re.IGNORECASE,
-    ) or re.search(
-        r"(?:不要|别|不用|无需|不需要|不想).{0,8}(?:发|发送|来).{0,12}(?:表情包|表情|图片|图)",
-        value,
-        flags=re.IGNORECASE,
-    ):
-        return False
-    return bool(
-        re.search(
-            r"(?:发|发送|来|给我|请|可以|能不能|能否).{0,20}(?:表情包|表情|图片|图|meme)",
-            value,
-            flags=re.IGNORECASE,
+    negative = (
+        r"(?:不要|别|不用|无需|不需要|不想)\s*(?:再\s*)?(?:发|发送|来|换)\s*(?:一个|一张|个|张)?"
+        r"|(?:不要|别|不用|无需|不需要|不想).{0,8}(?:发|发送|来).{0,12}"
+        r"(?:表情包|表情|图片|图)"
+    )
+
+    def is_positive_clause(clause: str) -> bool:
+        return bool(
+            re.search(
+                r"(?:发|发送|来|给我|请|可以|能不能|能否).{0,20}(?:表情包|表情|图片|图|meme)",
+                clause,
+                flags=re.IGNORECASE,
+            )
+            or re.search(
+                r"(?:表情包|表情|图片|图).{0,8}(?:发|发送|来)",
+                clause,
+                flags=re.IGNORECASE,
+            )
+            or re.search(
+                r"^\s*(?:再|继续)\s*(?:发|发送|来)\s*(?:一个|一张|个|张)(?:吧|呗|啊|呀|哦|喔)?\s*$",
+                clause,
+                flags=re.IGNORECASE,
+            )
+            or re.search(
+                r"^\s*换\s*(?:一个|一张|个|张)(?:吧|呗|啊|呀|哦|喔)?\s*$",
+                clause,
+                flags=re.IGNORECASE,
+            )
+            or re.search(
+                r"换\s*(?:一个|一张|个|张)\s*(?:表情包|表情|图片|图|meme)",
+                clause,
+                flags=re.IGNORECASE,
+            )
+            or re.search(
+                r"(?:再\s*)?(?:发|发送|来|换)\s*(?:一个|一张|个|张)?\s*"
+                r"[\u4e00-\u9fffA-Za-z0-9 _-]{0,24}"
+                r"(?:表情包|表情|图片|图|meme|猫猫|猫咪)",
+                clause,
+                flags=re.IGNORECASE,
+            )
         )
-        or re.search(
-            r"(?:表情包|表情|图片|图).{0,8}(?:发|发送|来)",
-            value,
-            flags=re.IGNORECASE,
-        )
-        or re.search(
-            r"^\s*(?:再|继续)\s*(?:发|发送|来)\s*(?:一个|一张|个|张)(?:吧|呗|啊|呀|哦|喔)?\s*[。！!？?~～]*$",
-            value,
-            flags=re.IGNORECASE,
-        )
-        or re.search(
-            r"^\s*换\s*(?:一个|一张|个|张)(?:吧|呗|啊|呀|哦|喔)?\s*[。！!？?~～]*$",
-            value,
-            flags=re.IGNORECASE,
-        )
-        or re.search(
-            r"换\s*(?:一个|一张|个|张)\s*(?:表情包|表情|图片|图|meme)",
-            value,
-            flags=re.IGNORECASE,
-        )
-        or re.search(
-            r"(?:再\s*)?(?:发|发送|来|换)\s*(?:一个|一张|个|张)?\s*"
-            r"[\u4e00-\u9fffA-Za-z0-9 _-]{0,24}"
-            r"(?:表情包|表情|图片|图|meme|猫猫|猫咪)",
-            value,
-            flags=re.IGNORECASE,
-        )
+
+    # A message may reject one target and request another in the same turn.
+    # Evaluate clauses independently so "别发猫图，发个笨蛋表情" remains explicit.
+    clauses = re.split(r"[，,。；;！!？?~～\n]+", value)
+    return any(
+        is_positive_clause(clause)
+        and not re.search(negative, clause, flags=re.IGNORECASE)
+        for clause in clauses
+        if clause.strip()
     )
 
 

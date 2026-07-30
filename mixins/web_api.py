@@ -342,12 +342,6 @@ class WebAPIMixin:
             "导入运行时全量备份",
         )
         self._register_webui_api(
-            "bridge/auth_token",
-            self._api_bridge_auth_token,
-            ["GET"],
-            "获取当前会话 Bearer Token（用于插件页安全跳转）",
-        )
-        self._register_webui_api(
             "semantic/status", self._api_semantic_status, ["GET"], "获取语义化任务状态"
         )
         self._register_webui_api(
@@ -772,14 +766,6 @@ class WebAPIMixin:
             if not isinstance(emoji_data[category], list):
                 emoji_data[category] = []
         return jsonify(emoji_data)
-
-    async def _api_bridge_auth_token(self):
-        auth_header = request.headers.get("Authorization", "").strip()
-        if auth_header.startswith("Bearer "):
-            token = auth_header.removeprefix("Bearer ").strip()
-            if token:
-                return jsonify({"token": token}), 200
-        return jsonify({"message": "当前请求缺少 Bearer Token"}), 401
 
     async def _api_get_emoji_by_category(self, category):
         view_context = self._resolve_webui_pack_view_context()

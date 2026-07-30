@@ -2,14 +2,12 @@ async function initApp() {
   await window.AstrBotPluginPage.ready();
   window.AstrBotPluginPage.getContext();
 
-  function withCurrentAuthParams(targetPath, extraParams = {}) {
+  function withCurrentPageParams(targetPath, extraParams = {}) {
     const nextUrl = new URL(targetPath, window.location.href);
     const currentParams = new URLSearchParams(window.location.search);
-    for (const [key, value] of currentParams.entries()) {
-      if (key === "asset_token") {
-        continue;
-      }
-      if (!nextUrl.searchParams.has(key)) {
+    for (const key of ["view", "managed_pack_id"]) {
+      const value = currentParams.get(key);
+      if (value && !nextUrl.searchParams.has(key)) {
         nextUrl.searchParams.set(key, value);
       }
     }
@@ -23,32 +21,15 @@ async function initApp() {
     return nextUrl;
   }
 
-  let navAuthToken = "";
-  async function ensureNavAuthToken() {
-    if (navAuthToken) {
-      return navAuthToken;
-    }
-    try {
-      const response =
-        await window.AstrBotPluginPage.apiGet("bridge/auth_token");
-      navAuthToken = String(response?.token || "").trim();
-    } catch (_) {
-      navAuthToken = "";
-    }
-    return navAuthToken;
-  }
-
-  async function applySecureNavLinks() {
-    const token = await ensureNavAuthToken();
+  function applySecureNavLinks() {
     document.querySelectorAll("a[data-nav-target]").forEach((link) => {
       const targetPath = link.getAttribute("data-nav-target");
       if (!targetPath) {
         return;
       }
       const navView = link.getAttribute("data-nav-view") || "";
-      const nextUrl = withCurrentAuthParams(targetPath, {
+      const nextUrl = withCurrentPageParams(targetPath, {
         view: navView || null,
-        asset_token: token || null,
       });
       link.href = nextUrl.toString();
     });
@@ -1140,14 +1121,12 @@ async function initApp() {
   }
 
   function buildCatalogPageUrl() {
-    return withCurrentAuthParams("../catalog/index.html", {
+    return withCurrentPageParams("../catalog/index.html", {
       view: "catalog",
-      asset_token: navAuthToken || null,
     }).toString();
   }
 
-  async function openCatalogPage() {
-    await ensureNavAuthToken();
+  function openCatalogPage() {
     window.location.href = buildCatalogPageUrl();
   }
 

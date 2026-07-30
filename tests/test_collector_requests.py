@@ -13,6 +13,12 @@ class CollectorRequestTests(unittest.TestCase):
     def test_descriptive_cat_meme_request_is_explicit(self):
         self.assertTrue(explicit_meme_request("再发一个可爱猫猫标签"))
 
+    def test_later_positive_request_overrides_an_earlier_negative_target(self):
+        self.assertTrue(explicit_meme_request("别发猫的表情了，发个笨蛋表情"))
+
+    def test_negative_meme_request_is_not_explicit(self):
+        self.assertFalse(explicit_meme_request("别发猫的表情了"))
+
     def test_descriptive_follow_up_is_explicit_with_recent_meme(self):
         self.assertTrue(
             is_meme_follow_up_request(

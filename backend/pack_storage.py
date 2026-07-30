@@ -190,6 +190,23 @@ def _index_bundle_details(index_root: Path) -> tuple[dict, Path | None]:
     return manifest, index_path if index_path.is_file() else None
 
 
+def _should_restore_archive_vectors(
+    *,
+    declared_vectors: bool,
+    vector_files_present: bool,
+    semantic_file_present: bool,
+    signature_matches: bool,
+) -> bool:
+    """External FAISS files are never trusted during archive import.
+
+    The metadata and image payload remain portable, but a bundled native index
+    must be rebuilt locally instead of being parsed by FAISS in the plugin
+    process.  The arguments are retained to make the trust decision explicit
+    and independently testable.
+    """
+    return False
+
+
 def _directory_size(path: Path) -> int:
     if not path.is_dir():
         return 0
@@ -947,8 +964,18 @@ def import_pack_archive(
             == str(embedding_model or "")
             and archive_dimension == expected_dimension
         )
-        wants_vector_restore = bool(restore_candidate and signature_matches)
-        if restore_candidate and not expected_signature_available:
+        wants_vector_restore = _should_restore_archive_vectors(
+            declared_vectors=declared_vectors,
+            vector_files_present=vector_files_present,
+            semantic_file_present=semantic_file.is_file(),
+            signature_matches=signature_matches,
+        )
+        if restore_candidate and signature_matches:
+            vector_warning = (
+                "出于安全原因不会从外部压缩包恢复向量索引；已保留语义描述，"
+                "请在本机完成后重建向量索引。"
+            )
+        elif restore_candidate and not expected_signature_available:
             vector_warning = (
                 "当前未提供本机向量模型信息，已保留语义描述并放弃压缩包向量。"
             )
@@ -1011,36 +1038,7 @@ def import_pack_archive(
                     "已保留现有图包的人工语义；为避免错配，压缩包向量已放弃并等待重建。"
                 )
 
-        prepared_index_dir = workspace / "prepared_index"
-        if wants_vector_restore:
-            shutil.copytree(source_index_dir, prepared_index_dir)
-            index_manifest_path = prepared_index_dir / "index_manifest.json"
-            index_manifest = _load_json(index_manifest_path, {})
-            if isinstance(index_manifest, dict):
-                index_manifest["pack_id"] = pack_id
-                _save_json(index_manifest_path, index_manifest)
-
-            validation_runtime = workspace / "vector_validation"
-            validation_index_dir = validation_runtime / "semantic_indexes" / pack_id
-            validation_index_dir.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(prepared_index_dir, validation_index_dir)
-            try:
-                vectors_restored = index_is_ready(
-                    validation_runtime,
-                    pack_id,
-                    metadata=load_metadata(prepared_pack_dir),
-                    embedding_provider_id=str(embedding_provider_id or ""),
-                    embedding_model=str(embedding_model or ""),
-                    embedding_dimension=expected_dimension,
-                )
-            except Exception:
-                vectors_restored = False
-            if not vectors_restored:
-                vector_warning = "向量索引校验未通过，已保留语义描述并改为待重建状态。"
-                portable = reset_local_embedding_state(load_metadata(prepared_pack_dir))
-                portable["pack_id"] = pack_id
-                save_metadata(prepared_pack_dir, portable)
-        elif declared_vectors and not vector_warning:
+        if declared_vectors and not vector_warning:
             vector_warning = "压缩包缺少完整向量索引，已按无向量包导入。"
 
         target_index_dir = PLUGIN_DATA_DIR / "semantic_indexes" / pack_id
@@ -1097,9 +1095,6 @@ def import_pack_archive(
             PACKS_DIR.mkdir(parents=True, exist_ok=True)
             prepared_pack_dir.rename(target_pack_dir)
             new_pack_installed = True
-            if vectors_restored:
-                target_index_dir.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(prepared_index_dir, target_index_dir)
 
             registry = _load_registry()
             installed = registry["installed_packs"]

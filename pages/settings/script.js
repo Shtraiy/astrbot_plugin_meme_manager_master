@@ -1,14 +1,12 @@
 async function initSettingsPage() {
   await window.AstrBotPluginPage.ready();
 
-  function withCurrentAuthParams(targetPath, extraParams = {}) {
+  function withCurrentPageParams(targetPath, extraParams = {}) {
     const nextUrl = new URL(targetPath, window.location.href);
     const currentParams = new URLSearchParams(window.location.search);
-    for (const [key, value] of currentParams.entries()) {
-      if (key === "asset_token") {
-        continue;
-      }
-      if (!nextUrl.searchParams.has(key)) {
+    for (const key of ["view", "managed_pack_id"]) {
+      const value = currentParams.get(key);
+      if (value && !nextUrl.searchParams.has(key)) {
         nextUrl.searchParams.set(key, value);
       }
     }
@@ -22,32 +20,15 @@ async function initSettingsPage() {
     return nextUrl;
   }
 
-  let navAuthToken = "";
-  async function ensureNavAuthToken() {
-    if (navAuthToken) {
-      return navAuthToken;
-    }
-    try {
-      const response =
-        await window.AstrBotPluginPage.apiGet("bridge/auth_token");
-      navAuthToken = String(response?.token || "").trim();
-    } catch (_) {
-      navAuthToken = "";
-    }
-    return navAuthToken;
-  }
-
-  async function applySecureNavLinks() {
-    const token = await ensureNavAuthToken();
+  function applySecureNavLinks() {
     document.querySelectorAll("a[data-nav-target]").forEach((link) => {
       const targetPath = link.getAttribute("data-nav-target");
       if (!targetPath) {
         return;
       }
       const navView = link.getAttribute("data-nav-view") || "";
-      const nextUrl = withCurrentAuthParams(targetPath, {
+      const nextUrl = withCurrentPageParams(targetPath, {
         view: navView || null,
-        asset_token: token || null,
       });
       link.href = nextUrl.toString();
     });
@@ -524,14 +505,16 @@ async function initSettingsPage() {
     return rules.findIndex((rule) => rule.scope === "default");
   }
 
-  function getPackOptions(selectedPackId = "") {
-    return installedPacks
-      .map((pack) => {
-        const selectedAttr =
-          String(pack.id) === String(selectedPackId) ? "selected" : "";
-        return `<option value="${pack.id}" ${selectedAttr}>${pack.name || pack.id} (${pack.id})</option>`;
-      })
-      .join("");
+  function populatePackOptions(select, selectedPackId = "") {
+    select.replaceChildren();
+    installedPacks.forEach((pack) => {
+      const option = document.createElement("option");
+      const packId = String(pack?.id || "");
+      option.value = packId;
+      option.textContent = `${String(pack?.name || packId)} (${packId})`;
+      option.selected = packId === String(selectedPackId);
+      select.appendChild(option);
+    });
   }
 
   function getTargetSuggestions(scope) {
@@ -665,10 +648,16 @@ async function initSettingsPage() {
     }
 
     rulesValidation.classList.remove("hidden");
-    rulesValidation.innerHTML = `
-      <strong>规则存在问题，请先修复：</strong>
-      <ul>${errors.map((item) => `<li>${item}</li>`).join("")}</ul>
-    `;
+    rulesValidation.replaceChildren();
+    const heading = document.createElement("strong");
+    heading.textContent = "规则存在问题，请先修复：";
+    const list = document.createElement("ul");
+    errors.forEach((item) => {
+      const listItem = document.createElement("li");
+      listItem.textContent = String(item);
+      list.appendChild(listItem);
+    });
+    rulesValidation.append(heading, list);
     return false;
   }
 
@@ -687,7 +676,9 @@ async function initSettingsPage() {
       const titleRow = document.createElement("div");
       titleRow.className = "rule-title-row";
       const title = document.createElement("div");
-      title.innerHTML = `<strong>${isDefault ? "默认规则" : `规则 #${index + 1}`}</strong>`;
+      const titleText = document.createElement("strong");
+      titleText.textContent = isDefault ? "默认规则" : `规则 #${index + 1}`;
+      title.appendChild(titleText);
       titleRow.appendChild(title);
 
       if (!isDefault) {
@@ -706,14 +697,25 @@ async function initSettingsPage() {
 
       const scopeField = document.createElement("div");
       scopeField.className = "field-row";
-      scopeField.innerHTML = `
-        <label>scope</label>
-        <select data-role="scope">
-          <option value="persona" ${rule.scope === "persona" ? "selected" : ""}>persona</option>
-          <option value="session" ${rule.scope === "session" ? "selected" : ""}>session</option>
-          ${isDefault ? '<option value="default" selected>default</option>' : ""}
-        </select>
-      `;
+      const scopeLabel = document.createElement("label");
+      scopeLabel.textContent = "scope";
+      const scopeSelect = document.createElement("select");
+      scopeSelect.dataset.role = "scope";
+      for (const scope of ["persona", "session"]) {
+        const option = document.createElement("option");
+        option.value = scope;
+        option.textContent = scope;
+        option.selected = rule.scope === scope;
+        scopeSelect.appendChild(option);
+      }
+      if (isDefault) {
+        const option = document.createElement("option");
+        option.value = "default";
+        option.textContent = "default";
+        option.selected = true;
+        scopeSelect.appendChild(option);
+      }
+      scopeField.append(scopeLabel, scopeSelect);
 
       const targetField = document.createElement("div");
       targetField.className = "field-row";
@@ -725,20 +727,32 @@ async function initSettingsPage() {
             ? "从 session 建议中选择或手动填写"
             : "default 规则无需 target";
       const targetSuggestions = getTargetSuggestions(rule.scope);
-      targetField.innerHTML = `
-        <label>target</label>
-        <input data-role="target" type="text" value="${rule.target || ""}" ${isDefault ? "disabled" : ""} placeholder="${targetPlaceholder}" list="${targetListId}" />
-        <datalist id="${targetListId}">
-          ${targetSuggestions.map((item) => `<option value="${item}"></option>`).join("")}
-        </datalist>
-      `;
+      const targetLabel = document.createElement("label");
+      targetLabel.textContent = "target";
+      const targetInput = document.createElement("input");
+      targetInput.dataset.role = "target";
+      targetInput.type = "text";
+      targetInput.value = String(rule.target || "");
+      targetInput.disabled = isDefault;
+      targetInput.placeholder = targetPlaceholder;
+      targetInput.setAttribute("list", targetListId);
+      const targetList = document.createElement("datalist");
+      targetList.id = targetListId;
+      targetSuggestions.forEach((item) => {
+        const option = document.createElement("option");
+        option.value = String(item);
+        targetList.appendChild(option);
+      });
+      targetField.append(targetLabel, targetInput, targetList);
 
       const packField = document.createElement("div");
       packField.className = "field-row";
-      packField.innerHTML = `
-        <label>pack_id</label>
-        <select data-role="pack">${getPackOptions(rule.pack_id)}</select>
-      `;
+      const packLabel = document.createElement("label");
+      packLabel.textContent = "pack_id";
+      const packSelect = document.createElement("select");
+      packSelect.dataset.role = "pack";
+      populatePackOptions(packSelect, rule.pack_id);
+      packField.append(packLabel, packSelect);
 
       grid.appendChild(scopeField);
       grid.appendChild(targetField);
@@ -751,12 +765,6 @@ async function initSettingsPage() {
         <button type="button" class="danger" data-action="remove" ${isDefault ? "disabled" : ""}>删除</button>
       `;
       wrapper.appendChild(actions);
-
-      const scopeSelect = scopeField.querySelector('select[data-role="scope"]');
-      const targetInput = targetField.querySelector(
-        'input[data-role="target"]',
-      );
-      const packSelect = packField.querySelector('select[data-role="pack"]');
 
       scopeSelect.disabled = isDefault;
       scopeSelect.addEventListener("change", () => {

@@ -18,6 +18,18 @@ class LegacyTagDispatchTests(unittest.TestCase):
         self.assertNotIn('@llm_tool(name="search_memes")', source)
         self.assertNotIn("async def search_memes_tool", source)
 
+    def test_request_path_removes_stale_search_memes_tool(self):
+        source = (Path(__file__).parents[1] / "capture.py").read_text(encoding="utf-8")
+        hook = source.index("async def on_llm_request")
+        self.assertIn("_remove_retired_agent_tools", source[hook : hook + 1400])
+        self.assertIn('remove_tool("search_memes")', source)
+
+    def test_tool_path_blocks_retired_search_memes_tool(self):
+        source = (Path(__file__).parents[1] / "capture.py").read_text(encoding="utf-8")
+        hook = source.index("async def on_using_llm_tool")
+        self.assertIn('tool_name == "search_memes"', source[hook : hook + 900])
+        self.assertIn("blocked retired Agent tool", source[hook : hook + 900])
+
 
 if __name__ == "__main__":
     unittest.main()

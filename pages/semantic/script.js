@@ -296,20 +296,16 @@ const initCaptureIndexPage = async () => {
     });
   };
 
-  const applySecureNavLinks = async () => {
-    let token = "";
-    try {
-      token = String((await apiGet("bridge/auth_token"))?.token || "").trim();
-    } catch (_) {}
+  const applySecureNavLinks = () => {
     document.querySelectorAll("a[data-nav-target]").forEach((link) => {
       const target = link.getAttribute("data-nav-target");
       if (!target) return;
       const url = new URL(target, window.location.href);
       const current = new URLSearchParams(window.location.search);
-      current.forEach((value, key) => {
-        if (key !== "asset_token" && !url.searchParams.has(key)) url.searchParams.set(key, value);
-      });
-      if (token) url.searchParams.set("asset_token", token);
+      for (const key of ["view", "managed_pack_id"]) {
+        const value = current.get(key);
+        if (value && !url.searchParams.has(key)) url.searchParams.set(key, value);
+      }
       link.href = url.toString();
     });
   };
@@ -355,7 +351,7 @@ const initCaptureIndexPage = async () => {
   });
 
   await pageApi.ready();
-  await applySecureNavLinks();
+  applySecureNavLinks();
   await loadPacks();
   await loadWorkspace();
   window.setInterval(() => loadWorkspace(), 5000);

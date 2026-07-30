@@ -941,10 +941,40 @@ class CaptureMixin:
             details["tags"],
         )
 
+    @staticmethod
+    def _remove_retired_agent_tools(req) -> None:
+        """Remove semantic tools left behind by an older loaded plugin copy."""
+        tool_set = getattr(req, "func_tool", None)
+        if tool_set is None:
+            return
+        get_full_tool_set = getattr(tool_set, "get_full_tool_set", None)
+        if callable(get_full_tool_set):
+            req.func_tool = get_full_tool_set()
+            tool_set = req.func_tool
+        remove_tool = getattr(tool_set, "remove_tool", None)
+        if callable(remove_tool):
+            remove_tool("search_memes")
+            return
+        if isinstance(tool_set, dict):
+            tool_set.pop("search_memes", None)
+            return
+        tools = getattr(tool_set, "tools", None)
+        if isinstance(tools, list):
+            tool_set.tools = [
+                tool
+                for tool in tools
+                if (
+                    getattr(tool, "name", "")
+                    or (tool.get("name", "") if isinstance(tool, dict) else "")
+                )
+                != "search_memes"
+            ]
+
     async def on_llm_request(self, event: AstrMessageEvent, req) -> None:
         """Inject recent meme context and remove image-producing Agent tools."""
         self._remember_explicit_request(event)
         message_text = self._event_text(event)
+        self._remove_retired_agent_tools(req)
         if explicit_meme_request(message_text):
             await self._handle_explicit_meme_request(event, message_text)
             return
@@ -984,6 +1014,14 @@ class CaptureMixin:
             or (tool.get("name", "") if isinstance(tool, dict) else "")
             or (tool if isinstance(tool, str) else "")
         ).strip()
+        if tool_name == "search_memes":
+            self._disable_default_llm(event)
+            event.stop_event()
+            logger.warning(
+                "[meme_manager_master] blocked retired Agent tool: %s",
+                tool_name,
+            )
+            return
         guard_active = self._agent_tool_guard_active(event)
         if not should_block_agent_tool_for_meme_request(
             tool_name,
