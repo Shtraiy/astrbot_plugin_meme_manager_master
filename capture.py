@@ -23,6 +23,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.star import Context
 
 from .collector import (
+    OUTGOING_CATEGORY_PROMPT,
     complete_batch_indices,
     contains_meme_send_claim,
     configured_provider_id,
@@ -122,14 +123,6 @@ OUTGOING_DECISION_COMPACT_PROMPT = """
 根据用户消息、机器人回复和候选图片，判断是否发送一张最匹配的表情包。
 明确索要表情包或回复有明显情绪时可发送；事实说明、长文、报错或无明显情绪时不发送。
 只输出 JSON：{"should_send":false,"category":"","candidate_id":"","confidence":0.0,"reason":"不超过20字"}
-""".strip()
-
-
-OUTGOING_CATEGORY_PROMPT = """
-你是表情包情景分类器。
-根据用户消息和机器人回复，判断是否发送表情包；若发送，只能从候选分类中选一个最合适的 category。
-explicit_request=true 表示用户明确索要表情包，此时必须发送，should_send 必须为 true，只需选择最合适的 category。
-只输出 JSON：{"should_send":false,"category":"","confidence":0.0,"reason":"不超过20字"}
 """.strip()
 
 

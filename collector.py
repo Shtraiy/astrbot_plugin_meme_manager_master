@@ -17,6 +17,19 @@ from typing import Any
 from urllib.parse import urlparse
 
 
+OUTGOING_CATEGORY_PROMPT = """
+你是表情包情景分类器。
+根据用户消息和机器人回复，判断是否主动发送表情包；若发送，只能从候选分类中选择一个最合适的 category。
+普通聊天可以主动发送表情包，不需要用户明确索要。
+explicit_request=true 表示用户明确索要表情包，此时必须发送，should_send 必须为 true。
+explicit_request=false 只表示本轮不是强制请求，不代表禁止发送，也不得仅以“用户未明确索要表情包”为理由拒绝发送。
+当机器人回复包含明显的社交情绪或反应，例如惊讶、开心、赞叹、调侃、吐槽、安慰、尴尬或无奈时，应优先令 should_send=true。
+只有纯事实说明、长篇严肃内容、错误提示或完全没有情绪反应时，才令 should_send=false。
+输出一个 JSON 对象，字段必须为：should_send（布尔值）、category（字符串，发送时必须是候选分类之一）、confidence（0 到 1 的数字）、reason（不超过20字的字符串）。
+不要输出 Markdown 或额外解释。
+""".strip()
+
+
 CATEGORY_ALIASES = {
     "生气": "angry",
     "愤怒": "angry",
