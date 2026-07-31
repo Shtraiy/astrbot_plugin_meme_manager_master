@@ -331,6 +331,15 @@ class CaptureMixin:
             oldest = min(self._meme_send_receipts, key=self._meme_send_receipts.get)
             self._meme_send_receipts.pop(oldest, None)
 
+    async def _record_image_send(self, image_path: Path) -> None:
+        """Persist the successful-send marker without racing catalog writes."""
+        async with self._save_lock:
+            self.store.mark_image_sent(image_path)
+
+    @staticmethod
+    def _queue_send_weight_mark(event: AstrMessageEvent, image_path: Path) -> None:
+        event.set_extra("meme_manager_master_send_mark_path", str(image_path))
+
     def _send_receipt_for_event(self, event: AstrMessageEvent) -> dict | None:
         """Return the current event's real meme-send receipt, if one exists."""
         key = event_identity(event)
@@ -561,10 +570,9 @@ class CaptureMixin:
             logger.info("[meme_manager_master] explicit meme request handled without a local match")
             return
 
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
         details = self._image_details(image_path)
         self._remember_forced_meme_result(event, image_path, details)
-        self._arm_agent_tool_guard(event)
+        self._queue_send_weight_mark(event, image_path)
         event.set_result(
             event.chain_result(
                 [
@@ -573,9 +581,6 @@ class CaptureMixin:
                 ]
             )
         )
-        if umo:
-            self._last_auto_send[umo] = time.monotonic()
-        self._remember_sent_meme(event, image_path, details)
         self._disable_default_llm(event)
         logger.info(
             "[meme_manager_master] explicit meme request handled before default Agent file=%s",
@@ -801,6 +806,7 @@ class CaptureMixin:
         try:
             message_chain = MessageChain().file_image(str(image_path))
             await self.context.send_message(umo, message_chain)
+            await self._record_image_send(image_path)
             self._remember_sent_meme(event, image_path)
             logger.info("[meme_manager_master] 偷取后主动发送表情包 path=%s", image_path)
         except Exception as exc:
@@ -825,8 +831,51 @@ class CaptureMixin:
             return
 
         event.stop_event()
-        self._remember_sent_meme(event, image_path)
+        self._queue_send_weight_mark(event, image_path)
         yield event.chain_result([Comp.Image.fromFileSystem(str(image_path))])
+
+    async def after_message_sent(self, event: AstrMessageEvent) -> None:
+        """Send a selected automatic meme only after the reply was delivered."""
+        path_value = event.get_extra("meme_manager_master_auto_send_path")
+        details = event.get_extra("meme_manager_master_auto_send_details")
+        mark_value = event.get_extra("meme_manager_master_send_mark_path")
+        event.set_extra("meme_manager_master_auto_send_path", None)
+        event.set_extra("meme_manager_master_auto_send_details", None)
+        event.set_extra("meme_manager_master_send_mark_path", None)
+
+        auto_path = Path(str(path_value)) if path_value else None
+        mark_path = Path(str(mark_value)) if mark_value else None
+        if auto_path is not None:
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
+            if umo and auto_path.is_file():
+                try:
+                    message_chain = MessageChain().file_image(str(auto_path))
+                    await self.context.send_message(umo, message_chain)
+                    await self._record_image_send(auto_path)
+                    if not isinstance(details, dict):
+                        details = self._image_details(auto_path)
+                    self._last_auto_send[umo] = time.monotonic()
+                    self._remember_sent_meme(event, auto_path, details)
+                    self._arm_agent_tool_guard(event)
+                    logger.info(
+                        "[meme_manager_master] 正文发送完成后发送自动表情包 path=%s",
+                        auto_path,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[meme_manager_master] 正文发送完成后发送自动表情包失败: %s",
+                        exc,
+                        exc_info=True,
+                    )
+            if mark_path == auto_path:
+                mark_path = None
+        if mark_path is not None and mark_path.is_file():
+            await self._record_image_send(mark_path)
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
+            if umo:
+                self._last_auto_send[umo] = time.monotonic()
+            self._remember_sent_meme(event, mark_path)
+            self._arm_agent_tool_guard(event)
 
     async def status(self, event: AstrMessageEvent):
         """显示 meme_manager_master 依赖插件的加载与数据目录状态。"""
@@ -885,23 +934,6 @@ class CaptureMixin:
             self._rewrite_unverified_meme_claim(event, chain)
             return
 
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
-        cooldown = self._float_config("auto_send_cooldown", 30, 0, 3600)
-        if (
-            cooldown
-            and not force_send
-            and time.monotonic() - self._last_auto_send.get(umo, 0) < cooldown
-        ):
-            self._rewrite_unverified_meme_claim(event, chain)
-            return
-
-        probability = self._float_config("auto_send_probability", 35, 0, 100)
-        if not force_send and (probability <= 0 or random.random() * 100 >= probability):
-            self._rewrite_unverified_meme_claim(event, chain)
-            return
-        if not await self._claim_auto_send(event, force=force_send):
-            self._rewrite_unverified_meme_claim(event, chain)
-            return
         image_path = await self._choose_outgoing_meme_from_index(
             event,
             "\n".join(plain_texts),
@@ -912,6 +944,24 @@ class CaptureMixin:
             self._rewrite_unverified_meme_claim(event, chain)
             logger.debug("[meme_manager_master] 情景模型未选择可发送表情包")
             return
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        cooldown = self._float_config("auto_send_cooldown", 30, 0, 3600)
+        if (
+            cooldown
+            and not force_send
+            and time.monotonic() - self._last_auto_send.get(umo, 0) < cooldown
+        ):
+            self._rewrite_unverified_meme_claim(event, chain)
+            return
+
+        probability = self._float_config("auto_send_probability", 50, 0, 100)
+        if not force_send and (probability <= 0 or random.random() * 100 >= probability):
+            self._rewrite_unverified_meme_claim(event, chain)
+            return
+        if not await self._claim_auto_send(event, force=force_send):
+            self._rewrite_unverified_meme_claim(event, chain)
+            return
+
         details = self._image_details(image_path)
         if force_send:
             confirmation = "找到了一个合适的表情包，发给你～"
@@ -921,13 +971,9 @@ class CaptureMixin:
                     continue
                 component.text = confirmation if not replaced else ""
                 replaced = True
-        result.chain = drop_empty_text_components(chain) + [
-            Comp.Image.fromFileSystem(str(image_path))
-        ]
-        if umo:
-            self._last_auto_send[umo] = time.monotonic()
-        self._remember_sent_meme(event, image_path, details)
-        self._arm_agent_tool_guard(event)
+        result.chain = drop_empty_text_components(chain)
+        event.set_extra("meme_manager_master_auto_send_path", str(image_path))
+        event.set_extra("meme_manager_master_auto_send_details", details)
         logger.info(
             "[meme_manager_master] 已锁定表情包，等待正文发送完成 source=%s category=%s file=%s "
             "description=%s emotion=%s tags=%s",
@@ -1347,6 +1393,11 @@ class CaptureMixin:
                     for item in old_catalog.get("items", [])
                     if isinstance(item, dict) and item.get("sha256")
                 }
+                by_filename = {
+                    str(item.get("filename")): item
+                    for item in old_catalog.get("items", [])
+                    if isinstance(item, dict) and item.get("filename")
+                }
                 index_metadata = self._library_index_metadata(provider_id)
                 catalog_is_current = index_metadata_matches(
                     old_catalog, index_metadata
@@ -1421,6 +1472,11 @@ class CaptureMixin:
                                 "tags": [],
                                 "indexed": False,
                             }
+                        previous = by_filename.get(path.name)
+                        if isinstance(previous, dict):
+                            for key in ("send_count", "last_sent_at"):
+                                if key in previous:
+                                    metadata[key] = previous[key]
                         metadata.update({
                             "category": category,
                             "sha256": digest,
@@ -1662,7 +1718,11 @@ class CaptureMixin:
                 )
                 return None
 
-            image_path = self.store.pick_indexed_image(category)
+            repeat_window = self._float_config("meme_repeat_window", 300, 0, 86400)
+            image_path = self.store.pick_indexed_image(
+                category,
+                repeat_window=repeat_window,
+            )
             if image_path is None:
                 logger.warning(
                     "[meme_manager_master] 分类索引没有可用图片 category=%s",

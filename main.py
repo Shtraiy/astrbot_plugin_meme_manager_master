@@ -59,6 +59,13 @@ class MemeManager(CaptureMixin, MemeSender):
     async def on_decorating_result(self, event: AstrMessageEvent):
         return await CaptureMixin.on_decorating_result(self, event)
 
+    @filter.after_message_sent()
+    async def after_message_sent(self, event: AstrMessageEvent):
+        # Keep the reference manager's pending-image compatibility path, then
+        # send CaptureMixin's selected automatic image after the reply.
+        await MemeSender.after_message_sent(self, event)
+        await CaptureMixin.after_message_sent(self, event)
+
     @filter.command("偷取", priority=100000)
     async def steal_command(self, event: AstrMessageEvent):
         async for result in CaptureMixin.steal_command(self, event):

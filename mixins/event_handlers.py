@@ -1547,11 +1547,15 @@ class EventHandlerMixin:
             event.set_extra("found_emotions", None)
 
     async def _send_meme_image(self, event: AstrMessageEvent, image: Image) -> None:
+        source_file = str(getattr(image, "file", "") or "")
         image = await self._ensure_image_send_format(image)
         if event.get_platform_name() in {"gewechat", "webchat"}:
             await event.send(MessageChain([image]))
-            return
-        await self.context.send_message(event.unified_msg_origin, MessageChain([image]))
+        else:
+            await self.context.send_message(event.unified_msg_origin, MessageChain([image]))
+        recorder = getattr(self, "_record_image_send", None)
+        if callable(recorder) and source_file:
+            await recorder(Path(source_file))
 
     async def _ensure_image_send_format(self, image: Image) -> Image:
         """根据配置规范图片发送格式。"""

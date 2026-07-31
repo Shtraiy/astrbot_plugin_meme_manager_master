@@ -20,6 +20,7 @@ except ImportError:  # Pillow is optional at import time for AstrBot startup.
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+DEFAULT_SEND_REPEAT_WINDOW = 300.0
 _IMAGE_FORMAT_EXTENSIONS = {
     "PNG": ".png",
     "JPEG": ".jpg",
@@ -237,14 +238,22 @@ class MemeStore:
         ]
         return random.choice(candidates) if candidates else None
 
-    def pick_indexed_image(self, category: str) -> Path | None:
-        """Pick one existing image referenced by the category index."""
+    def pick_indexed_image(
+        self,
+        category: str,
+        *,
+        now: float | None = None,
+        repeat_window: float = DEFAULT_SEND_REPEAT_WINDOW,
+    ) -> Path | None:
+        """Pick an indexed image, reducing the weight of recently sent ones."""
         if not _is_safe_segment(category):
             return None
         category_dir = self.memes_dir / category
         if not category_dir.is_dir():
             return None
-        candidates = []
+        current_time = time.time() if now is None else float(now)
+        candidates: list[Path] = []
+        weights: list[float] = []
         for item in self.load_catalog(category).get("items", []):
             if not isinstance(item, dict):
                 continue
@@ -256,7 +265,71 @@ class MemeStore:
                 and path.suffix.lower() in IMAGE_EXTENSIONS
             ):
                 candidates.append(path)
-        return random.choice(candidates) if candidates else None
+                weights.append(self._send_weight(item, current_time, repeat_window))
+        if not candidates:
+            return None
+        return random.choices(candidates, weights=weights, k=1)[0]
+
+    @staticmethod
+    def _send_weight(item: dict, now: float, repeat_window: float) -> float:
+        """Return a decaying selection weight for one catalog entry."""
+        if repeat_window <= 0:
+            return 1.0
+        try:
+            last_sent_at = float(item.get("last_sent_at") or 0.0)
+        except (TypeError, ValueError):
+            last_sent_at = 0.0
+        if last_sent_at <= 0:
+            return 1.0
+        age = max(0.0, now - last_sent_at)
+        recency = max(0.0, min(1.0, 1.0 - age / repeat_window))
+        try:
+            send_count = max(0, int(item.get("send_count") or 0))
+        except (TypeError, ValueError):
+            send_count = 0
+        penalty = min(0.9, 0.45 + 0.1 * min(send_count, 4))
+        return max(0.1, 1.0 - recency * penalty)
+
+    def mark_image_sent(
+        self,
+        path: Path,
+        *,
+        sent_at: float | None = None,
+    ) -> dict | None:
+        """Persist one successful send marker on the image catalog entry."""
+        image_path = Path(path)
+        category = self._category_for_path(image_path)
+        if category is None or not image_path.is_file():
+            return None
+        data = self.load_catalog(category)
+        items = [item for item in data.get("items", []) if isinstance(item, dict)]
+        entry = next(
+            (item for item in items if item.get("filename") == image_path.name),
+            None,
+        )
+        if entry is None:
+            self.ensure_catalog_entry(category, image_path)
+            data = self.load_catalog(category)
+            items = [item for item in data.get("items", []) if isinstance(item, dict)]
+            entry = next(
+                (item for item in items if item.get("filename") == image_path.name),
+                None,
+            )
+        if entry is None:
+            return None
+        try:
+            send_count = max(0, int(entry.get("send_count") or 0))
+        except (TypeError, ValueError):
+            send_count = 0
+        entry["send_count"] = send_count + 1
+        entry["last_sent_at"] = float(time.time() if sent_at is None else sent_at)
+        metadata = {
+            key: value
+            for key, value in data.items()
+            if key not in {"version", "category", "updated_at", "items"}
+        }
+        self.write_catalog(category, items, metadata)
+        return dict(entry)
 
     def image_paths(self, category: str) -> list[Path]:
         """Return image files in one safe category, excluding catalog documents."""

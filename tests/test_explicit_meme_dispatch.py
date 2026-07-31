@@ -33,6 +33,23 @@ class ExplicitMemeDispatchTests(unittest.TestCase):
         self.assertIn("_restore_forced_meme_result", source)
         self.assertIn("event.stop_event()", source)
 
+    def test_scene_judgment_runs_before_auto_send_probability_gate(self):
+        source = (ROOT / "capture.py").read_text(encoding="utf-8")
+        decorating = source.index("async def on_decorating_result")
+        scene_call = source.index(
+            "_choose_outgoing_meme_from_index(", decorating
+        )
+        cooldown_gate = source.index(
+            'cooldown = self._float_config("auto_send_cooldown"',
+            decorating,
+        )
+        probability_gate = source.index(
+            'probability = self._float_config("auto_send_probability"',
+            decorating,
+        )
+        self.assertLess(scene_call, cooldown_gate)
+        self.assertLess(scene_call, probability_gate)
+
     def test_new_explicit_message_can_reclaim_a_reused_event_identity(self):
         source = (ROOT / "capture.py").read_text(encoding="utf-8")
         claim = source.index("async def _claim_auto_send")

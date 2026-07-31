@@ -50,7 +50,7 @@
     "type": "float",
     "description": "自动发送概率",
     "hint": "普通对话中的自动发送概率；明确要求表情包时会强制尝试发送。",
-    "default": 35,
+    "default": 50,
     "min": 0,
     "max": 100
   },
@@ -61,6 +61,14 @@
     "default": 30,
     "min": 0,
     "max": 3600
+  },
+  "meme_repeat_window": {
+    "type": "float",
+    "description": "单图重复发送降权窗口（秒）",
+    "hint": "最近发送过的图片会降低被自动选中的概率，0 表示关闭单图降权。",
+    "default": 300,
+    "min": 0,
+    "max": 86400
   },
   "library_index_enabled": {
     "type": "bool",
