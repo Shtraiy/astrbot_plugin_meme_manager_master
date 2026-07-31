@@ -6,6 +6,7 @@ tested on a normal Python installation.
 
 from __future__ import annotations
 
+import asyncio
 import ast
 import json
 from ipaddress import ip_address
@@ -15,6 +16,34 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+
+FILTER_REPLY_LOCK_EXTRA = "astrbot_plugin_filter_reply_lock"
+
+
+async def wait_for_filter_reply_lock(event, timeout: float = 30.0) -> str:
+    """Wait until Filter finishes all follow-up text messages for this event."""
+    getter = getattr(event, "get_extra", None)
+    if not callable(getter):
+        return "missing"
+    try:
+        reply_lock = getter(FILTER_REPLY_LOCK_EXTRA)
+    except Exception:
+        return "missing"
+    if not isinstance(reply_lock, asyncio.Lock):
+        return "missing"
+    if not reply_lock.locked():
+        return "released"
+
+    try:
+        await asyncio.wait_for(
+            reply_lock.acquire(),
+            timeout=max(0.0, float(timeout)),
+        )
+    except asyncio.TimeoutError:
+        return "timeout"
+    reply_lock.release()
+    return "released"
 
 
 OUTGOING_CATEGORY_PROMPT = """

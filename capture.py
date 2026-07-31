@@ -41,6 +41,7 @@ from .collector import (
     should_skip_meme_result,
     strip_meme_markers,
     vision_failure_result,
+    wait_for_filter_reply_lock,
     whitelist_allows,
 )
 from .capture_activity import (
@@ -842,6 +843,15 @@ class CaptureMixin:
             umo = str(getattr(event, "unified_msg_origin", "") or "")
             if umo and auto_path.is_file():
                 try:
+                    filter_wait_state = await wait_for_filter_reply_lock(event)
+                    if filter_wait_state == "timeout":
+                        logger.warning(
+                            "[meme_manager_master] 等待 Filter 文本分段完成超时，继续发送自动表情包"
+                        )
+                    elif filter_wait_state == "released":
+                        logger.info(
+                            "[meme_manager_master] Filter 文本分段已全部发送，继续发送自动表情包"
+                        )
                     message_chain = MessageChain().file_image(str(auto_path))
                     await self.context.send_message(umo, message_chain)
                     await self._record_image_send(auto_path)
