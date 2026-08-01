@@ -53,9 +53,27 @@ def _install_web_stubs() -> None:
 _install_web_stubs()
 
 from meme_manager_master.mixins.web_api import WebAPIMixin  # noqa: E402
+from meme_manager_master.mixins import emoji_api  # noqa: E402
 
 
 class WebApiBehaviorTests(unittest.TestCase):
+    def test_get_emojis_without_managed_pack_does_not_raise_binding_error(self):
+        from quart import request
+
+        async def scan_default_folder():
+            return {"happy": ["smile.png"]}
+
+        original_scan = emoji_api.scan_emoji_folder
+        emoji_api.scan_emoji_folder = scan_default_folder
+        try:
+            request.args = {}
+            instance = WebAPIMixin.__new__(WebAPIMixin)
+            payload = asyncio_run(instance._api_get_emojis())
+        finally:
+            emoji_api.scan_emoji_folder = original_scan
+
+        self.assertEqual(payload, {"happy": ["smile.png"]})
+
     def _make_instance(self, memes_root: Path) -> WebAPIMixin:
         instance = WebAPIMixin.__new__(WebAPIMixin)
         instance._resolve_webui_pack_view_context = lambda: {

@@ -348,7 +348,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin):
         except Exception as exc:
             logger.error("图片变更后刷新语义元数据失败: %s", exc, exc_info=True)
 
-    def _resolve_webui_pack_view_context() -> dict | None:
+    def _resolve_webui_pack_view_context(self) -> dict | None:
         managed_pack_id = str(request.args.get("managed_pack_id") or "").strip()
         if not managed_pack_id:
             return None
