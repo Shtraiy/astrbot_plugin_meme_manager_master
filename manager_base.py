@@ -13,10 +13,7 @@ from astrbot.api.star import Context, Star
 
 from .backend.catalog_index_service import CatalogIndexService
 from .backend.category_manager import CategoryManager
-from .backend.semantic_index import EmbeddingAdapter, index_is_ready
 from .backend.semantic_models import runtime_category_mapping
-from .backend.semantic_storage import load_metadata, semantic_metadata_is_complete
-from .backend.vector_semantic_service import VectorSemanticService
 from .config import (
     DEFAULT_CATEGORY_DESCRIPTIONS,
     get_active_pack_paths,
@@ -57,28 +54,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         # selection now uses the category catalog and CaptureMixin's scene
         # decision path, so never start semantic rebuilds from old config.
         self.semantic_enabled = False
-        self.semantic_vision_provider_id = str(
-            self._read_config_value(
-                ("semantic", "vision_provider_id"),
-                default="",
-                legacy_keys=("vision_provider_id",),
-            )
-            or ""
-        )
-        self.semantic_embedding_provider_id = str(
-            self._read_config_value(
-                ("semantic", "embedding_provider_id"),
-                default="",
-                legacy_keys=("embedding_provider_id",),
-            )
-            or ""
-        )
-        self.semantic_top_k = int(
-            self._read_config_value(("semantic", "top_k"), default=5) or 5
-        )
-        self.semantic_min_score = float(
-            self._read_config_value(("semantic", "min_score"), default=0.25) or 0.25
-        )
         # 向量语义能力默认不创建：仅当配置明确启用且 FAISS 可用时才会初始化。
         # 目录索引（captions/复审/capture workspace）由 catalog_index_service
         # 提供，不依赖向量模块。
@@ -87,13 +62,7 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
             context=context,
             config=self.config,
         )
-        self.semantic_task_manager = self._create_vector_semantic_manager(context)
-        self.vector_semantic_service = VectorSemanticService(
-            self.semantic_task_manager
-        )
         self.web_capabilities = {"core", "catalog_index"}
-        if self.semantic_task_manager is not None:
-            self.web_capabilities = self.web_capabilities | {"vector_semantic"}
 
         # 初始化插件
         if not init_plugin():
@@ -208,32 +177,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         # 注册 WebUI API
         self._register_web_apis()
 
-    def _create_vector_semantic_manager(self, context):
-        """Create the vector task manager only when enabled and FAISS exists."""
-        if not self.runtime_config.vector_semantic_enabled:
-            return None
-        try:
-            from .backend.semantic_index import faiss_is_available
-            from .backend.semantic_task import SemanticTaskManager
-
-            if not faiss_is_available():
-                logger.error(
-                    "[meme_manager_master] vector_semantic_enabled 已开启，"
-                    "但当前环境缺少 faiss-cpu，向量语义能力不可用"
-                )
-                return None
-            return SemanticTaskManager(
-                PLUGIN_DATA_DIR,
-                context=context,
-                config={
-                    "vision_provider_id": self.semantic_vision_provider_id,
-                    "embedding_provider_id": self.semantic_embedding_provider_id,
-                },
-            )
-        except Exception as exc:
-            logger.error("[meme_manager_master] 初始化向量语义能力失败: %s", exc)
-            return None
-
     @classmethod
     def _normalize_mixin_handler_module_paths(cls):
         """兼容尚未原生支持 Mixin 指令处理器的 AstrBot 版本。"""
@@ -314,9 +257,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
             + self.prompt_tail_2
         )
 
-    def _resolve_embedding_provider(self, pack_id: str = ""):
-        return self.semantic_task_manager._resolve_embedding_provider(pack_id)
-
     def _reply_model_supports_tools(self, event: AstrMessageEvent | None) -> bool:
         """仅在模型明确声明不支持工具时关闭语义模式。"""
         if event is None:
@@ -349,66 +289,8 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         *,
         require_tool: bool = False,
     ) -> bool:
-        """Return whether the selected runtime pack can use semantic search.
-
-        Args:
-            event: Current AstrBot message event.
-            req: Current provider request, when checking request-time tools.
-            require_tool: Whether the reply model and request must expose the
-                semantic search tool.
-
-        Returns:
-            True when the pack is complete and its matching index is ready.
-        """
-        if not self.semantic_enabled:
-            return False
-        if (
-            require_tool
-            and req is not None
-            and not self._reply_model_supports_tools(event)
-        ):
-            return False
-        if require_tool and req is not None:
-            tool_set = getattr(req, "func_tool", None)
-            if (
-                tool_set is None
-                or not callable(getattr(tool_set, "get_tool", None))
-                or not tool_set.get_tool("search_memes")
-            ):
-                return False
-        context = self._resolve_runtime_pack_context(event=event, req=req)
-        pack_id = str(context.get("pack_id") or "")
-        if not pack_id:
-            return False
-        pack_dir = context.get("pack_dir")
-        metadata = load_metadata(pack_dir)
-        if not semantic_metadata_is_complete(
-            pack_dir, metadata, require_embeddings=True
-        ):
-            return False
-        try:
-            provider = self._resolve_embedding_provider(pack_id)
-            embedding = EmbeddingAdapter(
-                provider, self.semantic_embedding_provider_id or ""
-            )
-        except Exception as exc:
-            logger.warning(
-                "Semantic search is unavailable; falling back to legacy categories: %s",
-                exc,
-            )
-            return False
-        provider_id = embedding.provider_id
-        return (
-            index_is_ready(
-                PLUGIN_DATA_DIR,
-                pack_id,
-                metadata,
-                provider_id,
-                embedding.model_name,
-                embedding.dimension,
-            )
-            and embedding.ready
-        )
+        """Image semanticization was removed; scene judgment stays independent."""
+        return False
 
     @staticmethod
     def _remove_semantic_tool(req: ProviderRequest) -> None:
@@ -678,8 +560,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
             logger.error(f"重新加载表情配置失败: {str(e)}")
 
     async def terminate(self):
-        if getattr(self, "semantic_task_manager", None):
-            await self.semantic_task_manager.close()
         personas = self.context.provider_manager.personas
         self._sync_persona_base_prompts(personas)
         for index, persona in enumerate(personas):

@@ -53,15 +53,6 @@ from ..backend.pack_storage import (
     set_default_pack,
     uninstall_pack,
 )
-from ..backend.semantic_index import EmbeddingAdapter, index_is_ready
-from ..backend.semantic_storage import (
-    get_category_review_overview,
-    get_image_semantic_detail,
-    import_metadata_file,
-    invalidate_semantic_metadata,
-    load_metadata,
-    metadata_items,
-)
 from ..storage import (
     IMAGE_EXTENSIONS,
     MemeStore,
@@ -72,7 +63,6 @@ from ..storage import (
 from .web_routes import enabled_route_specs
 from .emoji_api import EmojiAPIMixin
 from .pack_api import PackAPIMixin
-from .semantic_api import SemanticAPIMixin
 from ..config import (
     COMMUNITY_INDEX_URL,
     get_active_pack_paths,
@@ -93,7 +83,7 @@ MAX_PACK_UPLOAD_REQUEST_BYTES = MAX_PACK_ARCHIVE_BYTES + 1024 * 1024
 
 
 
-class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, SemanticAPIMixin):
+class WebAPIMixin(EmojiAPIMixin, PackAPIMixin):
     def _get_github_accelerator_url(self) -> str:
         value = self._read_config_value(
             ("community", "github_accelerator_url"),
@@ -140,6 +130,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, SemanticAPIMixin):
         self.catalog_index_service.assert_pack_mutation_allowed(pack_id, operation)
 
     def _semantic_rebuild_guidance(self, pack_id: str) -> dict:
+        return {}
         """返回切换或导入资源包后是否需要补建本机向量。"""
         guidance = {
             "semantic_rebuild_required": False,
@@ -186,6 +177,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, SemanticAPIMixin):
         return guidance
 
     def _pack_import_embedding_signature(self) -> dict:
+        return {}
         """Return the active local embedding signature for safe backup restore."""
         try:
             provider = self._resolve_embedding_provider()
@@ -347,6 +339,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, SemanticAPIMixin):
             }
 
     def _invalidate_default_pack_semantics(self) -> None:
+        return
         pack_dir = Path(self._default_pack_context()["pack_dir"]).resolve()
         if not (pack_dir / "semantic_metadata.json").is_file():
             return

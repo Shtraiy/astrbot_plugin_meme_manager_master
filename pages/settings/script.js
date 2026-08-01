@@ -921,6 +921,7 @@ async function initSettingsPage() {
       ensureDefaultRuleAtEnd(response?.default_pack_id || "");
       renderRules();
       addLog("规则保存成功");
+      return;
       const rebuildPacks = Array.isArray(response?.semantic_rebuild_packs)
         ? response.semantic_rebuild_packs
         : [];
@@ -930,7 +931,7 @@ async function initSettingsPage() {
         );
         if (!shouldRebuild) continue;
         try {
-          await apiPost("semantic/rebuild-index", {
+          await apiPost("removed", {
             pack_id: packId,
             force: true,
           });

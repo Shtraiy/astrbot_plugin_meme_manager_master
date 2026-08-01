@@ -21,7 +21,7 @@ class CommandMixin:
     def _assert_default_pack_mutation_allowed(self, operation: str) -> str:
         pack_id = str(self._default_pack_context()["pack_id"] or "").strip()
         if pack_id:
-            self.semantic_task_manager.assert_pack_mutation_allowed(pack_id, operation)
+            self.catalog_index_service.assert_pack_mutation_allowed(pack_id, operation)
         return pack_id
 
     @filter.command_group("表情管理大师")

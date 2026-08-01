@@ -53,15 +53,6 @@ from ..backend.pack_storage import (
     set_default_pack,
     uninstall_pack,
 )
-from ..backend.semantic_index import EmbeddingAdapter, index_is_ready
-from ..backend.semantic_storage import (
-    get_category_review_overview,
-    get_image_semantic_detail,
-    import_metadata_file,
-    invalidate_semantic_metadata,
-    load_metadata,
-    metadata_items,
-)
 from ..storage import (
     IMAGE_EXTENSIONS,
     MemeStore,
@@ -122,7 +113,6 @@ class PackAPIMixin:
             if callable(refresh_store):
                 refresh_store()
             self._reload_personas()
-            result.update(self._semantic_rebuild_guidance(pack_id))
             return jsonify({"message": "默认表情包设置成功", **result}), 200
         except FileNotFoundError as e:
             return jsonify({"message": str(e)}), 404
@@ -139,22 +129,13 @@ class PackAPIMixin:
             pack_id = str(payload.get("pack_id") or "").strip()
             output_dir = payload.get("output_dir")
             export_mode = str(payload.get("export_mode") or "share").strip().lower()
-            include_value = payload.get(
-                "include_semantic", payload.get("semantic", True)
-            )
-            include_semantic = str(include_value).lower() not in {
-                "0",
-                "false",
-                "no",
-                "off",
-            }
             result = await self._run_guarded_pack_file_operation(
                 pack_id,
                 "导出资源包",
                 export_pack_archive,
                 pack_id,
                 output_dir=output_dir,
-                include_semantic=include_semantic,
+                include_semantic=False,
                 export_mode=export_mode,
             )
             return jsonify({"message": "导出成功", **result}), 200
@@ -231,11 +212,6 @@ class PackAPIMixin:
                 "yes",
                 "on",
             }
-            overwrite_manual_semantics = str(
-                form.get("overwrite_manual_semantics", "false")
-            ).lower() in {"1", "true", "yes", "on"}
-            import_signature = self._pack_import_embedding_signature()
-
             files = await request.files
             if not files or "file" not in files:
                 return jsonify({"message": "缺少上传文件字段 file"}), 400
@@ -269,8 +245,7 @@ class PackAPIMixin:
                     overwrite=True,
                     set_as_default=set_as_default,
                     suggested_pack_id=suggested_pack_id,
-                    preserve_existing_manual=not overwrite_manual_semantics,
-                    **import_signature,
+                    preserve_existing_manual=False,
                 )
             else:
                 result = await self._run_guarded_runtime_file_operation(
@@ -280,8 +255,7 @@ class PackAPIMixin:
                     overwrite=False,
                     set_as_default=set_as_default,
                     suggested_pack_id=suggested_pack_id,
-                    preserve_existing_manual=not overwrite_manual_semantics,
-                    **import_signature,
+                    preserve_existing_manual=False,
                 )
             self._reload_personas()
             return jsonify({"message": "导入成功", **result}), 200
@@ -395,15 +369,11 @@ class PackAPIMixin:
                 "yes",
                 "on",
             }
-            overwrite_manual_semantics = str(
-                data.get("overwrite_manual_semantics", "false")
-            ).lower() in {"1", "true", "yes", "on"}
             import_kwargs = {
                 "overwrite": overwrite,
                 "set_as_default": set_as_default,
                 "suggested_pack_id": str(session_data.get("suggested_pack_id") or ""),
-                "preserve_existing_manual": not overwrite_manual_semantics,
-                **self._pack_import_embedding_signature(),
+                "preserve_existing_manual": False,
             }
             if overwrite:
                 result = await self._run_guarded_pack_file_operation(
@@ -423,9 +393,6 @@ class PackAPIMixin:
             archive_path.unlink(missing_ok=True)
             metadata_path.unlink(missing_ok=True)
             self._reload_personas()
-            result.update(
-                self._semantic_rebuild_guidance(str(result.get("pack_id") or ""))
-            )
             return jsonify({"message": "表情包导入成功", **result}), 200
         except RuntimeError as exc:
             return jsonify({"message": str(exc)}), 409
@@ -612,21 +579,6 @@ class PackAPIMixin:
             }
             saved = save_selection_rules(rules)
             self._reload_personas()
-            rebuild_packs = []
-            if bool(getattr(self, "semantic_enabled", False)):
-                for item in saved.get("rules", []):
-                    if not isinstance(item, dict):
-                        continue
-                    rule_id = str(item.get("id") or "")
-                    pack_id = str(item.get("pack_id") or "")
-                    if before_map.get(rule_id) == pack_id or not pack_id:
-                        continue
-                    status = self.vector_semantic_service.status(pack_id)
-                    if status.get("dimension_rebuild_required") and status.get(
-                        "semantic_caption_complete"
-                    ):
-                        rebuild_packs.append(pack_id)
-            saved["semantic_rebuild_packs"] = sorted(set(rebuild_packs))
             return jsonify({"message": "规则保存成功", **saved}), 200
         except ValueError as e:
             return jsonify({"message": str(e)}), 400

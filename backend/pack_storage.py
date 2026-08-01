@@ -780,6 +780,10 @@ def inspect_pack_archive(zip_path: Path, suggested_pack_id: str | None = None) -
         )
         validate_pack_directory(prepared_root, context="待导入表情包")
 
+        # Image semanticization was removed.  Old archives are accepted as
+        # ordinary packs, but their metadata and vector payloads are dropped.
+        (prepared_root / "semantic_metadata.json").unlink(missing_ok=True)
+        shutil.rmtree(prepared_root / "semantic_index", ignore_errors=True)
         image_count = _count_images(prepared_root / "memes")
         categories = manifest.get("categories", {})
         semantic_path = prepared_root / "semantic_metadata.json"
@@ -827,6 +831,15 @@ def get_pack_export_capabilities(pack_id: str) -> dict:
     pack_dir = PACKS_DIR / pack_id
     if not pack_dir.is_dir():
         raise FileNotFoundError(f"表情包 {pack_id} 不存在")
+    return {
+        "pack_id": pack_id,
+        "image_count": _count_images(pack_dir / "memes"),
+        "semantic_metadata": False,
+        "vector_backup_available": False,
+        "embedding_provider_id": "",
+        "embedding_model": "",
+        "embedding_dimension": 0,
+    }
     metadata = load_metadata(pack_dir)
     semantic_metadata = (pack_dir / "semantic_metadata.json").is_file()
     try:
@@ -925,6 +938,9 @@ def import_pack_archive(
         _require_regular_tree(prepared_pack_dir, "导入表情包")
         validate_pack_directory(prepared_pack_dir, context=f"导入包 {pack_id}")
 
+        # Imported legacy semantic files are intentionally discarded.
+        (prepared_pack_dir / "semantic_metadata.json").unlink(missing_ok=True)
+        shutil.rmtree(prepared_pack_dir / "semantic_index", ignore_errors=True)
         semantic_file = prepared_pack_dir / "semantic_metadata.json"
         declared_vectors = bool(transfer_info.get("features", {}).get("vectors", False))
         source_index_dir = pack_root / "semantic_index"
@@ -1171,6 +1187,10 @@ def export_pack_archive(
 ) -> dict:
     pack_id = validate_pack_id(pack_id, "表情包")
     export_mode = str(export_mode or "share").strip().lower()
+    # Keep the public export entry point compatible, but no longer package
+    # semantic metadata or FAISS indexes in either export mode.
+    export_mode = "share"
+    include_semantic = False
     if export_mode not in PACK_EXPORT_MODES:
         raise ValueError("导出类型仅支持 share 或 backup")
 
@@ -1688,7 +1708,9 @@ def export_runtime_backup(
                         operation_guard(pack_dir.name, "导出全量备份")
             shutil.copytree(PACKS_DIR, snapshot_root / "packs", dirs_exist_ok=True)
             for copied_pack_dir in (snapshot_root / "packs").iterdir():
+                shutil.rmtree(copied_pack_dir / "semantic_index", ignore_errors=True)
                 semantic_file = copied_pack_dir / "semantic_metadata.json"
+                semantic_file.unlink(missing_ok=True)
                 if not copied_pack_dir.is_dir() or not semantic_file.is_file():
                     continue
                 (copied_pack_dir / LEGACY_METADATA_BACKUP_NAME).unlink(missing_ok=True)
@@ -1754,6 +1776,8 @@ def import_runtime_backup(
                 pack_id = validate_pack_id(source_pack_dir.name, "备份表情包")
                 prepared_pack_dir = prepared_packs / pack_id
                 shutil.copytree(source_pack_dir, prepared_pack_dir)
+                (prepared_pack_dir / "semantic_metadata.json").unlink(missing_ok=True)
+                shutil.rmtree(prepared_pack_dir / "semantic_index", ignore_errors=True)
                 prepared_manifests[pack_id] = validate_pack_directory(
                     prepared_pack_dir, context=f"备份表情包 {pack_id}"
                 )

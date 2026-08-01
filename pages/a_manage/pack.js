@@ -4,14 +4,7 @@ window.MemeManagerUI.pack.formatPackOptionLabel = function (pack) {
     const name = String(pack?.name || pack?.id || "未命名");
     const id = String(pack?.id || "").trim();
     const imageCount = Number(pack?.image_count || 0);
-    const semanticStatus = String(pack?.semantic_status || "none");
-    const semanticLabel =
-      semanticStatus === "complete"
-        ? "已语义化"
-        : semanticStatus === "partial"
-          ? "部分语义化"
-          : "未语义化";
-    return `${name} (${id}) · ${imageCount} 张 · ${semanticLabel}`;
+    return `${name} (${id}) · ${imageCount} 张`;
   }
 window.MemeManagerUI.pack.setPackTransferResult = function (element, message = "", type = "") {
     if (!element) {
@@ -295,6 +288,7 @@ window.MemeManagerUI.pack.renderManagePackVectorStatus = function (packId, statu
     }
   }
 window.MemeManagerUI.pack.refreshManagePackVectorStatus = async function (packId = window.MemeManagerUI.state.activeManagePackId) {
+    return null;
     const normalizedPackId = String(packId || "").trim();
     const requestId = ++window.MemeManagerUI.state.managePackVectorStatusRequestId;
     if (!normalizedPackId || !window.MemeManagerUI.pack.packSupportsVectorStatus(normalizedPackId)) {
@@ -304,7 +298,8 @@ window.MemeManagerUI.pack.refreshManagePackVectorStatus = async function (packId
 
     window.MemeManagerUI.pack.renderManagePackVectorStatus(normalizedPackId, null, "loading");
     try {
-      const status = await window.MemeManagerUI.api.apiGet("semantic/status", {
+      throw new Error("向量语义功能已移除");
+      const status = await window.MemeManagerUI.api.apiGet("removed", {
         pack_id: normalizedPackId,
       });
       if (requestId !== window.MemeManagerUI.state.managePackVectorStatusRequestId) {
@@ -360,7 +355,8 @@ window.MemeManagerUI.pack.performVectorRebuild = async function (packId, knownSt
     window.MemeManagerUI.emoji.setButtonBusy(window.MemeManagerUI.state.rebuildPackVectorsBtn, "正在重建…");
     try {
       window.MemeManagerUI.dialogs.showToast("正在按当前向量模型建立索引…", "info", "开始重建");
-      const result = await window.MemeManagerUI.api.apiPost("semantic/rebuild-index", {
+      throw new Error("向量语义功能已移除");
+      const result = await window.MemeManagerUI.api.apiPost("removed", {
         pack_id: normalizedPackId,
         force: true,
       });
@@ -662,11 +658,9 @@ window.MemeManagerUI.pack.refreshManagePackSummaries = async function () {
           option.textContent = window.MemeManagerUI.pack.formatPackOptionLabel(pack);
         }
       });
-      window.MemeManagerUI.pack.updateManagePackSemanticAppearance(window.MemeManagerUI.state.activeManagePackId);
-      await Promise.all([
-        window.MemeManagerUI.pack.refreshPackExportCapability(window.MemeManagerUI.state.activeManagePackId),
-        window.MemeManagerUI.pack.refreshManagePackVectorStatus(window.MemeManagerUI.state.activeManagePackId),
-      ]);
+      await window.MemeManagerUI.pack.refreshPackExportCapability(
+        window.MemeManagerUI.state.activeManagePackId,
+      );
       return packs;
     } catch (error) {
       console.warn("刷新图包语义状态失败:", error);

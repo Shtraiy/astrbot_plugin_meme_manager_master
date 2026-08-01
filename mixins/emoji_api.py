@@ -53,15 +53,6 @@ from ..backend.pack_storage import (
     set_default_pack,
     uninstall_pack,
 )
-from ..backend.semantic_index import EmbeddingAdapter, index_is_ready
-from ..backend.semantic_storage import (
-    get_category_review_overview,
-    get_image_semantic_detail,
-    import_metadata_file,
-    invalidate_semantic_metadata,
-    load_metadata,
-    metadata_items,
-)
 from ..storage import (
     IMAGE_EXTENSIONS,
     MemeStore,
@@ -668,52 +659,3 @@ class EmojiAPIMixin:
                 "data_url": data_url,
             }
         )
-
-    async def _api_get_meme_image_semantic(self):
-        category = str(request.args.get("category", "") or "").strip()
-        filename = str(request.args.get("filename", "") or "").strip()
-        if not self._safe_semantic_image_name(
-            category
-        ) or not self._safe_semantic_image_name(filename):
-            return jsonify({"message": "分类或文件名无效"}), 400
-        view_context = self._resolve_webui_pack_view_context()
-        memes_root = (
-            view_context["memes_dir"].resolve()
-            if view_context
-            else Path(self._default_pack_context()["memes_dir"]).resolve()
-        )
-        pack_dir = (
-            view_context["pack_dir"].resolve()
-            if view_context
-            else memes_root.parent.resolve()
-        )
-        pack_id = str(
-            (view_context or {}).get("pack_id") or pack_dir.name or ""
-        ).strip()
-        requested_file_path = memes_root / category / filename
-        if requested_file_path.is_symlink():
-            return jsonify({"message": "不允许通过符号链接读取图片语义"}), 400
-        file_path = requested_file_path.resolve()
-
-        try:
-            file_path.relative_to(memes_root)
-        except ValueError:
-            return jsonify({"message": "图片路径无效"}), 403
-        if not file_path.is_file():
-            return jsonify({"message": "图片不存在"}), 404
-
-        try:
-            detail = get_image_semantic_detail(pack_dir, file_path)
-            return jsonify(
-                {
-                    "pack_id": pack_id,
-                    "category": category,
-                    "filename": filename,
-                    "semantic": detail,
-                }
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            return jsonify({"message": str(exc)}), 400
-        except Exception as exc:
-            logger.error("读取图片语义失败: %s", exc, exc_info=True)
-            return jsonify({"message": "读取图片语义失败"}), 500

@@ -15,7 +15,7 @@
 
 安装并启用插件后，在 AstrBot WebUI 的“插件”页面打开“表情包管理大师”。页面由插件 `pages/` 目录提供，后端 API 使用 AstrBot 的 `context.register_web_api` 注册，不需要额外端口。
 
-管理页面支持分类浏览、图片上传、图片预览、删除、移动、分类描述编辑和 pack 切换；语义页面沿用参考插件的任务、复审和索引入口。默认安装不依赖 `faiss-cpu`：目录索引（描述、复审、capture workspace）始终可用；向量任务 API 只有在显式启用 `vector_semantic_enabled` 且安装 `faiss-cpu` 后才会注册。
+管理页面支持分类浏览、图片上传、图片预览、删除、移动、分类描述编辑和 pack 切换；图片选择使用现有的情景判断和分类规则，不再生成或维护图片语义描述、向量索引或语义复审任务。
 
 ## 数据结构
 
@@ -43,7 +43,7 @@ AstrBot/data/plugin_data/meme_manager_master/
 
 ## 可选依赖
 
-核心安装只需要 `requirements.txt` 中的 `aiohttp`、`Pillow` 与 `requests`。向量语义能力（embedding、FAISS 搜索、向量重建）是可选的：安装 `pip install -r requirements-semantic.txt` 并在 WebUI 设置中开启 `vector_semantic_enabled` 后，向量任务路由才会注册；未启用时请求这些接口会返回明确的能力未启用提示，而不是模糊的 500。
+核心安装只需要 `requirements.txt` 中的 `aiohttp`、`Pillow` 与 `requests`。图片会发送给配置的视觉/情感模型进行情景判断，请确认群成员已知悉并遵守平台、隐私和内容管理要求。
 
 图片会发送给配置的视觉/情感模型，请确认群成员已知悉并遵守平台、隐私和内容管理要求。
 

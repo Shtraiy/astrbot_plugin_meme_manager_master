@@ -42,7 +42,6 @@ class PluginConfigDefaultsTests(unittest.TestCase):
         self.assertEqual(config.health_check_interval, 300)
         self.assertEqual(config.fallback_category, "confused")
         self.assertEqual(config.local_image_roots, ())
-        self.assertFalse(config.vector_semantic_enabled)
 
 
 class PluginConfigBoundaryTests(unittest.TestCase):
@@ -151,15 +150,8 @@ class PluginConfigSchemaTests(unittest.TestCase):
                 "health_check_interval",
                 "fallback_category",
                 "local_image_roots",
-                "vector_semantic_enabled",
             },
         )
-
-    def test_vector_capability_can_be_enabled(self):
-        config = PluginConfig.from_mapping({"vector_semantic_enabled": True})
-        self.assertTrue(config.vector_semantic_enabled)
-        legacy = PluginConfig.from_mapping({"semantic": {"enabled": True}})
-        self.assertTrue(legacy.vector_semantic_enabled)
 
     def test_generated_schema_matches_checked_in_file(self):
         result = subprocess.run(

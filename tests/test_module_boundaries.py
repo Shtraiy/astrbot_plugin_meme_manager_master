@@ -15,7 +15,6 @@ class WebApiModuleBoundaryTests(unittest.TestCase):
         for relative in (
             "mixins/emoji_api.py",
             "mixins/pack_api.py",
-            "mixins/semantic_api.py",
         ):
             tree = _parse(relative)
             imports = []
@@ -30,7 +29,6 @@ class WebApiModuleBoundaryTests(unittest.TestCase):
         for relative in (
             "mixins/emoji_api.py",
             "mixins/pack_api.py",
-            "mixins/semantic_api.py",
         ):
             tree = _parse(relative)
             imports = []
@@ -45,7 +43,6 @@ class WebApiModuleBoundaryTests(unittest.TestCase):
         for relative in (
             "mixins/emoji_api.py",
             "mixins/pack_api.py",
-            "mixins/semantic_api.py",
         ):
             tree = _parse(relative)
             calls = []
@@ -156,25 +153,9 @@ class ManagerInitStructureTests(unittest.TestCase):
         ):
             self.assertIn(statement, init_source, statement)
 
-    def test_vector_manager_factory_is_class_level_not_nested(self):
-        tree = _parse("manager_base.py")
-        cls = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.ClassDef) and node.name == "MemeSender"
-        )
-        init = next(
-            node
-            for node in cls.body
-            if isinstance(node, ast.FunctionDef) and node.name == "__init__"
-        )
-        factory = next(
-            node
-            for node in cls.body
-            if isinstance(node, ast.FunctionDef)
-            and node.name == "_create_vector_semantic_manager"
-        )
-        self.assertGreater(factory.lineno, init.end_lineno)
+    def test_vector_manager_factory_is_removed(self):
+        source = (ROOT / "manager_base.py").read_text(encoding="utf-8")
+        self.assertNotIn("_create_vector_semantic_manager", source)
 
 
 if __name__ == "__main__":

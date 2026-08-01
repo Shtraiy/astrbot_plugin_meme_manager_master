@@ -46,8 +46,6 @@ window.MemeManagerUI.api.apiGet = async function (endpoint, params = {}) {
         "emotions",
         "meme_image",
         "meme_image_data",
-        "meme_image_semantic",
-        "semantic/reviews",
       ].includes(endpoint)
     ) {
       mergedParams.managed_pack_id = managedPackId;
@@ -71,9 +69,6 @@ window.MemeManagerUI.api.apiPost = async function (endpoint, body = {}) {
       throw new Error(
         "当前为管理视图模式，仅支持浏览。请切回默认管理包后再执行编辑操作。",
       );
-    }
-    if (selectedPackId && endpoint.startsWith("semantic/")) {
-      mergedBody.pack_id = selectedPackId;
     }
     return await window.AstrBotPluginPage.apiPost(endpoint, mergedBody);
   }

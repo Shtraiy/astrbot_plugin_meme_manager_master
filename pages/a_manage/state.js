@@ -11,10 +11,6 @@ window.MemeManagerUI.state = {
   },
   latestEmojiData: {},
   latestTagDescriptions: {},
-  semanticReviewByPath: new Map(),
-  semanticReviewStatistics: {},
-  semanticReviewAvailable: false,
-  activeSemanticReviewFilter: "all",
   dangerConfirmResolver: null,
   dangerConfirmStage: "ack",
   dangerConfirmTimer: null,
@@ -56,117 +52,6 @@ window.MemeManagerUI.state = {
   ),
   imagePreviewCloseBtn: document.getElementById(
     "image-preview-close-btn",
-  ),
-  imagePreviewSemantic: document.getElementById(
-    "image-preview-semantic",
-  ),
-  imagePreviewSemanticState: document.getElementById(
-    "image-preview-semantic-state",
-  ),
-  imagePreviewSemanticFilename: document.getElementById(
-    "image-preview-semantic-filename",
-  ),
-  imagePreviewSemanticCaption: document.getElementById(
-    "image-preview-semantic-caption",
-  ),
-  imagePreviewSemanticTagsWrap: document.getElementById(
-    "image-preview-semantic-tags-wrap",
-  ),
-  imagePreviewSemanticTags: document.getElementById(
-    "image-preview-semantic-tags",
-  ),
-  imagePreviewVisibleTextWrap: document.getElementById(
-    "image-preview-visible-text-wrap",
-  ),
-  imagePreviewVisibleText: document.getElementById(
-    "image-preview-visible-text",
-  ),
-  imagePreviewSemanticIndex: document.getElementById(
-    "image-preview-semantic-index",
-  ),
-  imagePreviewCategoryTag: document.getElementById(
-    "image-preview-category-tag",
-  ),
-  imagePreviewCategoryReview: document.getElementById(
-    "image-preview-category-review",
-  ),
-  imagePreviewCategoryReviewState: document.getElementById(
-    "image-preview-category-review-state",
-  ),
-  imagePreviewCategoryReviewReason: document.getElementById(
-    "image-preview-category-review-reason",
-  ),
-  imagePreviewReclassification: document.getElementById(
-    "image-preview-reclassification",
-  ),
-  imagePreviewCategoryConfirmBtn: document.getElementById(
-    "image-preview-category-confirm-btn",
-  ),
-  imagePreviewReviewActions: document.getElementById(
-    "image-preview-review-actions",
-  ),
-  imagePreviewReviewEditBtn: document.getElementById(
-    "image-preview-review-edit-btn",
-  ),
-  imagePreviewSourceState: document.getElementById(
-    "image-preview-source-state",
-  ),
-  imagePreviewVectorState: document.getElementById(
-    "image-preview-vector-state",
-  ),
-  imagePreviewDuplicateNotice: document.getElementById(
-    "image-preview-duplicate-notice",
-  ),
-  imagePreviewSemanticActions: document.getElementById(
-    "image-preview-semantic-actions",
-  ),
-  imagePreviewEditBtn: document.getElementById("image-preview-edit-btn"),
-  imagePreviewRestoreAutoBtn: document.getElementById(
-    "image-preview-restore-auto-btn",
-  ),
-  imagePreviewEditForm: document.getElementById(
-    "image-preview-edit-form",
-  ),
-  imagePreviewFixedTags: document.getElementById(
-    "image-preview-fixed-tags",
-  ),
-  imagePreviewReviewInstruction: document.getElementById(
-    "image-preview-review-instruction",
-  ),
-  imagePreviewReviewRewriteBtn: document.getElementById(
-    "image-preview-review-rewrite-btn",
-  ),
-  imagePreviewReviewRewriteStatus: document.getElementById(
-    "image-preview-review-rewrite-status",
-  ),
-  imagePreviewTargetCategory: document.getElementById(
-    "image-preview-target-category",
-  ),
-  imagePreviewCaptionInput: document.getElementById(
-    "image-preview-caption-input",
-  ),
-  imagePreviewTagsInput: document.getElementById(
-    "image-preview-tags-input",
-  ),
-  imagePreviewVisibleTextInput: document.getElementById(
-    "image-preview-visible-text-input",
-  ),
-  imagePreviewCategoryDecision: document.getElementById(
-    "image-preview-category-decision",
-  ),
-  imagePreviewEditScope: document.getElementById(
-    "image-preview-edit-scope",
-  ),
-  imagePreviewEditCancelBtn: document.getElementById(
-    "image-preview-edit-cancel-btn",
-  ),
-  imagePreviewSaveBtn: document.getElementById("image-preview-save-btn"),
-  imagePreviewSaveVectorBtn: document.getElementById(
-    "image-preview-save-vector-btn",
-  ),
-  semanticReviewStats: document.getElementById("semantic-review-stats"),
-  semanticReviewToolbar: document.getElementById(
-    "semantic-review-toolbar",
   ),
   moveTargetModalRoot: document.getElementById("move-target-modal"),
   moveTargetModalTitle: document.getElementById(
@@ -221,17 +106,6 @@ window.MemeManagerUI.state = {
     "danger-modal-confirm-btn",
   ),
   managePackSelect: document.getElementById("manage-pack-select"),
-  packSemanticStatus: document.getElementById("pack-semantic-status"),
-  packSemanticStatusText: document.getElementById(
-    "pack-semantic-status-text",
-  ),
-  packVectorStatus: document.getElementById("pack-vector-status"),
-  packVectorStatusText: document.getElementById(
-    "pack-vector-status-text",
-  ),
-  rebuildPackVectorsBtn: document.getElementById(
-    "rebuild-pack-vectors-btn",
-  ),
   switchManagePackBtn: document.getElementById("switch-manage-pack-btn"),
   deleteManagePackBtn: document.getElementById("delete-manage-pack-btn"),
   transferCurrentPack: document.getElementById("transfer-current-pack"),
@@ -239,7 +113,6 @@ window.MemeManagerUI.state = {
     document.querySelectorAll('input[name="export-mode"]'),
   ),
   exportModeBackup: document.getElementById("export-mode-backup"),
-  vectorBackupHint: document.getElementById("vector-backup-hint"),
   exportPackDownloadBtn: document.getElementById(
     "export-pack-download-btn",
   ),
@@ -260,20 +133,11 @@ window.MemeManagerUI.state = {
   packImportCategoryCount: document.getElementById(
     "pack-import-category-count",
   ),
-  packImportSemanticCount: document.getElementById(
-    "pack-import-semantic-count",
-  ),
-  packImportVectorState: document.getElementById(
-    "pack-import-vector-state",
-  ),
   packImportWarning: document.getElementById("pack-import-warning"),
   packImportSetDefault: document.getElementById(
     "pack-import-set-default",
   ),
   packImportOverwrite: document.getElementById("pack-import-overwrite"),
-  packImportOverwriteManual: document.getElementById(
-    "pack-import-overwrite-manual",
-  ),
   packImportResetBtn: document.getElementById("pack-import-reset-btn"),
   packImportConfirmBtn: document.getElementById(
     "pack-import-confirm-btn",
@@ -284,9 +148,6 @@ window.MemeManagerUI.state = {
   managePacksById: new Map(),
   pendingPackImportToken: "",
   exportCapabilityRequestId: 0,
-  managePackVectorStatusRequestId: 0,
-  latestManagePackVectorStatus: null,
-  latestManagePackVectorStatusId: "",
   confirmResolver: null,
   MOBILE_LAYOUT_MEDIA: "(max-width: 960px)",
   DRAG_HUD_OFFSET_X: 18,

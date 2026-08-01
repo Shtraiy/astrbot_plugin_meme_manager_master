@@ -9,6 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
+    from .backend.semantic_cleanup import cleanup_legacy_semantic_data
+except ImportError:
+    from backend.semantic_cleanup import cleanup_legacy_semantic_data
+
+try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 except ImportError:
     def get_astrbot_data_path() -> str:
@@ -205,8 +210,8 @@ def migrate_original_manager_data_if_needed(plugin_data_dir: Path) -> None:
     """Import original meme_manager data into this plugin's private runtime.
 
     The import is additive and never overwrites an existing master pack.  It
-    preserves pack manifests, category descriptions, index files, semantic
-    metadata and local vectors by copying the complete pack directory.
+    preserves pack manifests, category descriptions, index files, and images;
+    retired semantic metadata and local vectors are intentionally excluded.
     """
     source_dir = _original_manager_data_dir()
     if source_dir is None or not source_dir.is_dir():
@@ -301,11 +306,6 @@ def migrate_original_manager_data_if_needed(plugin_data_dir: Path) -> None:
             if source_file.is_file() and not target_file.exists():
                 target_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_file, target_file)
-        source_indexes_dir = source_dir / "semantic_indexes"
-        if source_indexes_dir.is_dir():
-            _copy_directory_contents(
-                source_indexes_dir, plugin_data_dir / "semantic_indexes"
-            )
     elif has_legacy_data:
         legacy_pack_dir = target_packs_dir / LEGACY_MIGRATED_PACK_ID
         legacy_memes_dir = legacy_pack_dir / "memes"
@@ -647,6 +647,7 @@ if _has_legacy_root_runtime_data(PLUGIN_DATA_DIR):
     if not (PLUGIN_DATA_DIR / "selection_rules.json").is_file():
         _write_default_selection_rules(PLUGIN_DATA_DIR, LEGACY_MIGRATED_PACK_ID)
 _bootstrap_pack_runtime(PLUGIN_DATA_DIR)
+cleanup_legacy_semantic_data(PLUGIN_DATA_DIR)
 BASE_DATA_DIR = PLUGIN_DATA_DIR
 PACKS_DIR = PLUGIN_DATA_DIR / "packs"
 REGISTRY_PATH = PLUGIN_DATA_DIR / "registry.json"
@@ -656,7 +657,6 @@ COMMUNITY_INDEX_URL = "https://raw.githubusercontent.com/anka-afk/astrbot-meme-p
 BACKUP_DIR = PLUGIN_DATA_DIR / "backup"
 MIGRATION_DIR = PLUGIN_DATA_DIR / "migration"
 TEMP_DIR = PLUGIN_DATA_DIR / "temp"
-SEMANTIC_INDEXES_DIR = PLUGIN_DATA_DIR / "semantic_indexes"
 ACTIVE_PACK_ID = _resolve_default_pack_id(PLUGIN_DATA_DIR)
 ACTIVE_PACK_DIR = PACKS_DIR / ACTIVE_PACK_ID
 MEMES_DIR = ACTIVE_PACK_DIR / "memes"
@@ -668,7 +668,6 @@ os.makedirs(MEMES_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(BACKUP_DIR, exist_ok=True)
 os.makedirs(MIGRATION_DIR, exist_ok=True)
-os.makedirs(SEMANTIC_INDEXES_DIR, exist_ok=True)
 
 print(f"插件目录: {PLUGIN_DIR}", file=sys.stderr)
 print(f"插件数据目录: {PLUGIN_DATA_DIR}", file=sys.stderr)

@@ -83,7 +83,6 @@ _LEGACY_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
     "scene_provider_id": (("semantic", "scene_provider_id"),),
     "reply_scene_provider_id": (("semantic", "reply_scene_provider_id"),),
     "library_index_provider_id": (("semantic", "library_index_provider_id"),),
-    "vector_semantic_enabled": (("semantic", "enabled"),),
 }
 
 
@@ -117,7 +116,6 @@ class PluginConfig:
     health_check_interval: float = 300.0
     fallback_category: str = "confused"
     local_image_roots: tuple[str, ...] = ()
-    vector_semantic_enabled: bool = False
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "PluginConfig":
@@ -217,10 +215,6 @@ class PluginConfig:
             ),
             fallback_category=string_value(lookup("fallback_category"), "confused"),
             local_image_roots=list_value(lookup("local_image_roots")),
-            vector_semantic_enabled=bool_value(
-                lookup("vector_semantic_enabled", legacy_paths("vector_semantic_enabled")),
-                False,
-            ),
         )
 
     @classmethod
@@ -428,11 +422,5 @@ class PluginConfig:
                 "description": "本地图片读取目录",
                 "hint": "允许读取的本地图片根目录，用于发送本地表情包。",
                 "default": [],
-            },
-            "vector_semantic_enabled": {
-                "type": "bool",
-                "description": "启用向量语义能力",
-                "hint": "需要安装 faiss-cpu（见 requirements-semantic.txt）；关闭时默认路由面不暴露向量任务操作。",
-                "default": False,
             },
         }

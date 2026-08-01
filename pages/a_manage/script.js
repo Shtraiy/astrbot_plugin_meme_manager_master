@@ -467,18 +467,6 @@ async function initApp() {
   window.MemeManagerUI.state.packImportConfirmBtn?.addEventListener("click", () => {
     void window.MemeManagerUI.pack.confirmPackImport();
   });
-  window.MemeManagerUI.state.rebuildPackVectorsBtn?.addEventListener("click", () => {
-    const packId = String(window.MemeManagerUI.state.activeManagePackId || "").trim();
-    const status =
-      window.MemeManagerUI.state.latestManagePackVectorStatusId === packId
-        ? window.MemeManagerUI.state.latestManagePackVectorStatus
-        : null;
-    if (!status) {
-      void window.MemeManagerUI.pack.refreshManagePackVectorStatus(packId);
-      return;
-    }
-    void window.MemeManagerUI.pack.confirmAndRebuildVector(packId, status, { manual: true });
-  });
   window.MemeManagerUI.pack.updateExportModeAppearance();
   await window.MemeManagerUI.pack.loadManagePackSwitcher();
   await window.MemeManagerUI.emoji.fetchEmojis();
@@ -518,7 +506,6 @@ async function initApp() {
   window.MemeManagerUI.state.imagePreviewRestoreAutoBtn?.addEventListener("click", () => {
     void window.MemeManagerUI.emoji.restoreCurrentImageAutoSemantic();
   });
-  await window.MemeManagerUI.pack.maybeOfferVectorRebuild(window.MemeManagerUI.state.activeManagePackId);
   window.MemeManagerUI.state.switchManagePackBtn?.addEventListener("click", () => {
     void window.MemeManagerUI.pack.switchManagePack();
   });

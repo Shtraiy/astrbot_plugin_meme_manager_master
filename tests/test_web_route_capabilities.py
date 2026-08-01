@@ -4,51 +4,22 @@ from mixins.web_routes import enabled_route_specs
 
 
 DEFAULT_CAPABILITIES = {"core", "catalog_index"}
-VECTOR_ROUTES = (
-    "semantic/start",
-    "semantic/pause",
-    "semantic/resume",
-    "semantic/retry",
-    "semantic/rebuild-index",
-    "semantic/clear-local-state",
-    "semantic/delete-all",
-    "semantic/status",
-    "semantic/save_image_and_vector",
-)
-CATALOG_ROUTES = (
-    "semantic/capture-workspace",
-    "semantic/capture-index",
-    "semantic/reviews",
-    "semantic/confirm_category",
-    "semantic/propose_image_revision",
-    "semantic/save_image",
-    "semantic/restore_image_auto",
-    "semantic/items",
-)
-
-
 class WebRouteCapabilityTests(unittest.TestCase):
-    def test_default_surface_registers_catalog_routes(self):
+    def test_default_surface_registers_ordinary_catalog_routes(self):
         paths = {
             spec.path for spec in enabled_route_specs(DEFAULT_CAPABILITIES)
         }
-        for route in CATALOG_ROUTES:
+        for route in ("emoji", "emotions", "packs", "packs/import", "settings/rules"):
             self.assertIn(route, paths, f"default surface must register {route}")
 
-    def test_default_surface_hides_vector_task_routes(self):
-        paths = {
-            spec.path for spec in enabled_route_specs(DEFAULT_CAPABILITIES)
-        }
-        for route in VECTOR_ROUTES:
-            self.assertNotIn(route, paths, f"default surface must hide {route}")
-
-    def test_vector_capability_registers_vector_routes(self):
+    def test_semantic_routes_are_removed_from_every_capability_surface(self):
         paths = {
             spec.path
             for spec in enabled_route_specs(DEFAULT_CAPABILITIES | {"vector_semantic"})
         }
-        for route in VECTOR_ROUTES:
-            self.assertIn(route, paths)
+        self.assertFalse(
+            any(path == "meme_image_semantic" or path.startswith("semantic/") for path in paths)
+        )
 
     def test_core_routes_always_registered(self):
         paths = {

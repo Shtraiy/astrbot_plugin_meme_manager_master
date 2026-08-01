@@ -52,12 +52,11 @@ window.MemeManagerUI.emoji.fetchEmojis = async function () {
     window.MemeManagerUI.state.loading = true;
     window.MemeManagerUI.state.error = null;
     try {
-      // The image list is the primary payload.  A broken description or
-      // optional review request must not blank an otherwise usable catalog.
-      const [emojiResult, descriptionsResult, reviewResult] = await Promise.allSettled([
+      // The image list is the primary payload. A broken description request
+      // must not blank an otherwise usable catalog.
+      const [emojiResult, descriptionsResult] = await Promise.allSettled([
         window.MemeManagerUI.api.apiGet("emoji"),
         window.MemeManagerUI.api.apiGet("emotions"),
-        window.MemeManagerUI.api.apiGet("semantic/reviews"),
       ]);
       if (emojiResult.status !== "fulfilled") {
         throw emojiResult.reason || new Error("表情包目录加载失败");
@@ -76,18 +75,10 @@ window.MemeManagerUI.emoji.fetchEmojis = async function () {
       if (descriptionsResult.status !== "fulfilled") {
         console.warn("读取分类描述失败，继续显示表情包目录:", descriptionsResult.reason);
       }
-      const normalizedReviewResult =
-        reviewResult.status === "fulfilled" && reviewResult.value
-          ? reviewResult.value
-          : { items: [], statistics: {} };
-      if (reviewResult.status !== "fulfilled") {
-        console.warn("读取分类审核状态失败:", reviewResult.reason);
-      }
       window.MemeManagerUI.emoji.clearDragMode();
       window.MemeManagerUI.emoji.closeBatchContextMenu();
       window.MemeManagerUI.state.latestEmojiData = emojiResponse;
       window.MemeManagerUI.state.latestTagDescriptions = tagDescriptions;
-      window.MemeManagerUI.emoji.applySemanticReviewData(normalizedReviewResult);
       window.MemeManagerUI.emoji.pruneSelectionState();
       window.MemeManagerUI.emoji.displayCategories(emojiResponse, tagDescriptions);
       window.MemeManagerUI.emoji.updateSidebar(emojiResponse, tagDescriptions);
@@ -245,13 +236,6 @@ window.MemeManagerUI.emoji.loadPreviewImage = async function (category, emoji, s
       throw new Error("图片接口未返回预览数据");
     }
     return data.data_url;
-  }
-window.MemeManagerUI.emoji.loadImageSemantic = async function (category, emoji) {
-    const data = await window.MemeManagerUI.api.apiGet("meme_image_semantic", {
-      category,
-      filename: emoji,
-    });
-    return data?.semantic || { status: "none" };
   }
 window.MemeManagerUI.emoji.renderImageSemantic = function (semantic, { loading = false, error = "" } = {}) {
     if (!window.MemeManagerUI.state.imagePreviewSemantic) {
@@ -669,7 +653,7 @@ window.MemeManagerUI.emoji.requestImageSemanticRevision = async function () {
         window.MemeManagerUI.state.imagePreviewReviewRewriteBtn,
         "视觉模型分析中...",
       );
-      const result = await window.MemeManagerUI.api.apiPost("semantic/propose_image_revision", payload);
+      throw new Error("图片语义化功能已移除");
       if (window.MemeManagerUI.state.imagePreviewState !== previewState) return;
       const proposal = result?.proposal || {};
       if (window.MemeManagerUI.state.imagePreviewCaptionInput) {
@@ -781,10 +765,7 @@ window.MemeManagerUI.emoji.saveCurrentImageSemantic = async function ({ updateVe
         activeButton,
         payload.target_category ? "保存、移动并更新中..." : "保存中...",
       );
-      const endpoint = updateVector
-        ? "semantic/save_image_and_vector"
-        : "semantic/save_image";
-      const result = await window.MemeManagerUI.api.apiPost(endpoint, payload);
+      throw new Error("图片语义化功能已移除");
       if (window.MemeManagerUI.state.imagePreviewState === previewState) {
         if (result?.moved) {
           previewState.category = String(
@@ -834,7 +815,8 @@ window.MemeManagerUI.emoji.restoreCurrentImageAutoSemantic = async function () {
         throw new Error("当前图包已经切换，请重新打开图片后再操作。");
       }
       window.MemeManagerUI.emoji.setImageSemanticSaving(true, window.MemeManagerUI.state.imagePreviewRestoreAutoBtn);
-      const result = await window.MemeManagerUI.api.apiPost("semantic/restore_image_auto", {
+      throw new Error("图片语义化功能已移除");
+      const result = await window.MemeManagerUI.api.apiPost("removed", {
         expected_pack_id: state.packId,
         category: state.category,
         filename: state.emoji,
@@ -858,7 +840,8 @@ window.MemeManagerUI.emoji.confirmCurrentImageCategory = async function () {
     const previewState = window.MemeManagerUI.state.imagePreviewState;
     window.MemeManagerUI.emoji.setButtonBusy(window.MemeManagerUI.state.imagePreviewCategoryConfirmBtn, "保存中...");
     try {
-      const result = await window.MemeManagerUI.api.apiPost("semantic/confirm_category", {
+      throw new Error("图片语义化功能已移除");
+      const result = await window.MemeManagerUI.api.apiPost("removed", {
         expected_pack_id: previewState.packId,
         category: previewState.category,
         filename: previewState.emoji,
@@ -887,7 +870,6 @@ window.MemeManagerUI.emoji.setImagePreviewBusy = function (isBusy) {
     }
   }
 window.MemeManagerUI.emoji.closeImagePreview = function () {
-    window.MemeManagerUI.emoji.setImageSemanticEditing(false);
     window.MemeManagerUI.state.imagePreviewState = null;
     if (window.MemeManagerUI.state.imagePreviewModalRoot) {
       window.MemeManagerUI.state.imagePreviewModalRoot.classList.add("hidden");
@@ -896,7 +878,6 @@ window.MemeManagerUI.emoji.closeImagePreview = function () {
     if (window.MemeManagerUI.state.imagePreviewImg) {
       window.MemeManagerUI.state.imagePreviewImg.removeAttribute("src");
     }
-    window.MemeManagerUI.emoji.renderImageSemantic(null, { loading: true });
     window.MemeManagerUI.emoji.setImagePreviewBusy(false);
   }
 window.MemeManagerUI.emoji.openImagePreview = async function (category, emoji, previewDataUrl = "") {
@@ -908,13 +889,11 @@ window.MemeManagerUI.emoji.openImagePreview = async function (category, emoji, p
       category,
       emoji,
       packId: String(window.MemeManagerUI.state.activeManagePackId || window.MemeManagerUI.state.managePackSelect?.value || ""),
-      semantic: null,
     };
     window.MemeManagerUI.state.imagePreviewState = previewState;
     window.MemeManagerUI.state.imagePreviewModalRoot.classList.remove("hidden");
     window.MemeManagerUI.state.imagePreviewModalRoot.setAttribute("aria-hidden", "false");
     window.MemeManagerUI.state.imagePreviewImg.alt = `表情包预览：${emoji}`;
-    window.MemeManagerUI.emoji.renderImageSemantic(null, { loading: true });
     if (previewDataUrl) {
       window.MemeManagerUI.state.imagePreviewImg.src = previewDataUrl;
     } else {
@@ -925,11 +904,7 @@ window.MemeManagerUI.emoji.openImagePreview = async function (category, emoji, p
     const previewRequest = previewDataUrl
       ? Promise.resolve(previewDataUrl)
       : window.MemeManagerUI.emoji.loadPreviewImage(category, emoji, "preview");
-    const semanticRequest = window.MemeManagerUI.emoji.loadImageSemantic(category, emoji);
-    const [previewResult, semanticResult] = await Promise.allSettled([
-      previewRequest,
-      semanticRequest,
-    ]);
+    const previewResult = await Promise.allSettled([previewRequest]);
     if (window.MemeManagerUI.state.imagePreviewState !== previewState) {
       return;
     }
@@ -941,14 +916,6 @@ window.MemeManagerUI.emoji.openImagePreview = async function (category, emoji, p
       return;
     }
     window.MemeManagerUI.state.imagePreviewImg.src = previewResult.value;
-    if (semanticResult.status === "fulfilled") {
-      window.MemeManagerUI.emoji.renderImageSemantic(semanticResult.value);
-    } else {
-      console.error("读取图片语义失败:", semanticResult.reason);
-      window.MemeManagerUI.emoji.renderImageSemantic(null, {
-        error: "语义信息暂时读取失败，请稍后重新打开图片。",
-      });
-    }
     window.MemeManagerUI.emoji.setImagePreviewBusy(false);
 
     window.MemeManagerUI.state.imagePreviewCloseBtn?.focus();
@@ -2598,29 +2565,10 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
     const container = document.getElementById("emoji-categories");
     container.innerHTML = "";
 
-    const categoryEntries = Object.entries(emojiData || {})
-      .map(([category, emojis]) => {
-        const source = Array.isArray(emojis) ? emojis : [];
-        if (window.MemeManagerUI.state.activeSemanticReviewFilter === "all") {
-          return [category, source];
-        }
-        return [
-          category,
-          source.filter((emoji) => {
-            const review = window.MemeManagerUI.state.semanticReviewByPath.get(
-              window.MemeManagerUI.emoji.semanticReviewKey(category, emoji),
-            );
-            if (window.MemeManagerUI.state.activeSemanticReviewFilter === "reclassified") {
-              return Boolean(review?.reclassification_status);
-            }
-            return (
-              String(review?.category_review_status || "unchecked") ===
-              window.MemeManagerUI.state.activeSemanticReviewFilter
-            );
-          }),
-        ];
-      })
-      .filter(([, emojis]) => window.MemeManagerUI.state.activeSemanticReviewFilter === "all" || emojis.length);
+    const categoryEntries = Object.entries(emojiData || {}).map(([category, emojis]) => [
+      category,
+      Array.isArray(emojis) ? emojis : [],
+    ]);
     const totalEmojiCount = categoryEntries.reduce((total, [, emojis]) => {
       return total + (Array.isArray(emojis) ? emojis.length : 0);
     }, 0);
@@ -2628,9 +2576,7 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
     if (!categoryEntries.length || totalEmojiCount === 0) {
       const hint = document.createElement("div");
       hint.className = "empty-pack-hint";
-      hint.innerHTML =
-        window.MemeManagerUI.state.activeSemanticReviewFilter === "all"
-          ? `
+      hint.innerHTML = `
         <p class="empty-pack-hint-title">当前还没有表情包内容</p>
         <p class="empty-pack-hint-meta">你可以先新建分类上传表情，或前往资源广场下载官方包；也可直接一键安装官方包。</p>
         <div class="empty-pack-hint-actions">
@@ -2638,12 +2584,10 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
           <button id="empty-hint-create-category" type="button">新建分类</button>
           <a id="empty-hint-open-catalog" href="#">前往资源广场下载</a>
         </div>
-      `
-          : `<p class="empty-pack-hint-title">当前筛选条件下没有图片</p>
-             <p class="empty-pack-hint-meta">请选择其他分类审核状态，或切回“全部”。</p>`;
+      `;
       container.appendChild(hint);
 
-      if (window.MemeManagerUI.state.activeSemanticReviewFilter === "all" && !window.MemeManagerUI.state.emptyPackGuideShown) {
+      if (!window.MemeManagerUI.state.emptyPackGuideShown) {
         window.MemeManagerUI.dialogs.showToast(
           "当前是空表情包，建议前往资源广场下载官方包。",
           "info",
@@ -2771,7 +2715,8 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
           emojiItem.dataset.loading = "false";
           emojiItem.tabIndex = 0;
 
-          const review = window.MemeManagerUI.state.semanticReviewByPath.get(
+          /* Legacy semantic review badge removed. */
+          /* const review = window.MemeManagerUI.state.semanticReviewByPath.get(
             window.MemeManagerUI.emoji.semanticReviewKey(category, emoji),
           );
           if (window.MemeManagerUI.state.semanticReviewAvailable && review) {
@@ -2810,8 +2755,7 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
                 : reviewStatus === "needs_review" && reviewReason
                   ? `${semanticBadge.textContent}；原因：${reviewReason}`
                   : semanticBadge.textContent;
-            emojiItem.appendChild(semanticBadge);
-          }
+            emojiItem.appendChild(semanticBadge); */
 
           const selectionIndicator = document.createElement("button");
           selectionIndicator.type = "button";
@@ -2835,7 +2779,7 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
         });
       }
 
-      if (window.MemeManagerUI.state.activeSemanticReviewFilter === "all") {
+      if (true) {
         const { uploadBlock, fileInput } = window.MemeManagerUI.emoji.createUploadDropzone(category);
 
         // 筛选状态下不显示上传入口，避免把新图片误认为筛选结果。
