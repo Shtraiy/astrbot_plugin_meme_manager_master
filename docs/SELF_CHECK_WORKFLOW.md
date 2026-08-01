@@ -244,7 +244,7 @@ Get-ChildItem pages -Recurse -Filter *.js | ForEach-Object {
 - `P2`：某个页面或核心功能稳定失败；
 - `P3`：当前默认配置不可达，但未来开关打开后会失败，或属于应清理的死代码。
 
-## 本次自检记录（2026-08-01）
+## 本次自检记录（初检，2026-08-01）
 
 检查范围排除了 `.git`、`.worktrees`、`__pycache__` 和测试缓存目录。
 
@@ -257,7 +257,7 @@ Get-ChildItem pages -Recurse -Filter *.js | ForEach-Object {
 | `_resolve_embedding_provider` | 无定义但仅在已停用语义路径和提前返回代码中出现，见下方 P3 |
 | 单元测试 | 112 项通过 |
 
-### 当前自检发现
+### 初检发现（已处理项与待确认项）
 
 #### [P2] 上传、导入和备份接口的实例方法缺少 `self`
 
@@ -272,14 +272,14 @@ Get-ChildItem pages -Recurse -Filter *.js | ForEach-Object {
 - 影响：表情包压缩包导入、预检导入和运行时备份上传路径可能失败；现有 112 项测试没有覆盖
   这几个真实上传调用。
 - 修复：补上 `self`，并增加异步上传、预检导入和备份导入的接口回归测试；修复后重新执行本流程。
-- 状态：待修复。
+- 状态：已修复；复测记录见下方“复测与关闭记录”。
 
 #### [P3] `_get_webui_response_status` 也缺少 `self`，但当前没有调用方
 
 - 证据：[`mixins/web_api.py:125`](../mixins/web_api.py:125)；仓库搜索未发现调用。
 - 影响：当前默认路径不可达，未来恢复调用时会复现同类绑定错误。
 - 修复：若确认不再需要则删除；若保留则补上 `self` 或明确标记为 `@staticmethod`，并添加测试。
-- 状态：待清理/确认。
+- 状态：已修复并覆盖实例调用测试；复测记录见下方“复测与关闭记录”。
 
 ### 当前仍需关注的低优先级项
 
@@ -287,6 +287,15 @@ Get-ChildItem pages -Recurse -Filter *.js | ForEach-Object {
 没有对应定义。当前 `_semantic_pack_ready()` 固定返回 `False`，而 `_pack_import_embedding_signature()`
 在调用前直接返回，因此本次默认运行路径不会触发它；它仍是重启语义功能或删除提前返回后可能暴露的
 潜在 `AttributeError`。后续应二选一：删除残留旧语义代码，或恢复一个有测试覆盖的明确实现。
+
+## 复测与关闭记录（2026-08-01）
+
+- 全量测试：144/144 通过。
+- Python 编译、配置 schema、页面 JavaScript 语法、`git diff --check`：通过。
+- 已新增并通过 pack ID 路径、运行时解析、类别目录、备份归档大小、Base64 大小和导出路径脱敏测试。
+- WebUI 静态资源令牌已在入口重定向和页面间跳转中保持传递，相关未授权回归测试通过。
+- 仍需宿主环境确认：AstrBot 实际的管理员鉴权/CSRF middleware，以及 DNS 重绑定下的真实网络行为。
+- 依赖安全扫描受限于当前环境未安装 `bandit` 和 `pip-audit`，不将其记为代码已通过。
 
 ## 关闭条件
 

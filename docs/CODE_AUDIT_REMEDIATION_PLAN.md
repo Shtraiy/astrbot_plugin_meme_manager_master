@@ -4,7 +4,7 @@
 审计范围：backend/、mixins/、pages/、tests/、配置与依赖文件  
 关联流程：SELF_CHECK_WORKFLOW.md
 
-## 结论摘要
+## 结论摘要（修复前基线）
 
 当前代码可以通过现有编译、单元测试、配置 schema 和前端语法检查，但测试覆盖主要集中在 stub 和静态路径，不能证明真实上传、下载、导入、卸载及 WebUI 权限边界安全。
 
@@ -27,8 +27,20 @@
 - 删除管理页旧语义化预览控件、向量重建占位函数和 removed 请求；阻断旧 backend provider 调用。
 - WebUI 上传增加 10 MB 限制、Pillow 内容校验、扩展名匹配和原子写入。
 - 备份输出目录限制在 BACKUP_DIR；GitHub 来源字段和归档响应增加结构/大小校验。
+- 修复 WebUI 页面跳转未携带静态资源令牌的问题，避免表情索引、资源管理和设置页面误报“未授权”。
+- 加固选择规则与运行时 pack 解析器的 `pack_id` 边界；导入清单类别和聊天上传目录使用统一安全目录解析。
+- 为运行时备份 Base64、上传归档和 `registry.json`、`selection_rules.json`、`community_cache.json` 增加大小限制。
+- 导出 JSON 响应移除本机绝对归档路径，仅保留归档文件名。
 
-当前仍未在本轮自动确认的项目：AstrBot 宿主实际提供的管理员鉴权与 CSRF 防护，以及完整依赖环境中的真实网络集成测试。
+当前仍未在本地自动确认的项目：AstrBot 宿主实际提供的管理员鉴权与 CSRF 防护、DNS 重绑定场景，以及完整依赖环境中的真实网络集成测试。
+
+## 复测结果（2026-08-01）
+
+- 全量单元测试：144/144 通过。
+- Python 编译、配置 schema、页面 JavaScript 语法和 `git diff --check`：通过。
+- 新增安全回归覆盖：选择规则绝对/父级路径、运行时 pack 解析、导入类别目录、聊天上传目录、归档 JSON 大小、Base64 大小和导出路径脱敏。
+- 初检中记录的三个缺失 `self` 已在前一批修复中关闭；当前 `web_api.py` 的上传保存、导入凭证和响应状态方法均可通过实例调用。
+- `bandit`、`pip-audit` 当前解释器未安装，依赖漏洞扫描仍需在完整 CI/部署环境执行。
 
 ## 依赖与调用关系
 
@@ -60,11 +72,11 @@ flowchart LR
 | 检查 | 结果 | 说明 |
 |---|---:|---|
 | python -m compileall -q . | 通过 | Python 文件可编译 |
-| python -m unittest discover -s tests -v | 112/112 通过 | 现有测试未覆盖下文的真实危险路径 |
+| python -m unittest discover -s tests -v | 144/144 通过 | 已补充路径、归档大小、类别目录和导出响应回归测试 |
 | python scripts/generate_conf_schema.py --check | 通过 | schema 与配置同步 |
 | node --check pages/**/*.js | 通过 | 当前 JS 可解析 |
 | 路由 handler AST 检查 | 40/40 | 未发现路由缺少 handler |
-| 缺失 self AST 检查 | 3 项 | mixins/web_api.py:125、:280、:290 |
+| 缺失 self AST 检查 | 0 项 | 上传、导入和响应状态方法已恢复正确实例绑定 |
 | 未定义实例方法检查 | 1 项 | _resolve_embedding_provider，位于已失效语义化路径 |
 | 当前审计解释器依赖导入 | 不完整 | aiohttp 未安装；不是代码漏洞，但运行时集成测试无法在此解释器完成 |
 
@@ -85,6 +97,8 @@ flowchart LR
 ## 详细问题与修复方案
 
 ### P1-01：pack ID 可构造路径，卸载接口可能删除边界外目录
+
+**当前状态**：已修复并通过选择规则、运行时解析、详情、默认设置、导出和卸载相关回归测试。
 
 **症状**：详情、设置默认、导出、下载和卸载接口都直接接收用户提供的 pack_id；卸载最终直接对拼接出的目录执行 shutil.rmtree。
 
@@ -109,6 +123,8 @@ flowchart LR
 
 ### P1-02：消息图片下载器禁用 TLS 校验，允许 HTTP 降级且没有资源上限
 
+**当前状态**：已修复并通过 HTTPS、DNS、重定向、大小、真实图片格式和失败清理测试；DNS 重绑定仍需真实网络环境复测。
+
 **症状**：收到偷取流程中的图片消息时，下载器关闭证书与主机名校验；特定域名还从 HTTPS 改成 HTTP；响应一次性读入内存，未限制状态、重定向、大小和真实内容。
 
 **证据**：mixins/event_handlers.py:558-590 设置 CERT_NONE，在 :564-571 做 HTTP 降级，在 :570-577 直接 await resp.read()，在 :586-590 即使识别失败也可能按 .bin 写盘。该流程由 mixins/commands.py:187-192 的 /偷取 状态触发。
@@ -127,6 +143,8 @@ flowchart LR
 
 ### P1-03（待宿主确认）：WebUI 鉴权与 CSRF 边界
 
+**当前状态**：未关闭。当前本地环境未安装 AstrBot，仍需在宿主环境验证 middleware、普通用户、未登录和跨 Origin 请求。
+
 **症状**：mixins/web_api.py:96-123 只注册 handler；pages/a_manage/api.js:89-108 的 fetch 包装器没有显式 CSRF 令牌或 Origin 检查。README 表示安全边界依赖 AstrBot 的 context.register_web_api。
 
 **风险判断**：仅凭插件代码不能确认宿主是否已经强制管理员鉴权和 CSRF 防护，因此暂不把它记为“已确认漏洞”。如果宿主注册的 API 能被普通用户或跨站请求调用，前述导出、导入、卸载风险会进一步扩大。
@@ -135,6 +153,8 @@ flowchart LR
 
 ### P2-01：三个实例方法缺少 self，真实调用必然参数错误
 
+**当前状态**：已修复；上传保存、导入凭证和响应状态方法均已恢复实例绑定，并有回归测试。
+
 **症状**：mixins/web_api.py:125 的 _get_webui_response_status、:280-288 的 _save_uploaded_file、:290-298 的 _pack_import_session_paths 定义在 mixin 类中却缺少 self。
 
 **证据与影响**：后两个方法由 mixins/pack_api.py:231、:301、:353、:694 的上传、导入和备份恢复路径调用；现有测试没有覆盖真实绑定调用，因此 112 个测试通过不能排除线上 TypeError。第一个方法当前未找到调用点，应删除或补 self 后补测试。
@@ -142,6 +162,8 @@ flowchart LR
 **修复**：先确认这些方法是否应为实例方法；若是则补 self，若应为静态工具则加 @staticmethod 并统一调用方式。补充真实类实例的同步/异步调用测试、有效/无效 token 测试和 pack 上传/备份导入测试。
 
 ### P2-02：图片语义化已经移除，但前端控件、必然抛错函数和 backend 死代码仍在
+
+**当前状态**：主要失效 UI、removed 路由和不可达调用已移除；`_resolve_embedding_provider` 的残留引用仍列为低优先级清理项。
 
 **症状**：产品逻辑已经把语义化关闭，却保留了用户可见控件和调用入口；相关函数一进入就抛出“功能已移除”，后面的旧实现成为不可达代码。
 
@@ -162,6 +184,8 @@ flowchart LR
 
 ### P2-03：WebUI 图片上传无大小、内容校验和原子写入
 
+**当前状态**：已修复并通过超限、伪图片、真实格式和原子写入回归测试。
+
 **证据**：backend/models.py:152-165 只做扩展名清理；:178 一次性读取整个 stream；:198-200 直接写目标文件。mixins/emoji_api.py:161-208 将上传直接交给该路径。
 
 **后果**：超大上传会消耗内存，伪图片会进入资源目录，写入中断可能留下损坏文件或半成品索引。
@@ -170,6 +194,8 @@ flowchart LR
 
 ### P2-04：社区/GitHub pack 下载没有响应大小和内容边界
 
+**当前状态**：主要响应、来源、归档和解压边界已加固；DNS 重绑定仍需真实网络环境复测。
+
 **证据**：backend/pack_storage.py:81-107 的 _http_get_with_optional_acceleration 使用 requests.get；:1405-1420 将完整 response.content 写入归档；:1483-1535 的远程安装允许较宽的来源描述，并以 block_executable_scripts=False 解压。backend/pack_protocol.py:67-89 仅做很弱的 repo/subpath 检查。
 
 **后果**：恶意或异常大的响应可造成内存/磁盘耗尽；过宽的仓库来源和归档内容会扩大供应链与落盘风险。当前代码没有看到“执行脚本”，但仍不应把远程仓库的任意文件全部当作 pack 内容。
@@ -177,6 +203,8 @@ flowchart LR
 **修复**：限定 HTTPS 和允许的加速域名，使用流式下载并限制响应、压缩包和解压后总大小；严格校验 owner/repo/ref/subpath 和控制字符；校验 manifest、文件扩展名、数量、单文件大小和总大小；能提供时记录哈希/签名并向用户展示来源。解压完成后只复制允许的 manifest、JSON 和图片文件。
 
 ### P2-05：运行时备份接受任意输出目录
+
+**当前状态**：已限制在 BACKUP_DIR，并移除导出响应中的本机绝对路径；鉴权/CSRF 联动仍待宿主确认。
 
 **证据**：mixins/pack_api.py:589-603 从请求 JSON 读取 output_dir；backend/pack_storage.py:1678-1687 对其 expanduser().resolve() 并创建目录。
 
