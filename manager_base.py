@@ -11,11 +11,12 @@ from astrbot.api.message_components import *
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
 
+from .backend.catalog_index_service import CatalogIndexService
 from .backend.category_manager import CategoryManager
 from .backend.semantic_index import EmbeddingAdapter, index_is_ready
 from .backend.semantic_models import runtime_category_mapping
 from .backend.semantic_storage import load_metadata, semantic_metadata_is_complete
-from .backend.semantic_task import SemanticTaskManager
+from .backend.vector_semantic_service import VectorSemanticService
 from .config import (
     DEFAULT_CATEGORY_DESCRIPTIONS,
     get_active_pack_paths,
@@ -27,6 +28,7 @@ from .init import init_plugin
 from .mixins.commands import CommandMixin
 from .mixins.event_handlers import EventHandlerMixin
 from .mixins.web_api import WebAPIMixin
+from .runtime_config import PluginConfig, consume_migration_used
 from .utils import dict_to_string, load_json, normalize_probability, probability_hit
 
 MEME_PROMPT_MARKER_START = "<!-- meme_manager_master_prompt:start -->"
@@ -42,6 +44,13 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         super().__init__(context)
         self._normalize_mixin_handler_module_paths()
         self.config = config or {}
+        self.config_raw = self.config
+        self.runtime_config = PluginConfig.from_mapping(self.config)
+        if consume_migration_used():
+            logger.info(
+                "[meme_manager_master] 检测到旧版配置键，已按 runtime_config 迁移读取，"
+                "建议在 WebUI 设置页确认并保存一次。"
+            )
 
         # 语义任务管理器只负责在实际操作时调用模型；缺少模型不会阻止旧版插件启动。
         # The standalone vector-semantic route has been retired.  Runtime
@@ -70,14 +79,47 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         self.semantic_min_score = float(
             self._read_config_value(("semantic", "min_score"), default=0.25) or 0.25
         )
-        self.semantic_task_manager = SemanticTaskManager(
+        # 向量语义能力默认不创建：仅当配置明确启用且 FAISS 可用时才会初始化。
+        # 目录索引（captions/复审/capture workspace）由 catalog_index_service
+        # 提供，不依赖向量模块。
+        self.catalog_index_service = CatalogIndexService(
             PLUGIN_DATA_DIR,
             context=context,
-            config={
-                "vision_provider_id": self.semantic_vision_provider_id,
-                "embedding_provider_id": self.semantic_embedding_provider_id,
-            },
+            config=self.config,
         )
+        self.semantic_task_manager = self._create_vector_semantic_manager(context)
+        self.vector_semantic_service = VectorSemanticService(
+            self.semantic_task_manager
+        )
+        self.web_capabilities = {"core", "catalog_index"}
+        if self.semantic_task_manager is not None:
+            self.web_capabilities = self.web_capabilities | {"vector_semantic"}
+
+    def _create_vector_semantic_manager(self, context):
+        """Create the vector task manager only when enabled and FAISS exists."""
+        if not self.runtime_config.vector_semantic_enabled:
+            return None
+        try:
+            from .backend.semantic_index import faiss_is_available
+            from .backend.semantic_task import SemanticTaskManager
+
+            if not faiss_is_available():
+                logger.error(
+                    "[meme_manager_master] vector_semantic_enabled 已开启，"
+                    "但当前环境缺少 faiss-cpu，向量语义能力不可用"
+                )
+                return None
+            return SemanticTaskManager(
+                PLUGIN_DATA_DIR,
+                context=context,
+                config={
+                    "vision_provider_id": self.semantic_vision_provider_id,
+                    "embedding_provider_id": self.semantic_embedding_provider_id,
+                },
+            )
+        except Exception as exc:
+            logger.error("[meme_manager_master] 初始化向量语义能力失败: %s", exc)
+            return None
 
         # 初始化插件
         if not init_plugin():

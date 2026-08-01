@@ -205,12 +205,20 @@ def should_block_agent_tool_after_meme(tool_name: Any) -> bool:
     return str(tool_name or "").strip() in BLOCKED_AGENT_TOOLS_AFTER_MEME
 
 
-def configured_provider_id(config: Mapping[str, Any], key: str, fallback_key: str = "") -> str:
-    """Read a provider override and optionally fall back to another setting."""
-    primary = str(config.get(key, "") or "").strip()
+def configured_provider_id(config, key: str, fallback_key: str = "") -> str:
+    """Read a provider override and optionally fall back to another setting.
+
+    Accepts either the raw config mapping or the typed ``PluginConfig``.
+    """
+    if isinstance(config, Mapping):
+        primary = str(config.get(key, "") or "").strip()
+        if primary:
+            return primary
+        return str(config.get(fallback_key, "") or "").strip() if fallback_key else ""
+    primary = str(getattr(config, key, "") or "").strip()
     if primary:
         return primary
-    return str(config.get(fallback_key, "") or "").strip() if fallback_key else ""
+    return str(getattr(config, fallback_key, "") or "").strip() if fallback_key else ""
 
 
 def strip_meme_markers(text: str) -> str:

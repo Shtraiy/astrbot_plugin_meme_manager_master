@@ -1,21 +1,57 @@
 # 配置说明
 
-插件设置页只保留表情包偷取和自动选图所需的选项：
+运行时配置统一由 `runtime_config.PluginConfig` 定义（类型、默认值、边界），
+并由 `scripts/generate_conf_schema.py` 生成 `_conf_schema.json`，避免 schema
+漂移。`_conf_schema.json` 与代码不一致时，`--check` 会以退出码 1 报错。
 
-| 配置项 | 作用 |
-| --- | --- |
-| `enabled` | 启用或暂停群聊自动偷取 |
-| `group_whitelist` | 限制允许偷取的群聊，留空表示全部群聊 |
-| `vision_provider_id` | 判断收到的图片是否为表情包 |
-| `scene_provider_id` | 偷取分类，以及自动回复时的情景识别 |
-| `only_capture_memes` | 跳过普通照片和非表情图片 |
-| `max_images_per_message` | 单条消息最多处理的图片数 |
-| `auto_send_enabled` | 允许根据对话情景自动发送表情包 |
-| `auto_send_probability` | 普通对话的自动发送概率 |
-| `auto_send_cooldown` | 自动发送之间的冷却时间 |
-| `library_index_enabled` | 后台为缺少描述的图片补充索引，默认关闭 |
-| `library_index_provider_id` | 后台补充 `index.json` 描述时使用的模型，留空沿用 `vision_provider_id` |
+## 公开配置
 
-参考插件迁移来的高级配置仍可被运行时兼容读取，但不再显示在设置页；这包括并发数、下载限制、旧版标记解析、语义索引和旧版提示词等。图床同步相关配置和代码已移除。
+| 配置项 | 类型 | 默认值 | 边界 | 产生模型调用 |
+| --- | --- | --- | --- | --- |
+| `enabled` | bool | `true` | - | 否 |
+| `group_whitelist` | list[string] | `[]` | - | 否 |
+| `vision_provider_id` | string | `""` | - | 是（视觉识别） |
+| `scene_provider_id` | string | `""` | - | 是（分类/情景识别） |
+| `reply_scene_provider_id` | string | `""` | - | 是（回复情景识别） |
+| `only_capture_memes` | bool | `true` | - | 否 |
+| `meme_rejection_confidence` | float | `0.7` | `0–1` | 否 |
+| `max_images_per_message` | int | `2` | `1–6` | 否（限制调用次数） |
+| `max_concurrent` | int | `2` | `1–8` | 否（限制并发调用） |
+| `max_image_size_mb` | int | `10` | `1–50` | 否 |
+| `download_timeout` | float | `20` | `5–120` | 否 |
+| `auto_send_enabled` | bool | `true` | - | 是（自动发送判定） |
+| `auto_send_probability` | float | `50` | `0–100` | 是（按概率触发判定） |
+| `auto_send_cooldown` | float | `30` | `0–3600` | 否 |
+| `auto_send_candidate_limit` | int | `8` | `2–16` | 否 |
+| `meme_repeat_window` | float | `300` | `0–86400` | 否 |
+| `meme_follow_up_window` | float | `300` | `10–1800` | 否 |
+| `proactive_send_after_steal` | bool | `false` | - | 是（偷取后主动选图） |
+| `perceptual_dedupe_enabled` | bool | `true` | - | 否 |
+| `perceptual_duplicate_threshold` | int | `6` | `0–16` | 否 |
+| `library_index_enabled` | bool | `false` | - | 是（后台索引） |
+| `library_index_provider_id` | string | `""` | - | 是（后台索引） |
+| `library_index_batch_size` | int | `6` | `1–12` | 否（限制索引批大小） |
+| `library_index_progress_step` | int | `5` | `1–50` | 否 |
+| `library_index_rename_files` | bool | `true` | - | 否 |
+| `health_check_interval` | float | `300` | `10–600` | 否 |
+| `fallback_category` | string | `"confused"` | - | 否 |
+| `local_image_roots` | list[string] | `[]` | - | 否 |
+| `vector_semantic_enabled` | bool | `false` | - | 是（向量 embedding/重建） |
 
-迁移表情包时，分类目录中的 `index.json` 和 `README.md` 会一并复制。若此前已经生成过空的目标索引，插件启动时会自动用原目录中的非空索引修复，不需要删除迁移标记。
+数值超界会被 clamp 到边界内；类型非法时回退默认值。列表字段（
+`group_whitelist`、`local_image_roots`）支持字符串（以逗号或换行分隔）或
+数组两种写法，运行时统一转换为只读元组。旧版嵌套键（如
+`semantic.vision_provider_id`）在没有对应 flat key 时仍会被兼容读取，每次
+启动最多记录一次迁移提示。
+
+`vector_semantic_enabled` 默认关闭：未安装 `faiss-cpu` 或未开启时，默认路由面
+不暴露向量任务操作（`semantic/start`、`rebuild-index`、`clear-local-state`、
+`delete-all` 等）；目录索引、人工复审和 capture workspace 始终可用。安装
+`requirements-semantic.txt` 并开启后，向量路由才会注册。
+
+参考插件迁移来的高级配置仍可被运行时兼容读取，但不再显示在设置页；这包括
+旧版标记解析、语义索引和旧版提示词等。图床同步相关配置和代码已移除。
+
+迁移表情包时，分类目录中的 `index.json` 和 `README.md` 会一并复制。若此前
+已经生成过空的目标索引，插件启动时会自动用原目录中的非空索引修复，不需要
+删除迁移标记。

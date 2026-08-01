@@ -1,64 +1,98 @@
+import asyncio
+import tempfile
+import time
 import unittest
 from pathlib import Path
+
+from tests.fakes import (
+    FakeContext,
+    FakeEvent,
+    install_package_alias,
+    install_runtime_stubs,
+)
+
+
+install_runtime_stubs()
+install_package_alias()
+
+from astrbot.api.message_components import Image as CompImage  # noqa: E402
+from astrbot.api.message_components import Plain as CompPlain  # noqa: E402
+from meme_manager_master.capture import CaptureMixin  # noqa: E402
+from meme_manager_master.collector import event_identity  # noqa: E402
 
 
 ROOT = Path(__file__).parents[1]
 
 
-class ExplicitMemeDispatchTests(unittest.TestCase):
-    def test_explicit_request_is_handled_before_reference_prompt_injection(self):
-        source = (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn("await CaptureMixin.on_llm_request", source)
-        self.assertNotIn("MemeSender.inject_meme_prompt", source)
+class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
+    def _make_mixin(self) -> CaptureMixin:
+        async def create():
+            return CaptureMixin(FakeContext(), {})
 
-    def test_capture_llm_hook_dispatches_explicit_request(self):
-        source = (ROOT / "capture.py").read_text(encoding="utf-8")
-        hook = source.index("async def on_llm_request")
-        explicit = source.index("await self._handle_explicit_meme_request", hook)
-        self.assertLess(explicit, source.index("tool_set =", hook))
+        return asyncio.run(create())
 
-    def test_explicit_request_is_available_to_decorating_fallback(self):
-        source = (ROOT / "capture.py").read_text(encoding="utf-8")
-        self.assertIn("self._remember_explicit_request(event)", source)
-        self.assertIn("self._explicit_request_active(event)", source)
-        decorating = source.index("async def on_decorating_result")
-        self.assertLess(
-            source.index("_explicit_request_active(event)", decorating),
-            source.index("_rewrite_unverified_meme_claim", decorating),
-        )
+    def test_explicit_success_chain_emits_only_image(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "meme.png"
+            path.write_bytes(b"placeholder")
+            chain = CaptureMixin._explicit_success_chain(path)
+            self.assertEqual(len(chain), 1)
+            self.assertIsInstance(chain[0], CompImage)
 
-    def test_explicit_result_is_restored_if_agent_continuation_overwrites_it(self):
-        source = (ROOT / "capture.py").read_text(encoding="utf-8")
-        self.assertIn("self._forced_meme_results", source)
-        self.assertIn("_restore_forced_meme_result", source)
-        self.assertIn("event.stop_event()", source)
+    def test_auto_send_chain_preserves_agent_reply_text(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "meme.png"
+            path.write_bytes(b"placeholder")
+            chain = CaptureMixin._explicit_success_chain(path, "这也太离谱了哈哈。")
+            self.assertEqual(len(chain), 2)
+            self.assertIsInstance(chain[0], CompPlain)
+            self.assertEqual(chain[0].text, "这也太离谱了哈哈。")
+            self.assertIsInstance(chain[1], CompImage)
 
-    def test_scene_judgment_runs_before_auto_send_probability_gate(self):
-        source = (ROOT / "capture.py").read_text(encoding="utf-8")
-        decorating = source.index("async def on_decorating_result")
-        scene_call = source.index(
-            "_choose_outgoing_meme_from_index(", decorating
-        )
-        cooldown_gate = source.index(
-            'cooldown = self._float_config("auto_send_cooldown"',
-            decorating,
-        )
-        probability_gate = source.index(
-            'probability = self._float_config("auto_send_probability"',
-            decorating,
-        )
-        self.assertLess(scene_call, cooldown_gate)
-        self.assertLess(scene_call, probability_gate)
+    def test_unverified_send_claim_is_rewritten_without_receipt(self):
+        event = FakeEvent()
+        chain = [CompPlain("表情包已经发给你啦～"), CompPlain("其他正文")]
+        mixin = self._make_mixin()
+        mixin._rewrite_unverified_meme_claim(event, chain)
+        self.assertEqual(chain[0].text, "我还没有成功发送表情包。")
+        self.assertEqual(chain[1].text, "其他正文")
 
-    def test_new_explicit_message_can_reclaim_a_reused_event_identity(self):
-        source = (ROOT / "capture.py").read_text(encoding="utf-8")
-        claim = source.index("async def _claim_auto_send")
-        self.assertIn("explicit_handled", source[claim : claim + 900])
-        on_message = source.index("async def on_message")
-        self.assertIn(
-            "_meme_manager_master_explicit_handled",
-            source[on_message : on_message + 900],
+    def test_send_claim_is_preserved_when_receipt_exists(self):
+        event = FakeEvent(message_id="msg-with-receipt")
+        mixin = self._make_mixin()
+        mixin._meme_send_receipts[event_identity(event)] = (
+            time.monotonic(),
+            Path("meme.png"),
+            {"category": "happy"},
         )
+        original = "表情包已经发给你啦～"
+        chain = [CompPlain(original)]
+        mixin._rewrite_unverified_meme_claim(event, chain)
+        self.assertEqual(chain[0].text, original)
+
+    def test_terminate_cancels_capture_tasks(self):
+        async def scenario():
+            mixin = CaptureMixin(FakeContext(), {})
+
+            async def never():
+                await asyncio.sleep(3600)
+
+            health = asyncio.create_task(never())
+            library = asyncio.create_task(never())
+            other = asyncio.create_task(never())
+            mixin._health_task = health
+            mixin._library_task = library
+            mixin._tasks = {other}
+            await mixin.terminate()
+            return health.cancelled(), library.cancelled(), other.cancelled()
+
+        cancelled = asyncio.run(scenario())
+        self.assertTrue(all(cancelled))
+
+    def test_legacy_success_copy_is_absent(self):
+        source = (ROOT / "capture.py").read_text(encoding="utf-8")
+        self.assertNotIn("找到一个合适的表情包", source)
+        self.assertNotIn("找到了一个合适的表情包", source)
 
 
 if __name__ == "__main__":

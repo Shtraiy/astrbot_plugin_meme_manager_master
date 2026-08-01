@@ -7,7 +7,9 @@
   },
   "group_whitelist": {
     "type": "list",
-    "items": { "type": "string" },
+    "items": {
+      "type": "string"
+    },
     "description": "群聊白名单",
     "hint": "填写群号或完整 UMO；留空表示允许所有群。",
     "default": []
@@ -26,11 +28,26 @@
     "_special": "select_provider",
     "default": ""
   },
+  "reply_scene_provider_id": {
+    "type": "string",
+    "description": "回复情景识别模型",
+    "hint": "用于自动发送时判断回复情景；留空使用情景识别模型。",
+    "_special": "select_provider",
+    "default": ""
+  },
   "only_capture_memes": {
     "type": "bool",
     "description": "只保存表情包",
     "hint": "开启后跳过普通照片和非表情图片，推荐保持开启。",
     "default": true
+  },
+  "meme_rejection_confidence": {
+    "type": "float",
+    "description": "表情包判定拒绝置信度",
+    "hint": "视觉模型置信度低于该值时判定为非表情包。",
+    "default": 0.7,
+    "min": 0,
+    "max": 1
   },
   "max_images_per_message": {
     "type": "int",
@@ -39,6 +56,30 @@
     "default": 2,
     "min": 1,
     "max": 6
+  },
+  "max_concurrent": {
+    "type": "int",
+    "description": "最大并发识别数",
+    "hint": "同时进行视觉识别与分类的图片数量上限。",
+    "default": 2,
+    "min": 1,
+    "max": 8
+  },
+  "max_image_size_mb": {
+    "type": "int",
+    "description": "单张图片大小上限（MB）",
+    "hint": "超过该大小的图片不会被下载或保存。",
+    "default": 10,
+    "min": 1,
+    "max": 50
+  },
+  "download_timeout": {
+    "type": "float",
+    "description": "图片下载超时（秒）",
+    "hint": "下载远程图片的超时上限。",
+    "default": 20,
+    "min": 5,
+    "max": 120
   },
   "auto_send_enabled": {
     "type": "bool",
@@ -62,6 +103,14 @@
     "min": 0,
     "max": 3600
   },
+  "auto_send_candidate_limit": {
+    "type": "int",
+    "description": "自动发送候选数量上限",
+    "hint": "选图时考虑的候选表情包数量。",
+    "default": 8,
+    "min": 2,
+    "max": 16
+  },
   "meme_repeat_window": {
     "type": "float",
     "description": "单图重复发送降权窗口（秒）",
@@ -69,6 +118,34 @@
     "default": 300,
     "min": 0,
     "max": 86400
+  },
+  "meme_follow_up_window": {
+    "type": "float",
+    "description": "表情包后续请求窗口（秒）",
+    "hint": "明确请求后的再次请求窗口，如“再来一个”。",
+    "default": 300,
+    "min": 10,
+    "max": 1800
+  },
+  "proactive_send_after_steal": {
+    "type": "bool",
+    "description": "偷取后主动发送",
+    "hint": "收集到表情包后是否立即尝试匹配当前会话并主动发送。",
+    "default": false
+  },
+  "perceptual_dedupe_enabled": {
+    "type": "bool",
+    "description": "感知哈希去重",
+    "hint": "开启后对相似图片进行感知去重，避免重复收集。",
+    "default": true
+  },
+  "perceptual_duplicate_threshold": {
+    "type": "int",
+    "description": "感知去重阈值",
+    "hint": "0 关闭感知去重，数值越大判定越宽松。",
+    "default": 6,
+    "min": 0,
+    "max": 16
   },
   "library_index_enabled": {
     "type": "bool",
@@ -82,5 +159,56 @@
     "hint": "用于后台补充 index.json 描述和分类索引；留空时使用识图模型。",
     "_special": "select_provider",
     "default": ""
+  },
+  "library_index_batch_size": {
+    "type": "int",
+    "description": "后台索引批大小",
+    "hint": "每批补充索引的图片数量。",
+    "default": 6,
+    "min": 1,
+    "max": 12
+  },
+  "library_index_progress_step": {
+    "type": "int",
+    "description": "后台索引日志步长",
+    "hint": "每处理多少张图片记录一次进度日志。",
+    "default": 5,
+    "min": 1,
+    "max": 50
+  },
+  "library_index_rename_files": {
+    "type": "bool",
+    "description": "索引时重命名文件",
+    "hint": "开启后按分类为缺少描述的图片生成稳定文件名。",
+    "default": true
+  },
+  "health_check_interval": {
+    "type": "float",
+    "description": "健康检查间隔（秒）",
+    "hint": "后台健康检查与依赖状态刷新的间隔。",
+    "default": 300,
+    "min": 10,
+    "max": 600
+  },
+  "fallback_category": {
+    "type": "string",
+    "description": "兜底分类",
+    "hint": "情景识别失败或无法分类时使用的默认分类。",
+    "default": "confused"
+  },
+  "local_image_roots": {
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "description": "本地图片读取目录",
+    "hint": "允许读取的本地图片根目录，用于发送本地表情包。",
+    "default": []
+  },
+  "vector_semantic_enabled": {
+    "type": "bool",
+    "description": "启用向量语义能力",
+    "hint": "需要安装 faiss-cpu（见 requirements-semantic.txt）；关闭时默认路由面不暴露向量任务操作。",
+    "default": false
   }
 }

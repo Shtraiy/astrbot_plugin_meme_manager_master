@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import shutil
 from pathlib import Path
 
 from ..config import (
@@ -13,6 +12,7 @@ from ..config import (
 )
 from ..utils import ensure_dir_exists, load_json, save_json
 from ..storage import MemeStore, is_safe_category_segment
+from .pack_repository import PackRepository
 from .semantic_storage import invalidate_semantic_metadata
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,13 @@ class CategoryManager:
         ensure_dir_exists(self._active_paths()["memes_dir"])
         self._ensure_data_file()
         self.descriptions = self._load_descriptions()
+        try:
+            self._repository().cleanup_stale_trash()
+        except Exception as exc:
+            logger.warning("清理临时回收目录失败: %s", exc)
+
+    def _repository(self) -> PackRepository:
+        return PackRepository(Path(self._active_paths()["pack_dir"]).resolve())
 
     def _ensure_data_file(self) -> None:
         """确保 memes_data.json 文件存在，不存在时基于当前包内容初始化。"""
@@ -182,68 +189,25 @@ class CategoryManager:
             return False
 
     def rename_category(self, old_name: str, new_name: str) -> bool:
-        """重命名类别"""
+        """重命名类别（经仓储事务执行，保存失败时回滚目录）。"""
         try:
-            self.reload_descriptions()
-            old_name = str(old_name or "").strip()
-            new_name = str(new_name or "").strip()
-            if (
-                not is_safe_category_name(old_name)
-                or old_name not in self.descriptions
-                or not is_safe_category_name(new_name)
-                or (new_name != old_name and new_name in self.descriptions)
-            ):
-                return False
-
-            memes_dir = self._active_paths()["memes_dir"]
-            old_path = memes_dir / old_name
-            new_path = memes_dir / new_name
-            if new_name != old_name and new_path.exists():
-                return False
-
-            # 获取旧类别的描述
-            description = self.descriptions[old_name]
-
-            # 更新配置
-            del self.descriptions[old_name]
-            self.descriptions[new_name] = description
-
-            # 更新文件夹名称
-            if os.path.exists(old_path):
-                os.rename(old_path, new_path)
-
-            metadata_path = self._active_paths()["metadata_path"]
-            saved = save_json(self.descriptions, str(metadata_path))
-            if saved:
+            if self._repository().rename_category(old_name, new_name):
+                self.reload_descriptions()
                 sync_active_pack_metadata(self.descriptions)
-                _reconcile_active_catalogs()
-                self._invalidate_semantic_if_present()
-            return saved
+                return True
+            return False
         except Exception as e:
             logger.error(f"重命名类别失败: {e}")
             return False
 
     def delete_category(self, category: str) -> bool:
-        """删除类别"""
+        """删除类别（先移入 .trash，元数据保存失败时恢复原目录）。"""
         try:
-            category = str(category or "").strip()
-            if not is_safe_category_name(category):
-                return False
-            self.reload_descriptions()
-            # 从配置中删除
-            if category in self.descriptions:
-                del self.descriptions[category]
-                save_json(self.descriptions, str(self._active_paths()["metadata_path"]))
-
-            # 删除文件夹
-            category_path = os.path.join(self._active_paths()["memes_dir"], category)
-            if os.path.exists(category_path):
-                shutil.rmtree(category_path)
-
-            sync_active_pack_metadata(self.descriptions)
-            _reconcile_active_catalogs()
-            self._invalidate_semantic_if_present()
-            return True
+            if self._repository().delete_category(category):
+                self.reload_descriptions()
+                sync_active_pack_metadata(self.descriptions)
+                return True
+            return False
         except Exception as e:
             logger.error(f"删除类别失败: {e}")
             return False

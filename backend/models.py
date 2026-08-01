@@ -10,6 +10,7 @@ from werkzeug.utils import secure_filename
 
 from ..config import MEMES_DIR, get_active_pack_paths
 from ..storage import is_safe_category_segment
+from .pack_repository import PackRepository
 
 logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
@@ -39,6 +40,11 @@ def _default_memes_dir() -> Path:
         return Path(get_active_pack_paths()["memes_dir"]).resolve()
     except Exception:
         return Path(MEMES_DIR).resolve()
+
+
+def _repository_for(memes_dir: str | Path | None = None) -> PackRepository:
+    memes_root = Path(memes_dir or _default_memes_dir()).resolve()
+    return PackRepository(memes_root.parent)
 
 
 def _iter_category_image_paths(category_path: Path) -> list[Path]:
@@ -234,17 +240,10 @@ def delete_emoji_from_category(
     memes_dir: str | Path | None = None,
 ):
     """删除指定类别下的表情包"""
-    category_path = _get_category_path(category, memes_dir)
-    if not category_path.is_dir():
-        return False
-
-    image_name = Path(image_file).name
-    image_path = category_path / image_name
-    if image_path.is_file() and _is_supported_image(image_path.name):
-        image_path.unlink()
-        _reconcile_catalogs(memes_dir)
-        return True
-    return False
+    result = _repository_for(memes_dir).delete_images(
+        str(category), [str(image_file)]
+    )
+    return len(result.succeeded) > 0
 
 
 def batch_delete_emojis(
@@ -261,21 +260,12 @@ def batch_delete_emojis(
             "missing_files": [],
         }
 
-    deleted_files = []
-    missing_files = []
-    for image_file in dict.fromkeys(image_files):
-        if delete_emoji_from_category(category, image_file, memes_dir):
-            deleted_files.append(Path(image_file).name)
-        else:
-            missing_files.append(Path(image_file).name)
-
+    outcome = _repository_for(memes_dir).delete_images(category, image_files)
     result = {
         "category_exists": True,
-        "deleted_files": deleted_files,
-        "missing_files": missing_files,
+        "deleted_files": list(outcome.succeeded),
+        "missing_files": list(outcome.missing),
     }
-    if deleted_files:
-        _reconcile_catalogs(memes_dir)
     return result
 
 
@@ -297,47 +287,21 @@ def move_emoji_to_category(
             "missing": True,
         }
 
-    target_category_path = _get_category_path(target_category, memes_dir)
-    target_category_path.mkdir(parents=True, exist_ok=True)
-
     image_name = Path(image_file).name
-    source_image_path = source_category_path / image_name
-    target_image_path = target_category_path / image_name
-
-    if not source_image_path.is_file() or not _is_supported_image(
-        source_image_path.name
-    ):
-        return {
-            "source_category_exists": True,
-            "target_category": target_category,
-            "filename": image_name,
-            "moved": False,
-            "conflict": False,
-            "missing": True,
-        }
-
-    if target_image_path.exists():
-        return {
-            "source_category_exists": True,
-            "target_category": target_category,
-            "filename": image_name,
-            "moved": False,
-            "conflict": True,
-            "missing": False,
-        }
-
-    shutil.move(str(source_image_path), str(target_image_path))
-    result = {
+    outcome = _repository_for(memes_dir).move_images(
+        source_category, target_category, [image_name]
+    )
+    base = {
         "source_category_exists": True,
         "source_category": source_category,
         "target_category": target_category,
         "filename": image_name,
-        "moved": True,
-        "conflict": False,
-        "missing": False,
     }
-    _reconcile_catalogs(memes_dir)
-    return result
+    if image_name in outcome.succeeded:
+        return {**base, "moved": True, "conflict": False, "missing": False}
+    if image_name in outcome.conflicting:
+        return {**base, "moved": False, "conflict": True, "missing": False}
+    return {**base, "moved": False, "conflict": False, "missing": True}
 
 
 def batch_move_emojis(
@@ -356,31 +320,17 @@ def batch_move_emojis(
             "conflicting_files": [],
         }
 
-    moved_files = []
-    missing_files = []
-    conflicting_files = []
-
-    for image_file in dict.fromkeys(image_files):
-        result = move_emoji_to_category(
-            source_category, image_file, target_category, memes_dir
-        )
-        if result["moved"]:
-            moved_files.append(result["filename"])
-        elif result["conflict"]:
-            conflicting_files.append(result["filename"])
-        elif result["missing"]:
-            missing_files.append(result["filename"])
-
+    outcome = _repository_for(memes_dir).move_images(
+        source_category, target_category, image_files
+    )
     result = {
         "source_category_exists": True,
         "source_category": source_category,
         "target_category": target_category,
-        "moved_files": moved_files,
-        "missing_files": missing_files,
-        "conflicting_files": conflicting_files,
+        "moved_files": list(outcome.succeeded),
+        "missing_files": list(outcome.missing),
+        "conflicting_files": list(outcome.conflicting),
     }
-    if moved_files:
-        _reconcile_catalogs(memes_dir)
     return result
 
 
@@ -402,47 +352,21 @@ def copy_emoji_to_category(
             "missing": True,
         }
 
-    target_category_path = _get_category_path(target_category, memes_dir)
-    target_category_path.mkdir(parents=True, exist_ok=True)
-
     image_name = Path(image_file).name
-    source_image_path = source_category_path / image_name
-    target_image_path = target_category_path / image_name
-
-    if not source_image_path.is_file() or not _is_supported_image(
-        source_image_path.name
-    ):
-        return {
-            "source_category_exists": True,
-            "target_category": target_category,
-            "filename": image_name,
-            "copied": False,
-            "conflict": False,
-            "missing": True,
-        }
-
-    if target_image_path.exists():
-        return {
-            "source_category_exists": True,
-            "target_category": target_category,
-            "filename": image_name,
-            "copied": False,
-            "conflict": True,
-            "missing": False,
-        }
-
-    shutil.copy2(source_image_path, target_image_path)
-    result = {
+    outcome = _repository_for(memes_dir).copy_images(
+        source_category, target_category, [image_name]
+    )
+    base = {
         "source_category_exists": True,
         "source_category": source_category,
         "target_category": target_category,
         "filename": image_name,
-        "copied": True,
-        "conflict": False,
-        "missing": False,
     }
-    _reconcile_catalogs(memes_dir)
-    return result
+    if image_name in outcome.succeeded:
+        return {**base, "copied": True, "conflict": False, "missing": False}
+    if image_name in outcome.conflicting:
+        return {**base, "copied": False, "conflict": True, "missing": False}
+    return {**base, "copied": False, "conflict": False, "missing": True}
 
 
 def batch_copy_emojis(
@@ -461,31 +385,17 @@ def batch_copy_emojis(
             "conflicting_files": [],
         }
 
-    copied_files = []
-    missing_files = []
-    conflicting_files = []
-
-    for image_file in dict.fromkeys(image_files):
-        result = copy_emoji_to_category(
-            source_category, image_file, target_category, memes_dir
-        )
-        if result["copied"]:
-            copied_files.append(result["filename"])
-        elif result["conflict"]:
-            conflicting_files.append(result["filename"])
-        elif result["missing"]:
-            missing_files.append(result["filename"])
-
+    outcome = _repository_for(memes_dir).copy_images(
+        source_category, target_category, image_files
+    )
     result = {
         "source_category_exists": True,
         "source_category": source_category,
         "target_category": target_category,
-        "copied_files": copied_files,
-        "missing_files": missing_files,
-        "conflicting_files": conflicting_files,
+        "copied_files": list(outcome.succeeded),
+        "missing_files": list(outcome.missing),
+        "conflicting_files": list(outcome.conflicting),
     }
-    if copied_files:
-        _reconcile_catalogs(memes_dir)
     return result
 
 
@@ -501,17 +411,12 @@ def clear_category_emojis(
             "deleted_files": [],
         }
 
-    deleted_files = []
-    for image_path in _iter_category_image_paths(category_path):
-        image_path.unlink()
-        deleted_files.append(image_path.name)
-
+    filenames = [path.name for path in _iter_category_image_paths(category_path)]
+    outcome = _repository_for(memes_dir).delete_images(category, filenames)
     result = {
         "category_exists": True,
-        "deleted_files": deleted_files,
+        "deleted_files": list(outcome.succeeded),
     }
-    if deleted_files:
-        _reconcile_catalogs(memes_dir)
     return result
 
 
@@ -522,16 +427,16 @@ def clear_all_emojis(memes_dir: str | Path | None = None) -> dict[str, object]:
     if not memes_root.exists():
         return {"deleted_by_category": deleted_by_category}
 
+    repository = _repository_for(memes_root)
     for category_path in memes_root.iterdir():
         if not category_path.is_dir():
             continue
-        result = clear_category_emojis(category_path.name, memes_root)
-        deleted_files = result["deleted_files"]
-        if deleted_files:
-            deleted_by_category[category_path.name] = len(deleted_files)
-
-    if deleted_by_category:
-        _reconcile_catalogs(memes_root)
+        filenames = [path.name for path in _iter_category_image_paths(category_path)]
+        if not filenames:
+            continue
+        outcome = repository.delete_images(category_path.name, filenames)
+        if outcome.succeeded:
+            deleted_by_category[category_path.name] = len(outcome.succeeded)
     return {"deleted_by_category": deleted_by_category}
 
 
@@ -546,14 +451,21 @@ def update_emoji_in_category(
 
     if not os.path.isdir(category_path):
         return False
-    old_image_path = os.path.join(category_path, old_image_file)
-    if os.path.exists(old_image_path):
-        os.remove(old_image_path)
-        filename = secure_filename(new_image_file.filename)
-        if not filename or not _is_supported_image(filename):
-            return False
-        target_path = os.path.join(category_path, filename)
-        new_image_file.save(target_path)
-        _reconcile_catalogs(memes_dir)
+    old_name = Path(str(old_image_file)).name
+    filename = str(getattr(new_image_file, "filename", "") or "")
+    if not filename:
+        return False
+    try:
+        content = new_image_file.read()
+    except Exception:
+        return False
+    if not content:
+        return False
+    try:
+        _repository_for(memes_dir).replace_image(
+            category, old_name, filename, content
+        )
         return True
-    return False
+    except Exception as exc:
+        logger.error("替换表情失败: %s", exc, exc_info=True)
+        return False

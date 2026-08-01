@@ -23,8 +23,6 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.star import Context
 
 from .collector import (
-    OUTGOING_CATEGORY_PROMPT,
-    complete_batch_indices,
     contains_meme_send_claim,
     configured_provider_id,
     drop_empty_text_components,
@@ -35,7 +33,6 @@ from .collector import (
     group_id_from_event,
     is_meme_follow_up_request,
     is_safe_remote_image_url,
-    normalize_category,
     parse_model_json,
     should_block_agent_tool_for_meme_request,
     should_skip_meme_result,
@@ -44,6 +41,8 @@ from .collector import (
     wait_for_filter_reply_lock,
     whitelist_allows,
 )
+from .meme_selection import MemeSelectionService
+from .capture_pipeline import CapturePipeline
 from .capture_activity import (
     index_metadata_matches,
     mark_capture_events_indexed,
@@ -51,6 +50,8 @@ from .capture_activity import (
 )
 from .health import MemeManagerHealth, check_meme_manager_master_health
 from .indexing import catalog_needs_write, normalize_library_results
+from .response_policy import success_reply_text
+from .runtime_config import PluginConfig, consume_migration_used
 from .storage import MemeStore, detect_image_extension
 
 
@@ -59,34 +60,6 @@ VISION_SYSTEM_PROMPT = """
 判断图片是否像聊天表情包：包含明显情绪、反应、吐槽、文字梗或用于表达态度的画面。
 JSON 格式：
 {"is_meme": true, "confidence": 0.0, "description": "简短中文描述", "emotion": "情绪", "text": "图片中的文字"}
-""".strip()
-
-
-VISION_BATCH_SYSTEM_PROMPT = """
-你是群聊表情包批量视觉识别器。输入包含多张图片，请逐张输出结果，必须保留每张图片的 id。
-判断图片是否像聊天表情包：包含明显情绪、反应、吐槽、文字梗或用于表达态度的画面。
-只输出 JSON，不要 Markdown。
-格式：{"items":[{"id":"image_0", "is_meme":true, "confidence":0.0, "description":"简短中文描述", "emotion":"情绪", "text":"图片文字"}]}
-""".strip()
-
-
-def _scene_system_prompt(categories: set[str]) -> str:
-    category_text = ", ".join(sorted(categories))
-    return f"""
-你是群聊表情包分类器。只能从以下分类中选择一个：{category_text}
-请结合图片识别结果和消息语境，选择最适合日常聊天使用的分类。
-只输出 JSON，不要 Markdown，不要输出列表外的分类。
-JSON 格式：{{"category": "分类名", "confidence": 0.0, "reason": "不超过30字的理由"}}
-""".strip()
-
-
-def _scene_batch_system_prompt(categories: set[str]) -> str:
-    category_text = ", ".join(sorted(categories))
-    return f"""
-你是群聊表情包批量情景分类器。输入包含多张图片的识别结果和同一条消息语境。
-请为每个图片 id 选择一个最合适的分类，只能从以下分类中选择：{category_text}
-只输出 JSON，不要 Markdown。
-格式：{{"items":[{{"id":"image_0", "category":"分类名", "confidence":0.0, "reason":"不超过30字"}}]}}
 """.strip()
 
 
@@ -119,14 +92,6 @@ OUTGOING_DECISION_SYSTEM_PROMPT = """
 """.strip()
 
 
-OUTGOING_DECISION_COMPACT_PROMPT = """
-你是表情包发送决策器。
-根据用户消息、机器人回复和候选图片，判断是否发送一张最匹配的表情包。
-明确索要表情包或回复有明显情绪时可发送；事实说明、长文、报错或无明显情绪时不发送。
-只输出 JSON：{"should_send":false,"category":"","candidate_id":"","confidence":0.0,"reason":"不超过20字"}
-""".strip()
-
-
 LIBRARY_INDEX_VERSION = 3
 LIBRARY_INDEX_PROMPT_VERSION = "library-batch-v3"
 
@@ -143,9 +108,33 @@ class CaptureMixin:
             return
         self._capture_initialized = True
         self.config = config or {}
+        self.config_raw = self.config
+        self.runtime_config = PluginConfig.from_mapping(self.config)
         self.store = MemeStore.from_astrbot()
-        self._semaphore = asyncio.Semaphore(self._int_config("max_concurrent", 2, 1, 8))
+        self._semaphore = asyncio.Semaphore(self.runtime_config.max_concurrent)
         self._save_lock = asyncio.Lock()
+        self.capture_pipeline = CapturePipeline(
+            store=self.store,
+            config=self.runtime_config,
+            semaphore=self._semaphore,
+            save_lock=self._save_lock,
+            generate=self._generate,
+            activity_recorder=record_capture_event,
+            loader=self._load_image,
+            recognize_single=self._recognize_image,
+            classify_single=self._classify_scene,
+            should_skip=self._should_skip,
+            catalog_entry_builder=CaptureMixin._catalog_entry_from_vision,
+            bind_saved_result=self._bind_saved_image,
+        )
+        self.meme_selection = MemeSelectionService(
+            store=self.store,
+            config=self.runtime_config,
+            generate=self._generate,
+            event_text=self._event_text,
+            image_details=self._image_details,
+            model_bool=self._model_bool,
+        )
         self._tasks: set[asyncio.Task] = set()
         self._health = MemeManagerHealth(
             status="plugin_missing",
@@ -186,7 +175,7 @@ class CaptureMixin:
 
     async def _health_loop(self) -> None:
         while True:
-            await asyncio.sleep(self._float_config("health_check_interval", 300, 10, 600))
+            await asyncio.sleep(self.runtime_config.health_check_interval)
             await self._refresh_health()
 
     async def _refresh_health(self, force: bool = False) -> MemeManagerHealth:
@@ -221,7 +210,7 @@ class CaptureMixin:
 
     async def _manager_ready(self) -> bool:
         store_changed = self._refresh_store_for_active_pack()
-        interval = self._float_config("health_check_interval", 300, 10, 600)
+        interval = self.runtime_config.health_check_interval
         if store_changed or time.monotonic() - self._last_health_check >= interval:
             await self._refresh_health(force=store_changed)
         return self._health.ready
@@ -232,7 +221,7 @@ class CaptureMixin:
         sent_at = self._last_auto_send.get(umo, 0.0)
         if not umo or not sent_at:
             return False
-        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        window = self.runtime_config.meme_follow_up_window
         return time.monotonic() - sent_at <= window
 
     def _remember_explicit_request(self, event: AstrMessageEvent) -> None:
@@ -254,7 +243,7 @@ class CaptureMixin:
         if entry is None:
             return False
         requested_at, _message_text = entry
-        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        window = self.runtime_config.meme_follow_up_window
         if time.monotonic() - requested_at > window:
             self._explicit_meme_requests.pop(umo, None)
             return False
@@ -277,6 +266,15 @@ class CaptureMixin:
             return
         self._forced_meme_results[umo] = (time.monotonic(), image_path, dict(details))
 
+    @staticmethod
+    def _explicit_success_chain(image_path: Path, existing_text: str = "") -> list:
+        chain = []
+        visible_text = success_reply_text(existing_text)
+        if visible_text:
+            chain.append(Comp.Plain(visible_text))
+        chain.append(Comp.Image.fromFileSystem(str(image_path)))
+        return chain
+
     def _restore_forced_meme_result(self, event: AstrMessageEvent) -> bool:
         """Restore a local meme if an Agent continuation overwrote event.result."""
         umo = str(getattr(event, "unified_msg_origin", "") or "")
@@ -285,14 +283,11 @@ class CaptureMixin:
         if not umo or entry is None or result is None:
             return False
         sent_at, image_path, _details = entry
-        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        window = self.runtime_config.meme_follow_up_window
         if time.monotonic() - sent_at > window or not image_path.is_file():
             self._forced_meme_results.pop(umo, None)
             return False
-        result.chain = [
-            Comp.Plain("找到一个合适的表情包，发给你啦～"),
-            Comp.Image.fromFileSystem(str(image_path)),
-        ]
+        result.chain = self._explicit_success_chain(image_path)
         self._forced_meme_results.pop(umo, None)
         logger.info(
             "[meme_manager_master] restored explicit meme result before final send file=%s",
@@ -341,7 +336,7 @@ class CaptureMixin:
         if entry is None:
             return None
         sent_at, _image_path, details = entry
-        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        window = self.runtime_config.meme_follow_up_window
         if time.monotonic() - sent_at > window:
             self._meme_send_receipts.pop(key, None)
             return None
@@ -356,7 +351,7 @@ class CaptureMixin:
         if not umo or entry is None:
             return None
         sent_at, image_path, details = entry
-        window = self._float_config("meme_follow_up_window", 300, 10, 1800)
+        window = self.runtime_config.meme_follow_up_window
         if time.monotonic() - sent_at > window or not image_path.is_file():
             self._recent_meme_context.pop(umo, None)
             return None
@@ -459,7 +454,7 @@ class CaptureMixin:
                     key,
                 )
             umo = str(getattr(event, "unified_msg_origin", "") or "")
-            cooldown = self._float_config("auto_send_cooldown", 30, 0, 3600)
+            cooldown = self.runtime_config.auto_send_cooldown
             if not force and umo and cooldown:
                 last_claim = max(
                     self._last_auto_send.get(umo, 0.0),
@@ -567,14 +562,7 @@ class CaptureMixin:
         details = self._image_details(image_path)
         self._remember_forced_meme_result(event, image_path, details)
         self._queue_send_weight_mark(event, image_path)
-        event.set_result(
-            event.chain_result(
-                [
-                    Comp.Plain("找到了一个合适的表情包，发给你～"),
-                    Comp.Image.fromFileSystem(str(image_path)),
-                ]
-            )
-        )
+        event.set_result(event.chain_result(self._explicit_success_chain(image_path)))
         self._disable_default_llm(event)
         logger.info(
             "[meme_manager_master] explicit meme request handled before default Agent file=%s",
@@ -583,10 +571,10 @@ class CaptureMixin:
 
     def _schedule_library_index(self) -> None:
         """Schedule an idempotent scan when meme_manager_master is healthy."""
-        if not self._bool_config("library_index_enabled", False):
+        if not self.runtime_config.library_index_enabled:
             return
         provider_id = configured_provider_id(
-            self.config,
+            self.runtime_config,
             "library_index_provider_id",
             "vision_provider_id",
         )
@@ -673,7 +661,7 @@ class CaptureMixin:
             self._library_source_signature(),
         )
         self._library_retry_at = time.monotonic() + max(
-            self._float_config("health_check_interval", 300, 10, 600),
+            self.runtime_config.health_check_interval,
             60,
         )
 
@@ -704,7 +692,7 @@ class CaptureMixin:
         self._remember_explicit_request(event)
         if getattr(event, "_meme_manager_master_manual", False):
             return
-        if not self._bool_config("enabled", True):
+        if not self.runtime_config.enabled:
             return
 
         if not await self._manager_ready():
@@ -720,7 +708,7 @@ class CaptureMixin:
             logger.warning("[meme_manager_master] 无法读取消息链", exc_info=True)
             return
         sources = extract_image_sources(components)
-        limit = self._int_config("max_images_per_message", 2, 1, 6)
+        limit = self.runtime_config.max_images_per_message
         if not sources:
             return
 
@@ -751,7 +739,7 @@ class CaptureMixin:
             yield event.plain_result("请在同一条消息中附带图片后发送 /偷取。")
             return
 
-        limit = self._int_config("max_images_per_message", 2, 1, 6)
+        limit = self.runtime_config.max_images_per_message
         text = self._event_text(event)
         outline = self._event_outline(event)
         results = await self._process_batch(event, sources[:limit], text, outline)
@@ -787,7 +775,7 @@ class CaptureMixin:
     ) -> None:
         """Send the latest captured image through an independent message path."""
         event_key = event_identity(event)
-        if not self._bool_config("proactive_send_after_steal", False):
+        if not self.runtime_config.proactive_send_after_steal:
             self._stolen_image_by_event.pop(event_key, None)
             return
         if not any(status in {"saved", "duplicate"} for status in results):
@@ -929,7 +917,7 @@ class CaptureMixin:
 
         # Marker cleanup always happens, even if our own sender is disabled.
         if (
-            not self._bool_config("auto_send_enabled", True)
+            not self.runtime_config.auto_send_enabled
             or (not plain_texts and not marked_categories and not force_send)
             or self._is_control_command(event)
             or not await self._manager_ready()
@@ -948,7 +936,7 @@ class CaptureMixin:
             logger.debug("[meme_manager_master] 情景模型未选择可发送表情包")
             return
         umo = str(getattr(event, "unified_msg_origin", "") or "")
-        cooldown = self._float_config("auto_send_cooldown", 30, 0, 3600)
+        cooldown = self.runtime_config.auto_send_cooldown
         if (
             cooldown
             and not force_send
@@ -957,7 +945,7 @@ class CaptureMixin:
             self._rewrite_unverified_meme_claim(event, chain)
             return
 
-        probability = self._float_config("auto_send_probability", 50, 0, 100)
+        probability = self.runtime_config.auto_send_probability
         if not force_send and (probability <= 0 or random.random() * 100 >= probability):
             self._rewrite_unverified_meme_claim(event, chain)
             return
@@ -966,14 +954,6 @@ class CaptureMixin:
             return
 
         details = self._image_details(image_path)
-        if force_send:
-            confirmation = "找到了一个合适的表情包，发给你～"
-            replaced = False
-            for component in chain:
-                if not hasattr(component, "text"):
-                    continue
-                component.text = confirmation if not replaced else ""
-                replaced = True
         result.chain = drop_empty_text_components(chain)
         event.set_extra("meme_manager_master_auto_send_path", str(image_path))
         event.set_extra("meme_manager_master_auto_send_details", details)
@@ -1092,10 +1072,9 @@ class CaptureMixin:
         message_text: str,
         message_outline: str,
     ) -> str:
-        results = await self._process_batch(
-            event, [source], message_text, message_outline
+        return await self.capture_pipeline.process_one(
+            event, source, message_text, message_outline
         )
-        return results[0] if results else "error"
 
     async def _process_batch(
         self,
@@ -1104,255 +1083,9 @@ class CaptureMixin:
         message_text: str,
         message_outline: str,
     ) -> list[str]:
-        """Process all new images in one message with two batched model calls."""
-        async with self._semaphore:
-            statuses = ["error"] * len(sources)
-            loaded: list[tuple[int, ImagePayload, Path]] = []
-            for index, source in enumerate(sources):
-                try:
-                    payload = await self._load_image(source)
-                except Exception:
-                    payload = None
-                if payload is None:
-                    statuses[index] = "unavailable"
-                    continue
-                threshold = self._perceptual_duplicate_threshold()
-                duplicate_path = self.store.find_duplicate(payload.content, threshold)
-                if duplicate_path is not None:
-                    logger.debug("[meme_manager_master] 图片在识别前已存在，跳过模型调用")
-                    statuses[index] = "duplicate"
-                    duplicate_category = duplicate_path.parent.name
-                    record_capture_event(
-                        self.store.root,
-                        category=duplicate_category,
-                        filename=duplicate_path.name,
-                        digest=self.store.image_digest(duplicate_path),
-                        status="duplicate",
-                        duplicate_of=f"{duplicate_category}/{duplicate_path.name}",
-                    )
-                    continue
-                if any(
-                    self.store.is_similar(payload.content, previous.content, threshold)
-                    for _previous_index, previous, _previous_path in loaded
-                ):
-                    logger.debug("[meme_manager_master] current message contains a perceptual duplicate")
-                    statuses[index] = "duplicate"
-                    continue
-                temp_path = self.store.make_temp_file(payload.content, payload.extension)
-                loaded.append((index, payload, temp_path))
-            if not loaded:
-                return statuses
-
-            try:
-                categories = self.store.available_categories()
-                image_paths = [
-                    (index, temp_path) for index, _payload, temp_path in loaded
-                ]
-                try:
-                    if len(image_paths) == 1:
-                        index, temp_path = image_paths[0]
-                        visions = {
-                            index: await self._recognize_image(event, temp_path, message_text)
-                        }
-                    else:
-                        visions = await self._recognize_batch(event, image_paths, message_text)
-                except Exception as exc:
-                    logger.warning(
-                        "[meme_manager_master] 视觉批量调用失败，回退逐张识别: %s",
-                        exc,
-                    )
-                    visions = {
-                        index: await self._recognize_image(event, temp_path, message_text)
-                        for index, temp_path in image_paths
-                    }
-                accepted = {}
-                for index, vision in visions.items():
-                    if vision.get("vision_error"):
-                        statuses[index] = "unavailable"
-                        continue
-                    if not self._should_skip(vision):
-                        accepted[index] = vision
-                for index in visions:
-                    if index not in accepted:
-                        if statuses[index] == "error":
-                            statuses[index] = "not_meme"
-                            logger.info(
-                                "[meme_manager_master] 图片未被识别为表情包，跳过保存 index=%s",
-                                index,
-                            )
-                if not accepted:
-                    return statuses
-
-                try:
-                    if len(accepted) == 1:
-                        index, vision = next(iter(accepted.items()))
-                        scenes = {
-                            index: await self._classify_scene(
-                                event,
-                                vision,
-                                categories,
-                                message_text,
-                                message_outline,
-                            )
-                        }
-                    else:
-                        scenes = await self._classify_batch(
-                            event,
-                            accepted,
-                            categories,
-                            message_text,
-                            message_outline,
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "[meme_manager_master] 情景批量调用失败，回退逐张分类: %s",
-                        exc,
-                    )
-                    scenes = {
-                        index: await self._classify_scene(
-                            event,
-                            vision,
-                            categories,
-                            message_text,
-                            message_outline,
-                        )
-                        for index, vision in accepted.items()
-                    }
-                payload_by_index = {index: payload for index, payload, _path in loaded}
-                fallback = str(self.config.get("fallback_category", "confused"))
-                for index, vision in accepted.items():
-                    scene = scenes.get(index, {})
-                    category = normalize_category(scene.get("category"), categories, fallback)
-                    payload = payload_by_index[index]
-                    async with self._save_lock:
-                        result = self.store.save_image(
-                            payload.content,
-                            category,
-                            payload.extension,
-                            self._perceptual_duplicate_threshold(),
-                        )
-                        if result.status in {"saved", "duplicate"}:
-                            umo = str(getattr(event, "unified_msg_origin", "") or "")
-                            if umo:
-                                self._last_stolen_image[umo] = result.path
-                            self._stolen_image_by_event[event_identity(event)] = result.path
-                        statuses[index] = result.status
-                        if result.status == "saved":
-                            catalog_entry = self._catalog_entry_from_vision(
-                                result.path, category, vision, scene
-                            )
-                            catalog_entry["perceptual_hash"] = self.store.image_perceptual_hash(
-                                result.path
-                            )
-                            self.store.upsert_catalog_entry(
-                                category,
-                                catalog_entry,
-                            )
-                            record_capture_event(
-                                self.store.root,
-                                category=category,
-                                filename=result.path.name,
-                                digest=result.digest,
-                                status="pending",
-                            )
-                            logger.info(
-                                "[meme_manager_master] 已收集表情包 category=%s path=%s",
-                                category,
-                                result.path,
-                            )
-                        else:
-                            if result.status == "duplicate":
-                                duplicate_category = result.path.parent.name
-                                record_capture_event(
-                                    self.store.root,
-                                    category=duplicate_category,
-                                    filename=result.path.name,
-                                    digest=result.digest,
-                                    status="duplicate",
-                                    duplicate_of=f"{duplicate_category}/{result.path.name}",
-                                )
-                            logger.debug("[meme_manager_master] 跳过重复表情包 path=%s", result.path)
-                return statuses
-            except Exception:
-                logger.error("[meme_manager_master] 批量处理群聊图片失败", exc_info=True)
-                return [status if status != "error" else "error" for status in statuses]
-            finally:
-                for _index, _payload, temp_path in loaded:
-                    self.store.remove_temp_file(temp_path)
-
-    async def _recognize_batch(
-        self,
-        event: AstrMessageEvent,
-        images: list[tuple[int, Path]],
-        message_text: str,
-    ) -> dict[int, dict]:
-        prompt = "\n".join(
-            [
-                "同一条消息中的图片如下，请逐张识别并保留 image id：",
-                *[f"image_{index}: {path.name}" for index, path in images],
-                f"消息语境：{message_text[:500]}",
-            ]
+        return await self.capture_pipeline.process_batch(
+            event, sources, message_text, message_outline
         )
-        response = await self._generate(
-            event,
-            prompt,
-            image_urls=[str(path) for _index, path in images],
-            provider_id=configured_provider_id(self.config, "vision_provider_id"),
-            system_prompt=VISION_BATCH_SYSTEM_PROMPT,
-        )
-        parsed = parse_model_json(response)
-        items = parsed.get("items", [])
-        if not isinstance(items, list):
-            raise ValueError("batch vision response items is not a list")
-        result: dict[int, dict] = {}
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            match = re.fullmatch(r"image_(\d+)", str(item.get("id", "")))
-            if match:
-                result[int(match.group(1))] = item
-        expected_indices = {index for index, _path in images}
-        if not complete_batch_indices(result, expected_indices):
-            raise ValueError("batch vision response is missing image ids")
-        return result
-
-    async def _classify_batch(
-        self,
-        event: AstrMessageEvent,
-        visions: dict[int, dict],
-        categories: set[str],
-        message_text: str,
-        message_outline: str,
-    ) -> dict[int, dict]:
-        prompt = "\n".join(
-            [
-                f"当前消息文字：{message_text[:500]}",
-                f"消息概要：{message_outline[:500]}",
-                "请为以下每张图片分别选择分类并保留 image id：",
-                *[f"image_{index}: {vision}" for index, vision in sorted(visions.items())],
-            ]
-        )
-        response = await self._generate(
-            event,
-            prompt,
-            image_urls=[],
-            provider_id=configured_provider_id(self.config, "scene_provider_id"),
-            system_prompt=_scene_batch_system_prompt(categories),
-        )
-        parsed = parse_model_json(response)
-        items = parsed.get("items", [])
-        if not isinstance(items, list):
-            raise ValueError("batch scene response items is not a list")
-        result: dict[int, dict] = {}
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            match = re.fullmatch(r"image_(\d+)", str(item.get("id", "")))
-            if match:
-                result[int(match.group(1))] = item
-        if not complete_batch_indices(result, set(visions)):
-            raise ValueError("batch scene response is missing image ids")
-        return result
 
     async def _ensure_library_index(self) -> None:
         """Index missing or stale images without changing their category folders."""
@@ -1374,7 +1107,7 @@ class CaptureMixin:
                 self._library_index_state.update(status="idle", message="没有待索引图片")
                 return
             provider_id = configured_provider_id(
-                self.config,
+                self.runtime_config,
                 "library_index_provider_id",
                 "vision_provider_id",
             )
@@ -1387,7 +1120,7 @@ class CaptureMixin:
             processed = 0
             classified = 0
             errors = 0
-            progress_step = self._int_config("library_index_progress_step", 5, 1, 50)
+            progress_step = self.runtime_config.library_index_progress_step
             for category in categories:
                 paths = self.store.image_paths(category)
                 old_catalog = self.store.load_catalog(category)
@@ -1426,7 +1159,7 @@ class CaptureMixin:
                     else:
                         pending.append((path, digest))
 
-                batch_size = self._int_config("library_index_batch_size", 6, 1, 12)
+                batch_size = self.runtime_config.library_index_batch_size
                 for start in range(0, len(pending), batch_size):
                     batch = pending[start : start + batch_size]
                     batch_paths = [path for path, _digest in batch]
@@ -1506,7 +1239,7 @@ class CaptureMixin:
                         continue
                     mapping = (
                         self.store.renumber_category(category)
-                        if self._bool_config("library_index_rename_files", True)
+                        if self.runtime_config.library_index_rename_files
                         else {path: path for path, _metadata in records}
                     )
                     entries = []
@@ -1630,122 +1363,12 @@ class CaptureMixin:
         force_send: bool = False,
         preferred_categories: list[str] | None = None,
     ) -> Path | None:
-        """Let the scene model choose a category, then select from its index locally."""
-        descriptions = self.store.category_descriptions()
-        preferred = set(preferred_categories or [])
-        candidates = []
-        for category in sorted(descriptions):
-            if preferred and category not in preferred:
-                continue
-            catalog = self.store.load_catalog(category)
-            indexed_count = sum(
-                1
-                for item in catalog.get("items", [])
-                if isinstance(item, dict) and item.get("filename")
-            )
-            if indexed_count:
-                candidates.append(
-                    {
-                        "category": category,
-                        "description": str(descriptions.get(category, ""))[:100],
-                        "indexed_count": indexed_count,
-                    }
-                )
-        limit = self._int_config("auto_send_candidate_limit", 8, 2, 16)
-        # Explicit requests must see every indexed category; random sampling
-        # could otherwise omit the category the user explicitly requested.
-        if len(candidates) > limit and not force_send and not preferred:
-            candidates = random.sample(candidates, limit)
-        if not candidates:
-            logger.warning(
-                "[meme_manager_master] 情景分析没有可用索引 category_hint=%s",
-                sorted(preferred) or "none",
-            )
-            return None
-
-        prompt = "\n".join(
-            [
-                f"用户:{self._event_text(event)[:300]}",
-                f"回复:{response_text[:600]}",
-                f"explicit_request={'true' if force_send else 'false'}",
-                f"category_hint={','.join(sorted(preferred)) or 'none'}",
-                "候选(category|说明|索引数量):",
-                *[
-                    f"{item['category']}|{item['description']}|{item['indexed_count']}"
-                    for item in candidates
-                ],
-            ]
+        return await self.meme_selection.choose(
+            event,
+            response_text,
+            force_send=force_send,
+            preferred_categories=preferred_categories,
         )
-        try:
-            response = await self._generate(
-                event,
-                prompt,
-                image_urls=[],
-                provider_id=configured_provider_id(
-                    self.config,
-                    "reply_scene_provider_id",
-                    "scene_provider_id",
-                ),
-                system_prompt=OUTGOING_CATEGORY_PROMPT,
-            )
-            choice = parse_model_json(response)
-            reason = str(choice.get("reason", "") or "")[:80]
-            confidence = choice.get("confidence", "")
-            model_should_send = self._model_bool(
-                choice.get("should_send"), default=False
-            )
-            if force_send and not model_should_send:
-                logger.info(
-                    "[meme_manager_master] 明确请求覆盖模型的不发送判断，继续选择分类"
-                )
-            if not force_send and not model_should_send:
-                logger.info(
-                    "[meme_manager_master] 情景分析决定不发送 confidence=%s reason=%s",
-                    confidence,
-                    reason,
-                )
-                return None
-
-            category = str(
-                choice.get("category") or choice.get("candidate_id") or ""
-            ).strip()
-            selected = next(
-                (item for item in candidates if item["category"] == category),
-                None,
-            )
-            if selected is None:
-                logger.warning(
-                    "[meme_manager_master] 情景分析选择了不存在的分类 category=%s reason=%s",
-                    category,
-                    reason,
-                )
-                return None
-
-            repeat_window = self._float_config("meme_repeat_window", 300, 0, 86400)
-            image_path = self.store.pick_indexed_image(
-                category,
-                repeat_window=repeat_window,
-            )
-            if image_path is None:
-                logger.warning(
-                    "[meme_manager_master] 分类索引没有可用图片 category=%s",
-                    category,
-                )
-                return None
-            details = self._image_details(image_path)
-            logger.info(
-                "[meme_manager_master] 情景分析决定发送 category=%s confidence=%s "
-                "reason=%s description=%s indexed_count=%s",
-                category,
-                confidence,
-                reason,
-                details["description"],
-                selected["indexed_count"],
-            )
-            return image_path
-        except Exception as exc:
-            logger.warning("[meme_manager_master] 分类索引发送决策失败，不发送表情包: %s", exc)
-            return None
 
     async def _choose_outgoing_meme_legacy(
         self,
@@ -1754,105 +1377,12 @@ class CaptureMixin:
         force_send: bool = False,
         preferred_categories: list[str] | None = None,
     ) -> Path | None:
-        """Use one multimodal call for should_send, category, and candidate choice."""
-        descriptions = self.store.category_descriptions()
-        preferred = set(preferred_categories or [])
-        candidates = []
-        for category in sorted(descriptions):
-            if preferred and category not in preferred:
-                continue
-            paths = self.store.image_paths(category)
-            if not paths:
-                continue
-            catalog = self.store.load_catalog(category)
-            indexed = {
-                str(item.get("filename")): item
-                for item in catalog.get("items", [])
-                if isinstance(item, dict)
-            }
-            # One representative per category keeps the single request bounded.
-            path = random.choice(paths)
-            item = indexed.get(path.name, {})
-            raw_tags = item.get("tags", [])
-            if isinstance(raw_tags, str):
-                raw_tags = [raw_tags]
-            if not isinstance(raw_tags, list):
-                raw_tags = []
-            candidates.append(
-                {
-                    "id": str(item.get("id") or path.stem),
-                    "category": category,
-                    "filename": path.name,
-                    "description": str(item.get("description") or "未建立索引"),
-                    "emotion": str(item.get("emotion") or "未知"),
-                    "tags": [str(tag)[:30] for tag in raw_tags[:8]],
-                    "path": path,
-                }
-            )
-        limit = self._int_config("auto_send_candidate_limit", 8, 2, 16)
-        if len(candidates) > limit:
-            candidates = random.sample(candidates, limit)
-        if not candidates:
-            return None
-        try:
-            prompt = "\n".join(
-                [
-                    f"用户:{self._event_text(event)[:300]}",
-                    f"回复:{response_text[:600]}",
-                    f"explicit_request={'true' if force_send else 'false'}",
-                    f"category_hint={','.join(sorted(preferred)) or 'none'}",
-                    "候选(id|分类|描述|情绪|标签):",
-                    *[
-                        f"{item['id']}|{item['category']}|{item['description'][:80]}|"
-                        f"{item['emotion']}|{','.join(map(str, item['tags'][:5]))}"
-                        for item in candidates
-                    ],
-                ]
-            )
-            response = await self._generate(
-                event,
-                prompt,
-                image_urls=[],
-                provider_id=configured_provider_id(
-                    self.config,
-                    "reply_scene_provider_id",
-                    "scene_provider_id",
-                ),
-                system_prompt=OUTGOING_DECISION_COMPACT_PROMPT,
-            )
-            choice = parse_model_json(response)
-            should_send = self._model_bool(choice.get("should_send"), default=False)
-            reason = str(choice.get("reason", "") or "")[:80]
-            confidence = choice.get("confidence", "")
-            if not should_send:
-                logger.info(
-                    "[meme_manager_master] 情景分析决定不发送 confidence=%s reason=%s",
-                    confidence,
-                    reason,
-                )
-                return None
-            candidate_id = str(choice.get("candidate_id", "")).strip()
-            for item in candidates:
-                if candidate_id in {item["id"], item["filename"]}:
-                    details = self._image_details(item["path"])
-                    logger.info(
-                        "[meme_manager_master] 情景分析决定发送 category=%s candidate=%s "
-                        "confidence=%s reason=%s description=%s",
-                        details["category"],
-                        candidate_id,
-                        confidence,
-                        reason,
-                        details["description"],
-                    )
-                    return item["path"]
-            logger.warning(
-                "[meme_manager_master] 情景分析选择了不存在的候选 candidate=%s reason=%s",
-                candidate_id,
-                reason,
-            )
-        except Exception as exc:
-            logger.warning("[meme_manager_master] 单次智能回复决策失败，不发送表情包: %s", exc)
-        return None
+        return await self.meme_selection.choose_legacy(
+            event,
+            response_text,
+            force_send=force_send,
+            preferred_categories=preferred_categories,
+        )
 
     def _image_details(self, path: Path) -> dict[str, object]:
         category = path.parent.name
@@ -1915,9 +1445,9 @@ class CaptureMixin:
         return index_metadata_matches(entry, metadata)
 
     def _perceptual_duplicate_threshold(self) -> int | None:
-        if not self._bool_config("perceptual_dedupe_enabled", True):
+        if not self.runtime_config.perceptual_dedupe_enabled:
             return None
-        return self._int_config("perceptual_duplicate_threshold", 6, 0, 16)
+        return self.runtime_config.perceptual_duplicate_threshold
 
     @staticmethod
     def _progress_text(processed: int, total: int, errors: int) -> str:
@@ -1926,6 +1456,13 @@ class CaptureMixin:
         filled = int(ratio * width)
         bar = "█" * filled + "░" * (width - filled)
         return f"整理进度 [{bar}] {ratio:.0%}（{processed}/{total}，失败 {errors}）"
+
+    def _bind_saved_image(self, event: AstrMessageEvent, path: Path) -> None:
+        """Record a saved/duplicate image against the current session."""
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        if umo:
+            self._last_stolen_image[umo] = path
+        self._stolen_image_by_event[event_identity(event)] = path
 
     async def _recognize_image(
         self,
@@ -1942,7 +1479,7 @@ class CaptureMixin:
                 event,
                 prompt,
                 image_urls=[str(image_path)],
-                provider_id=configured_provider_id(self.config, "vision_provider_id"),
+                provider_id=configured_provider_id(self.runtime_config, "vision_provider_id"),
                 system_prompt=VISION_SYSTEM_PROMPT,
             )
             return parse_model_json(response_text)
@@ -1968,7 +1505,7 @@ class CaptureMixin:
                 event,
                 prompt,
                 image_urls=[],
-                provider_id=configured_provider_id(self.config, "scene_provider_id"),
+                provider_id=configured_provider_id(self.runtime_config, "scene_provider_id"),
                 system_prompt=_scene_system_prompt(categories),
             )
             return parse_model_json(response_text)
@@ -2028,7 +1565,7 @@ class CaptureMixin:
             return str(await getter(umo) or "").strip()
 
     async def _load_image(self, source: str) -> ImagePayload | None:
-        limit = self._int_config("max_image_size_mb", 10, 1, 50) * 1024 * 1024
+        limit = self.runtime_config.max_image_size_mb * 1024 * 1024
         if source.startswith("data:"):
             return self._decode_data_url(source, limit)
         if source.startswith("base64://"):
@@ -2057,7 +1594,7 @@ class CaptureMixin:
         """Restrict local image reads to AstrBot data/temp roots or configured roots."""
         if not path.is_absolute():
             return False
-        configured = self.config.get("local_image_roots", [])
+        configured = self.runtime_config.local_image_roots
         if isinstance(configured, str):
             configured = re.split(r"[,\n]", configured)
         elif not isinstance(configured, (list, tuple)):
@@ -2117,7 +1654,7 @@ class CaptureMixin:
         if not await self._remote_target_is_public(source):
             logger.warning("[meme_manager_master] 拒绝访问不安全的远程图片地址: %s", source)
             return None
-        timeout = aiohttp.ClientTimeout(total=self._float_config("download_timeout", 20, 5, 120))
+        timeout = aiohttp.ClientTimeout(total=self.runtime_config.download_timeout)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(source, allow_redirects=False) as response:
@@ -2172,11 +1709,9 @@ class CaptureMixin:
         return ImagePayload(content, extension)
 
     def _should_skip(self, vision: dict) -> bool:
-        if not self._bool_config("only_capture_memes", True):
+        if not self.runtime_config.only_capture_memes:
             return False
-        rejection_confidence = self._float_config(
-            "meme_rejection_confidence", 0.7, 0, 1
-        )
+        rejection_confidence = self.runtime_config.meme_rejection_confidence
         return should_skip_meme_result(vision, rejection_confidence)
 
     @staticmethod
@@ -2197,30 +1732,8 @@ class CaptureMixin:
         return CaptureMixin._event_text(event)
 
     def _whitelist(self) -> list[str]:
-        value = self.config.get("group_whitelist", [])
-        if isinstance(value, str):
-            return [item.strip() for item in re.split(r"[,\n]", value) if item.strip()]
+        value = self.runtime_config.group_whitelist
         return [str(item).strip() for item in value or [] if str(item).strip()]
-
-    def _bool_config(self, key: str, default: bool) -> bool:
-        value = self.config.get(key, default)
-        if isinstance(value, str):
-            return value.strip().lower() not in {"0", "false", "no", "off"}
-        return bool(value)
-
-    def _float_config(self, key: str, default: float, minimum: float, maximum: float) -> float:
-        try:
-            value = float(self.config.get(key, default))
-        except (TypeError, ValueError):
-            value = default
-        return max(minimum, min(maximum, value))
-
-    def _int_config(self, key: str, default: int, minimum: int, maximum: int) -> int:
-        try:
-            value = int(self.config.get(key, default))
-        except (TypeError, ValueError):
-            value = default
-        return max(minimum, min(maximum, value))
 
     @staticmethod
     def _log_task_failure(task: asyncio.Task) -> None:

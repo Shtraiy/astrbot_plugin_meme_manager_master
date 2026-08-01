@@ -15,7 +15,7 @@
 
 安装并启用插件后，在 AstrBot WebUI 的“插件”页面打开“表情包管理大师”。页面由插件 `pages/` 目录提供，后端 API 使用 AstrBot 的 `context.register_web_api` 注册，不需要额外端口。
 
-管理页面支持分类浏览、图片上传、图片预览、删除、移动、分类描述编辑和 pack 切换；语义页面沿用参考插件的任务、复审和索引入口。
+管理页面支持分类浏览、图片上传、图片预览、删除、移动、分类描述编辑和 pack 切换；语义页面沿用参考插件的任务、复审和索引入口。默认安装不依赖 `faiss-cpu`：目录索引（描述、复审、capture workspace）始终可用；向量任务 API 只有在显式启用 `vector_semantic_enabled` 且安装 `faiss-cpu` 后才会注册。
 
 ## 数据结构
 
@@ -39,6 +39,26 @@ AstrBot/data/plugin_data/meme_manager_master/
 
 ## 配置
 
-基础配置包括识图模型、分类模型、自动收集开关、群组白名单、去重、后台索引和自动发送概率。语义选图配置位于 `semantic` 与 `generation.emotion` 分组；语义模式不可用时会回退到参考插件的分类标记模式。
+基础配置包括识图模型、分类模型、自动收集开关、群组白名单、去重、后台索引和自动发送概率。配置定义见 `CONFIGURATION.md`；`_conf_schema.json` 由 `scripts/generate_conf_schema.py` 从 `runtime_config.PluginConfig` 生成，schema 检查通过 `python scripts/generate_conf_schema.py --check` 完成。
+
+## 可选依赖
+
+核心安装只需要 `requirements.txt` 中的 `aiohttp`、`Pillow` 与 `requests`。向量语义能力（embedding、FAISS 搜索、向量重建）是可选的：安装 `pip install -r requirements-semantic.txt` 并在 WebUI 设置中开启 `vector_semantic_enabled` 后，向量任务路由才会注册；未启用时请求这些接口会返回明确的能力未启用提示，而不是模糊的 500。
 
 图片会发送给配置的视觉/情感模型，请确认群成员已知悉并遵守平台、隐私和内容管理要求。
+
+## 开发与验证
+
+每次修改后运行完整验证门禁：
+
+```text
+python -m unittest discover -s tests -v
+python -m compileall -q .
+python scripts/generate_conf_schema.py --check
+git diff --check
+```
+
+WebUI 管理页脚本按依赖顺序拆分为 `state.js`、`api.js`、`dialogs.js`、
+`pack.js`、`emoji.js` 与入口 `script.js`，共享命名空间
+`window.MemeManagerUI`；本地用 `node --check pages/a_manage/*.js` 做语法
+检查，页面交互仍需在 AstrBot WebUI 中手动验证。

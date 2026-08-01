@@ -12,6 +12,7 @@ from pathlib import Path
 
 import requests
 
+from .atomic_io import atomic_write_json
 from ..config import (
     BACKUP_DIR,
     COMMUNITY_CACHE_PATH,
@@ -115,19 +116,7 @@ def _load_json(path: Path, default):
 
 
 def _save_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as file_obj:
-            json.dump(data, file_obj, ensure_ascii=False, indent=2)
-            file_obj.flush()
-            os.fsync(file_obj.fileno())
-        os.replace(temp_name, path)
-    finally:
-        if os.path.exists(temp_name):
-            os.unlink(temp_name)
+    atomic_write_json(path, data)
 
 
 def _restore_file_snapshot(path: Path, content: bytes | None) -> None:

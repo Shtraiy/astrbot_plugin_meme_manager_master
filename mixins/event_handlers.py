@@ -549,7 +549,7 @@ class EventHandlerMixin:
         pack_dir = Path(pack_context.get("pack_dir") or MEMES_DIR.parent)
         save_dir = Path(pack_context.get("memes_dir") or MEMES_DIR) / category
         try:
-            self.semantic_task_manager.begin_external_pack_operation(
+            self.catalog_index_service.begin_external_pack_operation(
                 pack_id, "接收并保存表情图片"
             )
         except RuntimeError as exc:
@@ -609,7 +609,7 @@ class EventHandlerMixin:
         except Exception as e:
             yield event.plain_result(f"保存失败了：{str(e)}")
         finally:
-            self.semantic_task_manager.end_external_pack_operation(pack_id)
+            self.catalog_index_service.end_external_pack_operation(pack_id)
 
     async def _inject_meme_prompt_impl(
         self, event: AstrMessageEvent, req: ProviderRequest

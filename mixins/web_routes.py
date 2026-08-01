@@ -1,0 +1,310 @@
+"""Declarative WebUI route table with capability gates.
+
+Every route is a ``WebRouteSpec``; the capability field decides whether it is
+registered.  The default surface is ``{"core", "catalog_index"}``; vector
+semantic task routes are only registered when the ``vector_semantic``
+capability is explicitly enabled (config + available FAISS).
+"""
+
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+
+
+SLOTS_SUPPORTED = sys.version_info >= (3, 10)
+
+
+def _frozen_dataclass(*, slots: bool = False):
+    """dataclass(frozen=True) that tolerates Python 3.9 (no slots kwarg)."""
+    if SLOTS_SUPPORTED:
+        return dataclass(frozen=True, slots=slots)
+    return dataclass(frozen=True)
+
+
+@_frozen_dataclass(slots=True)
+class WebRouteSpec:
+    path: str
+    handler_name: str
+    methods: tuple[str, ...]
+    description: str
+    capability: str = "core"
+
+
+ROUTES: tuple[WebRouteSpec, ...] = (
+    WebRouteSpec("emoji", "_api_get_emojis", ("GET",), "获取所有分类的表情列表"),
+    WebRouteSpec(
+        "emoji/<category>",
+        "_api_get_emoji_by_category",
+        ("GET",),
+        "获取某个分类下的表情",
+    ),
+    WebRouteSpec(
+        "emoji/add/<category>",
+        "_api_add_emoji",
+        ("POST",),
+        "上传表情到指定分类（表单字段 file）",
+    ),
+    WebRouteSpec("emoji/delete", "_api_delete_emoji", ("POST",), "删除单个表情"),
+    WebRouteSpec(
+        "emoji/batch_delete", "_api_batch_delete_emojis", ("POST",), "批量删除表情"
+    ),
+    WebRouteSpec(
+        "emoji/move", "_api_move_emoji", ("POST",), "移动单个表情到其他分类"
+    ),
+    WebRouteSpec(
+        "emoji/batch_move", "_api_batch_move_emojis", ("POST",), "批量移动表情"
+    ),
+    WebRouteSpec(
+        "emoji/batch_copy", "_api_batch_copy_emojis", ("POST",), "批量复制表情"
+    ),
+    WebRouteSpec(
+        "emoji/clear_all",
+        "_api_clear_all_emojis",
+        ("POST",),
+        "清空所有表情（保留分类）",
+    ),
+    WebRouteSpec("emotions", "_api_get_emotions", ("GET",), "获取分类描述"),
+    WebRouteSpec(
+        "category/delete", "_api_delete_category", ("POST",), "删除分类及其文件"
+    ),
+    WebRouteSpec(
+        "category/clear", "_api_clear_category", ("POST",), "清空分类内表情（保留分类）"
+    ),
+    WebRouteSpec(
+        "category/restore", "_api_restore_category", ("POST",), "恢复或创建分类"
+    ),
+    WebRouteSpec(
+        "category/rename", "_api_rename_category", ("POST",), "重命名分类"
+    ),
+    WebRouteSpec(
+        "category/update_description",
+        "_api_update_description",
+        ("POST",),
+        "更新分类描述",
+    ),
+    WebRouteSpec(
+        "category/remove_from_config",
+        "_api_remove_from_config",
+        ("POST",),
+        "仅从配置中移除分类",
+    ),
+    WebRouteSpec("sync/status", "_api_sync_status", ("GET",), "获取配置同步状态"),
+    WebRouteSpec(
+        "sync/config", "_api_sync_config", ("POST",), "同步配置与文件系统"
+    ),
+    WebRouteSpec(
+        "meme_image", "_api_serve_meme_image", ("GET",), "直接返回表情图片文件"
+    ),
+    WebRouteSpec(
+        "meme_image_data",
+        "_api_get_meme_image_data",
+        ("GET",),
+        "获取表情图片的 Data URL（预览）",
+    ),
+    WebRouteSpec(
+        "meme_image_semantic",
+        "_api_get_meme_image_semantic",
+        ("GET",),
+        "获取单张表情图片的语义描述",
+    ),
+    WebRouteSpec(
+        "semantic/reviews",
+        "_api_semantic_reviews",
+        ("GET",),
+        "获取分类审核状态和统计",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
+        "semantic/confirm_category",
+        "_api_semantic_confirm_category",
+        ("POST",),
+        "人工确认图片当前分类",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
+        "semantic/propose_image_revision",
+        "_api_semantic_propose_image_revision",
+        ("POST",),
+        "按人工复审意见生成单张图片语义候选",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
+        "semantic/save_image",
+        "_api_semantic_save_image",
+        ("POST",),
+        "保存单张图片人工语义",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
+        "semantic/save_image_and_vector",
+        "_api_semantic_save_image_and_vector",
+        ("POST",),
+        "保存单张图片人工语义并更新该图向量",
+        capability="vector_semantic",
+    ),
+    WebRouteSpec(
+        "semantic/restore_image_auto",
+        "_api_semantic_restore_image_auto",
+        ("POST",),
+        "显式放弃单张图片人工语义",
+        capability="catalog_index",
+    ),
+    WebRouteSpec("packs", "_api_list_packs", ("GET",), "获取已安装表情包列表"),
+    WebRouteSpec(
+        "packs/<pack_id>", "_api_get_pack_detail", ("GET",), "获取单个表情包详情"
+    ),
+    WebRouteSpec(
+        "packs/default", "_api_set_default_pack", ("POST",), "设置默认表情包"
+    ),
+    WebRouteSpec(
+        "packs/export", "_api_export_pack", ("POST",), "导出表情包压缩文件"
+    ),
+    WebRouteSpec(
+        "packs/export/status",
+        "_api_pack_export_status",
+        ("GET",),
+        "获取表情包可导出能力",
+    ),
+    WebRouteSpec(
+        "packs/export/download",
+        "_api_download_pack",
+        ("GET",),
+        "导出并下载表情包压缩文件",
+    ),
+    WebRouteSpec("packs/import", "_api_import_pack", ("POST",), "导入表情包压缩文件"),
+    WebRouteSpec(
+        "packs/import/stage",
+        "_api_stage_pack_import",
+        ("POST",),
+        "上传并预检表情包压缩文件",
+    ),
+    WebRouteSpec(
+        "packs/import/apply",
+        "_api_apply_pack_import",
+        ("POST",),
+        "确认导入已预检的表情包",
+    ),
+    WebRouteSpec(
+        "packs/uninstall", "_api_uninstall_pack", ("POST",), "卸载表情包"
+    ),
+    WebRouteSpec(
+        "community/index/fetch",
+        "_api_fetch_community_index",
+        ("POST",),
+        "拉取并缓存社区索引",
+    ),
+    WebRouteSpec(
+        "community/index/cache",
+        "_api_get_cached_community_index",
+        ("GET",),
+        "读取已缓存的社区索引",
+    ),
+    WebRouteSpec(
+        "community/install",
+        "_api_install_community_pack",
+        ("POST",),
+        "按社区 source 安装表情包",
+    ),
+    WebRouteSpec(
+        "community/install_official_first",
+        "_api_install_official_first_pack",
+        ("POST",),
+        "安装官方首个表情包",
+    ),
+    WebRouteSpec(
+        "settings/rules",
+        "_api_settings_rules",
+        ("GET", "POST"),
+        "获取或保存表情包选择规则",
+    ),
+    WebRouteSpec(
+        "settings/targets",
+        "_api_settings_targets",
+        ("GET",),
+        "获取规则 target 建议值",
+    ),
+    WebRouteSpec(
+        "settings/backup/export",
+        "_api_export_runtime_backup",
+        ("POST",),
+        "导出运行时全量备份",
+    ),
+    WebRouteSpec(
+        "settings/backup/import",
+        "_api_import_runtime_backup",
+        ("POST",),
+        "导入运行时全量备份",
+    ),
+    WebRouteSpec(
+        "semantic/status",
+        "_api_semantic_status",
+        ("GET",),
+        "获取语义化任务状态",
+        capability="vector_semantic",
+    ),
+    WebRouteSpec(
+        "semantic/items",
+        "_api_semantic_items",
+        ("GET",),
+        "获取语义图片记录",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
+        "semantic/capture-workspace",
+        "_api_semantic_capture_workspace",
+        ("GET",),
+        "获取偷取表情包分类工作台数据",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
+        "semantic/capture-index",
+        "_api_semantic_capture_index",
+        ("POST",),
+        "手动处理偷取表情包分类索引",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
+        "semantic/start", "_api_semantic_start", ("POST",), "开始语义化任务",
+        capability="vector_semantic",
+    ),
+    WebRouteSpec(
+        "semantic/pause", "_api_semantic_pause", ("POST",), "暂停语义化任务",
+        capability="vector_semantic",
+    ),
+    WebRouteSpec(
+        "semantic/resume", "_api_semantic_resume", ("POST",), "继续语义化任务",
+        capability="vector_semantic",
+    ),
+    WebRouteSpec(
+        "semantic/retry", "_api_semantic_retry", ("POST",), "重试失败语义项",
+        capability="vector_semantic",
+    ),
+    WebRouteSpec(
+        "semantic/rebuild-index",
+        "_api_semantic_rebuild_index",
+        ("POST",),
+        "重建语义向量索引",
+        capability="vector_semantic",
+    ),
+    WebRouteSpec(
+        "semantic/clear-local-state",
+        "_api_semantic_clear_local_state",
+        ("POST",),
+        "清理本机语义任务与向量",
+        capability="vector_semantic",
+    ),
+    WebRouteSpec(
+        "semantic/delete-all",
+        "_api_semantic_delete_all",
+        ("POST",),
+        "删除当前资源包全部语义化数据",
+        capability="vector_semantic",
+    ),
+)
+
+
+def enabled_route_specs(capabilities) -> tuple[WebRouteSpec, ...]:
+    """Return the route specs whose capability is in the enabled set."""
+    enabled = {str(item) for item in capabilities}
+    return tuple(spec for spec in ROUTES if spec.capability in enabled)

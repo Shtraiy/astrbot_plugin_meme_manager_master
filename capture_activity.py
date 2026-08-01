@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
+
+try:
+    from .backend.atomic_io import atomic_write_json
+except ImportError:  # standalone test imports (repo root on sys.path)
+    from backend.atomic_io import atomic_write_json
 
 
 CAPTURE_ACTIVITY_FILENAME = "capture_activity.json"
@@ -15,9 +19,18 @@ CAPTURE_ACTIVITY_VERSION = 1
 MAX_CAPTURE_ACTIVITY_ITEMS = 500
 INDEX_COMPLETION_MARKER = "classification_index_complete"
 
+_LOCKS_GUARD = threading.Lock()
+_PATH_LOCKS: dict[str, threading.RLock] = {}
+
 
 def _path(pack_dir: Path) -> Path:
     return Path(pack_dir) / CAPTURE_ACTIVITY_FILENAME
+
+
+def _lock_for(pack_dir: Path) -> threading.RLock:
+    key = str(_path(pack_dir).resolve())
+    with _LOCKS_GUARD:
+        return _PATH_LOCKS.setdefault(key, threading.RLock())
 
 
 def index_metadata_matches(data: dict[str, Any], expected: dict[str, Any]) -> bool:
@@ -47,20 +60,7 @@ def load_capture_activity(pack_dir: Path) -> dict[str, Any]:
 
 
 def _write_atomic(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
+    atomic_write_json(path, data)
 
 
 def record_capture_event(
@@ -74,19 +74,20 @@ def record_capture_event(
     captured_at: int | None = None,
 ) -> dict[str, Any]:
     """Append one capture result for the semantic page and return it."""
-    data = load_capture_activity(pack_dir)
-    event = {
-        "id": f"capture-{time.time_ns()}",
-        "category": str(category),
-        "filename": str(filename),
-        "sha256": str(digest),
-        "status": str(status),
-        "duplicate_of": str(duplicate_of or ""),
-        "captured_at": int(captured_at or time.time()),
-    }
-    data["events"] = [*data["events"], event][-MAX_CAPTURE_ACTIVITY_ITEMS:]
-    _write_atomic(_path(pack_dir), data)
-    return event
+    with _lock_for(pack_dir):
+        data = load_capture_activity(pack_dir)
+        event = {
+            "id": f"capture-{time.time_ns()}",
+            "category": str(category),
+            "filename": str(filename),
+            "sha256": str(digest),
+            "status": str(status),
+            "duplicate_of": str(duplicate_of or ""),
+            "captured_at": int(captured_at or time.time()),
+        }
+        data["events"] = [*data["events"], event][-MAX_CAPTURE_ACTIVITY_ITEMS:]
+        _write_atomic(_path(pack_dir), data)
+        return event
 
 
 def mark_capture_events_indexed(
@@ -99,16 +100,17 @@ def mark_capture_events_indexed(
     """Resolve pending/duplicate activity after a category index completes."""
     if not digests:
         return 0
-    data = load_capture_activity(pack_dir)
-    changed = 0
-    timestamp = int(indexed_at or time.time())
-    for event in data["events"]:
-        if event.get("category") != category or event.get("sha256") not in digests:
-            continue
-        if event.get("status") in {"pending", "duplicate"}:
-            event["status"] = "indexed" if event.get("status") == "pending" else "deduped"
-            event["indexed_at"] = timestamp
-            changed += 1
-    if changed:
-        _write_atomic(_path(pack_dir), data)
-    return changed
+    with _lock_for(pack_dir):
+        data = load_capture_activity(pack_dir)
+        changed = 0
+        timestamp = int(indexed_at or time.time())
+        for event in data["events"]:
+            if event.get("category") != category or event.get("sha256") not in digests:
+                continue
+            if event.get("status") in {"pending", "duplicate"}:
+                event["status"] = "indexed" if event.get("status") == "pending" else "deduped"
+                event["indexed_at"] = timestamp
+                changed += 1
+        if changed:
+            _write_atomic(_path(pack_dir), data)
+        return changed

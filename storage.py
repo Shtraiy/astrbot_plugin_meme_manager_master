@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 import random
 import re
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    from .backend.atomic_io import atomic_write_bytes, atomic_write_json
+except ImportError:  # standalone test imports (repo root on sys.path)
+    from backend.atomic_io import atomic_write_bytes, atomic_write_json
 
 try:
     from PIL import Image
@@ -399,59 +402,66 @@ class MemeStore:
         )
         self.upsert_catalog_entry(category, entry)
 
-    def reconcile_catalogs(self) -> int:
-        """Create or repair indexes for every image already on disk.
-
-        Existing entries, including model-generated captions and tags, are
-        preserved. Missing image entries are added and entries for deleted
-        files are removed. The return value is the number of categories
-        rewritten.
-        """
-        rewritten = 0
-        for category in sorted(self.directory_categories()):
-            category_dir = self.memes_dir / category
-            data = self.load_catalog(category)
-            entries = [
-                item for item in data.get("items", []) if isinstance(item, dict)
-            ]
+    def reconcile_category(self, category: str) -> bool:
+        """Repair one category and return whether files were rewritten."""
+        if not _is_safe_segment(category):
+            return False
+        category_dir = self.memes_dir / category
+        if not category_dir.is_dir():
+            return False
+        data = self.load_catalog(category)
+        entries = [
+            item for item in data.get("items", []) if isinstance(item, dict)
+        ]
+        known = {
+            str(item.get("filename"))
+            for item in entries
+            if item.get("filename")
+        }
+        changed = False
+        image_names = {path.name for path in self.image_paths(category)}
+        filtered_entries = [
+            item
+            for item in entries
+            if str(item.get("filename") or "") in image_names
+        ]
+        if len(filtered_entries) != len(entries):
+            entries = filtered_entries
             known = {
                 str(item.get("filename"))
                 for item in entries
                 if item.get("filename")
             }
-            changed = False
-            image_names = {path.name for path in self.image_paths(category)}
-            filtered_entries = [
-                item
-                for item in entries
-                if str(item.get("filename") or "") in image_names
-            ]
-            if len(filtered_entries) != len(entries):
-                entries = filtered_entries
-                known = {
-                    str(item.get("filename"))
-                    for item in entries
-                    if item.get("filename")
-                }
-                changed = True
-            for image_path in self.image_paths(category):
-                if image_path.name in known:
-                    continue
-                entries.append(self._minimal_catalog_entry(image_path))
-                known.add(image_path.name)
-                changed = True
+            changed = True
+        for image_path in self.image_paths(category):
+            if image_path.name in known:
+                continue
+            entries.append(self._minimal_catalog_entry(image_path))
+            known.add(image_path.name)
+            changed = True
 
-            index_path = category_dir / "index.json"
-            readme_path = category_dir / "README.md"
-            if changed or not index_path.is_file() or not readme_path.is_file():
-                metadata = {
-                    key: value
-                    for key, value in data.items()
-                    if key not in {"version", "category", "updated_at", "items"}
-                }
-                self.write_catalog(category, entries, metadata)
-                rewritten += 1
-        return rewritten
+        index_path = category_dir / "index.json"
+        readme_path = category_dir / "README.md"
+        if changed or not index_path.is_file() or not readme_path.is_file():
+            metadata = {
+                key: value
+                for key, value in data.items()
+                if key not in {"version", "category", "updated_at", "items"}
+            }
+            self.write_catalog(category, entries, metadata)
+            return True
+        return False
+
+    def reconcile_categories(self, categories) -> int:
+        """Repair only the given categories; returns the number rewritten."""
+        safe = sorted(
+            {str(item) for item in categories if _is_safe_segment(str(item))}
+        )
+        return sum(1 for category in safe if self.reconcile_category(category))
+
+    def reconcile_catalogs(self) -> int:
+        """Create or repair indexes for every image already on disk."""
+        return self.reconcile_categories(self.directory_categories())
 
     def image_digest(self, path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -656,19 +666,7 @@ class MemeStore:
 
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_name, path)
-        finally:
-            try:
-                os.unlink(temp_name)
-            except FileNotFoundError:
-                pass
+        atomic_write_bytes(path, content)
 
     def _next_filename(self, category: str, extension: str, digest: str) -> str:
         pattern = re.compile(rf"^{re.escape(category)}_(\d+)$", re.IGNORECASE)
@@ -706,7 +704,7 @@ class MemeStore:
 
     @classmethod
     def _atomic_write_json(cls, path: Path, data: dict) -> None:
-        cls._atomic_write(path, (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode())
+        atomic_write_json(path, data)
 
 
 def is_safe_category_segment(value: str) -> bool:
