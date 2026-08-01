@@ -12,6 +12,7 @@ from ..config import (
     SELECTION_RULES_PATH,
 )
 from .semantic_models import runtime_category_mapping
+from .pack_protocol import validate_pack_id
 
 
 def _load_json(path: Path, default):
@@ -38,7 +39,11 @@ def _is_pack_enabled(pack_id: str, registry_data: dict) -> bool:
 
 
 def _pack_exists(pack_id: str) -> bool:
-    return (PACKS_DIR / pack_id).is_dir()
+    try:
+        normalized = validate_pack_id(pack_id, "pack")
+    except ValueError:
+        return False
+    return (PACKS_DIR / normalized).is_dir()
 
 
 def resolve_pack_id(
@@ -55,7 +60,10 @@ def resolve_pack_id(
             if not isinstance(rule, dict):
                 continue
             scope = str(rule.get("scope") or "").strip().lower()
-            pack_id = str(rule.get("pack_id") or "").strip()
+            try:
+                pack_id = validate_pack_id(str(rule.get("pack_id") or "").strip(), "规则.pack_id")
+            except ValueError:
+                continue
             if not pack_id:
                 continue
 
@@ -106,7 +114,10 @@ def resolve_pack_id(
         for pack in installed:
             if not isinstance(pack, dict):
                 continue
-            pack_id = str(pack.get("id") or "").strip()
+            try:
+                pack_id = validate_pack_id(str(pack.get("id") or "").strip(), "registry.id")
+            except ValueError:
+                continue
             if not pack_id:
                 continue
             if not bool(pack.get("enabled", True)):
@@ -118,7 +129,8 @@ def resolve_pack_id(
 
 
 def get_pack_paths(pack_id: str) -> dict[str, Path]:
-    pack_dir = PACKS_DIR / pack_id
+    normalized = validate_pack_id(pack_id, "pack")
+    pack_dir = PACKS_DIR / normalized
     return {
         "pack_dir": pack_dir,
         "memes_dir": pack_dir / "memes",

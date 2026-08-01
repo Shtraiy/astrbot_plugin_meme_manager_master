@@ -38,6 +38,7 @@ from ..backend.semantic_query import (
 )
 from ..backend.semantic_storage import invalidate_semantic_metadata
 from ..config import MEMES_DIR, PLUGIN_DATA_DIR
+from ..storage import resolve_safe_category_dir
 
 
 MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024
@@ -548,7 +549,14 @@ class EventHandlerMixin:
         pack_context = self._resolve_runtime_pack_context(event=event)
         pack_id = str(pack_context.get("pack_id") or "").strip()
         pack_dir = Path(pack_context.get("pack_dir") or MEMES_DIR.parent)
-        save_dir = Path(pack_context.get("memes_dir") or MEMES_DIR) / category
+        try:
+            save_dir = resolve_safe_category_dir(
+                pack_context.get("memes_dir") or MEMES_DIR,
+                category,
+            )
+        except ValueError:
+            yield event.plain_result("上传类别无效")
+            return
         try:
             self.catalog_index_service.begin_external_pack_operation(
                 pack_id, "接收并保存表情图片"

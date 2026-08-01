@@ -55,6 +55,7 @@ _install_web_stubs()
 
 from meme_manager_master.mixins.web_api import WebAPIMixin  # noqa: E402
 from meme_manager_master.mixins import emoji_api  # noqa: E402
+from meme_manager_master.mixins import pack_api  # noqa: E402
 from meme_manager_master.mixins import web_api  # noqa: E402
 
 
@@ -92,6 +93,20 @@ class WebApiBehaviorTests(unittest.TestCase):
                 self.assertEqual(metadata_path.suffix, ".json")
                 with self.assertRaises(ValueError):
                     instance._pack_import_session_paths("invalid")
+
+    def test_runtime_backup_base64_decoder_enforces_archive_limit(self):
+        with self.assertRaises(ValueError):
+            pack_api._decode_bounded_base64("A" * 100, limit=8)
+
+    def test_export_result_does_not_expose_local_archive_path(self):
+        result = pack_api._public_export_result(
+            {
+                "archive_path": r"C:\\private\\backup.zip",
+                "archive_filename": "backup.zip",
+            }
+        )
+        self.assertNotIn("archive_path", result)
+        self.assertEqual(result["archive_filename"], "backup.zip")
 
     def test_invalid_webui_upload_returns_bad_request(self):
         from quart import request

@@ -1,9 +1,11 @@
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from tests.fakes import install_package_alias
+from storage import resolve_safe_category_dir
 
 
 install_package_alias()
@@ -42,6 +44,24 @@ class PackStorageSecurityTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     pack_storage.set_default_pack("../outside")
 
+    def test_selection_rules_reject_absolute_pack_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            packs_dir, outside_dir = self._make_outside_pack(Path(temp_dir))
+            rules = [
+                {"id": "default-rule", "scope": "default", "pack_id": str(outside_dir)}
+            ]
+            with patch.object(pack_storage, "PACKS_DIR", packs_dir):
+                with self.assertRaises(ValueError):
+                    pack_storage._validate_and_normalize_rules(rules)
+
+    def test_selection_rules_reject_parent_pack_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            packs_dir, _outside_dir = self._make_outside_pack(Path(temp_dir))
+            rules = [{"id": "default-rule", "scope": "default", "pack_id": "../outside"}]
+            with patch.object(pack_storage, "PACKS_DIR", packs_dir):
+                with self.assertRaises(ValueError):
+                    pack_storage._validate_and_normalize_rules(rules)
+
     def test_uninstall_rejects_directory_traversal_without_deleting_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             packs_dir, outside_dir = self._make_outside_pack(Path(temp_dir))
@@ -69,6 +89,18 @@ class PackStorageSecurityTests(unittest.TestCase):
                 )
                 with self.assertRaises(ValueError):
                     pack_storage._resolve_backup_output_dir(str(outside))
+
+    def test_upload_category_directory_stays_under_memes_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memes_root = Path(temp_dir) / "memes"
+            outside = Path(temp_dir) / "outside"
+            self.assertEqual(
+                resolve_safe_category_dir(memes_root, "happy"),
+                (memes_root / "happy").resolve(),
+            )
+            with self.assertRaises(ValueError):
+                resolve_safe_category_dir(memes_root, "../outside")
+            self.assertFalse(outside.exists())
 
     def test_github_archive_rejects_oversized_stream_without_writing(self):
         class Response:
@@ -98,6 +130,19 @@ class PackStorageSecurityTests(unittest.TestCase):
                         "owner/repo", "main", target
                     )
             self.assertFalse(target.exists())
+
+    def test_extract_rejects_oversized_registry_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive_path = root / "oversized.zip"
+            target_dir = root / "target"
+            oversized = b"{" + b"x" * pack_storage.ARCHIVE_JSON_SIZE_LIMITS["registry.json"] + b"}"
+            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.writestr("registry.json", oversized)
+
+            with self.assertRaises(ValueError):
+                pack_storage._extract_zip_safely(archive_path, target_dir)
+            self.assertFalse((target_dir / "registry.json").exists())
 
 
 if __name__ == "__main__":

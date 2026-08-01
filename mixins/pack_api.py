@@ -79,6 +79,32 @@ MAX_PACK_ARCHIVE_BYTES = 1024 * 1024 * 1024
 MAX_PACK_UPLOAD_REQUEST_BYTES = MAX_PACK_ARCHIVE_BYTES + 1024 * 1024
 
 
+def _decode_bounded_base64(value: str, limit: int) -> bytes:
+    """Decode Base64 only when both encoded and decoded sizes fit the limit."""
+    encoded = str(value or "").strip()
+    if not encoded:
+        raise ValueError("file_b64 不能为空")
+    max_encoded_chars = ((int(limit) + 2) // 3) * 4
+    if len(encoded) > max_encoded_chars:
+        raise ValueError("备份文件超过 1 GB，无法通过 WebUI 导入")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("file_b64 非法") from exc
+    if len(decoded) > int(limit):
+        raise ValueError("备份文件超过 1 GB，无法通过 WebUI 导入")
+    return decoded
+
+
+def _public_export_result(result: dict | None) -> dict:
+    """Remove local filesystem paths before an export result reaches WebUI."""
+    payload = dict(result or {})
+    archive_path = payload.pop("archive_path", None)
+    if archive_path and not payload.get("archive_filename"):
+        payload["archive_filename"] = Path(str(archive_path)).name
+    return payload
+
+
 
 
 class PackAPIMixin:
@@ -138,7 +164,7 @@ class PackAPIMixin:
                 include_semantic=False,
                 export_mode=export_mode,
             )
-            return jsonify({"message": "导出成功", **result}), 200
+            return jsonify({"message": "导出成功", **_public_export_result(result)}), 200
         except FileNotFoundError as e:
             return jsonify({"message": str(e)}), 404
         except RuntimeError as e:
@@ -595,7 +621,9 @@ class PackAPIMixin:
                 export_runtime_backup,
                 output_dir=output_dir,
             )
-            return jsonify({"message": "全量备份导出成功", **result}), 200
+            return jsonify(
+                {"message": "全量备份导出成功", **_public_export_result(result)}
+            ), 200
         except RuntimeError as e:
             return jsonify({"message": str(e)}), 409
         except Exception as e:
@@ -692,6 +720,8 @@ class PackAPIMixin:
                 if not str(archive_file.filename).lower().endswith(".zip"):
                     return jsonify({"message": "仅支持 zip 备份文件"}), 400
                 await self._save_uploaded_file(archive_file, temp_zip_path)
+                if temp_zip_path.stat().st_size > MAX_PACK_ARCHIVE_BYTES:
+                    raise ValueError("压缩包超过 1 GB，无法通过 WebUI 导入")
             elif isinstance(json_payload, dict):
                 file_name = str(json_payload.get("file_name") or "").strip()
                 file_b64 = str(json_payload.get("file_b64") or "").strip()
@@ -700,10 +730,15 @@ class PackAPIMixin:
                 if not file_b64:
                     return jsonify({"message": "缺少 file_b64"}), 400
                 try:
-                    raw_bytes = base64.b64decode(file_b64, validate=True)
-                except (ValueError, binascii.Error):
-                    return jsonify({"message": "file_b64 非法"}), 400
+                    raw_bytes = _decode_bounded_base64(
+                        file_b64, MAX_PACK_ARCHIVE_BYTES
+                    )
+                except ValueError as exc:
+                    status = 413 if "超过" in str(exc) else 400
+                    return jsonify({"message": str(exc)}), status
                 temp_zip_path.write_bytes(raw_bytes)
+                if temp_zip_path.stat().st_size > MAX_PACK_ARCHIVE_BYTES:
+                    raise ValueError("备份文件超过 1 GB，无法通过 WebUI 导入")
             else:
                 return (
                     jsonify({"message": "缺少上传文件字段 file 或 JSON file_b64"}),

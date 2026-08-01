@@ -62,6 +62,9 @@ MIN_FREE_SPACE_RESERVE_BYTES = 512 * 1024 * 1024
 ARCHIVE_JSON_SIZE_LIMITS = {
     "manifest.json": 4 * 1024 * 1024,
     PACK_TRANSFER_MANIFEST: 1024 * 1024,
+    "registry.json": 4 * 1024 * 1024,
+    "selection_rules.json": 4 * 1024 * 1024,
+    "community_cache.json": 8 * 1024 * 1024,
     "memes_data.json": 16 * 1024 * 1024,
     "semantic_metadata.json": 256 * 1024 * 1024,
     "index_manifest.json": 256 * 1024 * 1024,
@@ -435,6 +438,10 @@ def _current_default_pack_id() -> str:
     for rule in reversed(selection_rules.get("rules", [])):
         if str(rule.get("scope") or "") == "default":
             pack_id = str(rule.get("pack_id") or "").strip()
+            try:
+                pack_id = validate_pack_id(pack_id, "默认规则.pack_id")
+            except ValueError:
+                continue
             if pack_id:
                 return pack_id
     for fallback_pack_id in (LEGACY_MIGRATED_PACK_ID, DEFAULT_PACK_ID):
@@ -1704,15 +1711,19 @@ def _validate_and_normalize_rules(
 
         rule_id = str(rule.get("id") or "").strip()
         scope = str(rule.get("scope") or "").strip().lower()
-        pack_id = str(rule.get("pack_id") or "").strip()
+        try:
+            pack_id = validate_pack_id(
+                str(rule.get("pack_id") or "").strip(),
+                f"第 {index + 1} 条规则.pack_id",
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
         target = str(rule.get("target") or "").strip()
 
         if not rule_id:
             raise ValueError(f"第 {index + 1} 条规则缺少 id")
         if scope not in {"persona", "session", "default"}:
             raise ValueError(f"第 {index + 1} 条规则 scope 非法")
-        if not pack_id:
-            raise ValueError(f"第 {index + 1} 条规则缺少 pack_id")
         pack_exists = (
             pack_id in available_pack_ids
             if available_pack_ids is not None

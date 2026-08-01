@@ -570,7 +570,9 @@ def _resolve_default_pack_id(plugin_data_dir: Path) -> str:
                 if rule.get("scope") != "default":
                     continue
                 pack_id = str(rule.get("pack_id") or "").strip()
-                if pack_id and (plugin_data_dir / "packs" / pack_id).is_dir():
+                if _is_safe_runtime_pack_id(pack_id) and (
+                    plugin_data_dir / "packs" / pack_id
+                ).is_dir():
                     return pack_id
 
     legacy_pack_dir = plugin_data_dir / "packs" / LEGACY_MIGRATED_PACK_ID

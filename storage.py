@@ -723,6 +723,21 @@ def is_safe_category_segment(value: str) -> bool:
     return Path(normalized).name == normalized
 
 
+def resolve_safe_category_dir(root: Path | str, category: str) -> Path:
+    """Resolve one category directory without allowing it to escape ``root``."""
+    normalized = str(category or "").strip()
+    if not is_safe_category_segment(normalized):
+        raise ValueError("分类名非法")
+
+    root_path = Path(root).expanduser().resolve(strict=False)
+    target_path = (root_path / normalized).resolve(strict=False)
+    try:
+        target_path.relative_to(root_path)
+    except ValueError as exc:
+        raise ValueError("分类目录超出表情包目录范围") from exc
+    return target_path
+
+
 def scan_pack_emojis(memes_dir: Path | str) -> dict[str, list[str]]:
     """Scan one pack using the same image contract as runtime selection."""
     root = Path(memes_dir)

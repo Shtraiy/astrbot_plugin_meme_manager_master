@@ -53,6 +53,17 @@ class PackProtocolTests(unittest.TestCase):
         self.assertEqual(result["categories"]["happy"]["description"], "请添加描述")
         self.assertEqual(result["categories"]["sad"]["description"], "伤心场景")
 
+    def test_pack_manifest_rejects_unsafe_category_names(self):
+        with self.assertRaises(ValueError):
+            validate_pack_manifest(
+                {
+                    "id": "cats",
+                    "name": "Cats",
+                    "version": "1.0.0",
+                    "categories": {"../outside": {"description": "bad"}},
+                }
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

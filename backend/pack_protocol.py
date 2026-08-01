@@ -1,6 +1,11 @@
 import re
 from pathlib import Path
 
+try:
+    from ..storage import is_safe_category_segment
+except ImportError:  # standalone test imports (repo root on sys.path)
+    from storage import is_safe_category_segment
+
 PACK_TRANSFER_FORMAT = "astrbot-meme-pack"
 PACK_TRANSFER_VERSION = 2
 PACK_TRANSFER_MANIFEST = "meme_pack_export.json"
@@ -125,8 +130,8 @@ def validate_pack_manifest(manifest: dict, context: str = "manifest") -> dict:
     normalized_categories = {}
     for category_name, category_meta in categories.items():
         category_name = str(category_name or "").strip()
-        if not category_name:
-            raise ValueError(f"{context}.categories 存在空分类名")
+        if not is_safe_category_segment(category_name):
+            raise ValueError(f"{context}.categories 存在非法分类名: {category_name}")
 
         if isinstance(category_meta, dict):
             description = str(category_meta.get("description") or "").strip()
@@ -173,6 +178,10 @@ def validate_pack_directory(pack_root: Path, context: str = "pack") -> dict:
         raise ValueError(f"{context} 的 manifest.json 无法解析: {exc}") from exc
 
     normalized_manifest = validate_pack_manifest(manifest, f"{context}.manifest")
+
+    for category_dir in memes_dir.iterdir():
+        if category_dir.is_dir() and not is_safe_category_segment(category_dir.name):
+            raise ValueError(f"{context} 包含非法分类目录: {category_dir.name}")
 
     return normalized_manifest
 

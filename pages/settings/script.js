@@ -957,8 +957,8 @@ async function initSettingsPage() {
       const response = await apiPost("settings/backup/export", {
         output_dir: outputDir || undefined,
       });
-      exportResult.textContent = `导出成功: ${response.archive_path || ""}`;
-      addLog(`备份导出成功: ${response.archive_path || ""}`);
+      exportResult.textContent = `导出成功: ${response.archive_filename || ""}`;
+      addLog(`备份导出成功: ${response.archive_filename || ""}`);
     } catch (error) {
       exportResult.textContent = `导出失败: ${error?.message || String(error)}`;
       addLog(`备份导出失败: ${error?.message || String(error)}`, true);
