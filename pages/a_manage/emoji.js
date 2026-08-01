@@ -232,7 +232,7 @@ window.MemeManagerUI.emoji.openImagePreview = async function (category, emoji, p
     const previewRequest = previewDataUrl
       ? Promise.resolve(previewDataUrl)
       : window.MemeManagerUI.emoji.loadPreviewImage(category, emoji, "preview");
-    const previewResult = await Promise.allSettled([previewRequest]);
+    const [previewResult] = await Promise.allSettled([previewRequest]);
     if (window.MemeManagerUI.state.imagePreviewState !== previewState) {
       return;
     }

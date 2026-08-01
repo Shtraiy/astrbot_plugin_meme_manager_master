@@ -4,36 +4,46 @@ async function initCatalogPage() {
   const FIXED_INDEX_URL =
     "https://raw.githubusercontent.com/anka-afk/astrbot-meme-pack-index/main/community-index.json";
 
-  function withCurrentPageParams(targetPath, extraParams = {}) {
-    const nextUrl = new URL(targetPath, window.location.href);
-    const currentParams = new URLSearchParams(window.location.search);
-    for (const key of ["view", "managed_pack_id", "asset_token"]) {
-      const value = currentParams.get(key);
-      if (value && !nextUrl.searchParams.has(key)) {
-        nextUrl.searchParams.set(key, value);
-      }
+  function withCurrentPageParams(pageName, extraParams = {}) {
+    const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
+    if (!allowedPages.has(pageName)) {
+      return null;
     }
+    const currentParams = new URLSearchParams(window.location.search);
     for (const [key, value] of Object.entries(extraParams)) {
       if (value === null || value === undefined || value === "") {
-        nextUrl.searchParams.delete(key);
+        currentParams.delete(key);
       } else {
-        nextUrl.searchParams.set(key, String(value));
+        currentParams.set(key, String(value));
       }
     }
+    const routeParams = new URLSearchParams();
+    for (const key of ["view", "managed_pack_id"]) {
+      const value = currentParams.get(key);
+      if (value) {
+        routeParams.set(key, value);
+      }
+    }
+    const nextUrl = new URL(window.location.origin + "/");
+    const suffix = routeParams.toString() ? `?${routeParams}` : "";
+    nextUrl.hash = `/plugin-page/meme_manager_master/${pageName}${suffix}`;
     return nextUrl;
   }
 
   function applySecureNavLinks() {
-    document.querySelectorAll("a[data-nav-target]").forEach((link) => {
-      const targetPath = link.getAttribute("data-nav-target");
-      if (!targetPath) {
+    document.querySelectorAll("a[data-nav-page]").forEach((link) => {
+      const pageName = link.getAttribute("data-nav-page");
+      if (!pageName) {
         return;
       }
       const navView = link.getAttribute("data-nav-view") || "";
-      const nextUrl = withCurrentPageParams(targetPath, {
+      const nextUrl = withCurrentPageParams(pageName, {
         view: navView || null,
       });
-      link.href = nextUrl.toString();
+      if (nextUrl) {
+        link.target = "_top";
+        link.href = nextUrl.toString();
+      }
     });
   }
 

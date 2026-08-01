@@ -18,17 +18,29 @@ async function initCaptureIndexPage() {
     return;
   }
 
-  const currentParams = new URLSearchParams(window.location.search);
-  document.querySelectorAll("a[data-nav-target]").forEach((link) => {
-    const targetPath = link.getAttribute("data-nav-target");
-    if (!targetPath) return;
-    const nextUrl = new URL(targetPath, window.location.href);
-    for (const key of ["view", "managed_pack_id", "asset_token"]) {
+  await pageApi.ready();
+  const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
+  document.querySelectorAll("a[data-nav-page]").forEach((link) => {
+    const pageName = link.getAttribute("data-nav-page");
+    if (!pageName || !allowedPages.has(pageName)) return;
+    const currentParams = new URLSearchParams(window.location.search);
+    const navView = link.getAttribute("data-nav-view") || "";
+    if (navView) {
+      currentParams.set("view", navView);
+    } else {
+      currentParams.delete("view");
+    }
+    const routeParams = new URLSearchParams();
+    for (const key of ["view", "managed_pack_id"]) {
       const value = currentParams.get(key);
-      if (value && !nextUrl.searchParams.has(key)) {
-        nextUrl.searchParams.set(key, value);
+      if (value) {
+        routeParams.set(key, value);
       }
     }
+    const nextUrl = new URL(window.location.origin + "/");
+    const suffix = routeParams.toString() ? `?${routeParams}` : "";
+    nextUrl.hash = `/plugin-page/meme_manager_master/${pageName}${suffix}`;
+    link.target = "_top";
     link.href = nextUrl.toString();
   });
 
@@ -166,7 +178,6 @@ async function initCaptureIndexPage() {
     if (event.target === previewMask) document.querySelector("#preview-close").click();
   });
 
-  await pageApi.ready();
   try {
     await loadPacks();
     await loadWorkspace();

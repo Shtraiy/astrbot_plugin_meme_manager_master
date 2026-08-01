@@ -8,14 +8,7 @@
   <body>
     <script>
       (function redirectToManage() {
-        const nextUrl = new URL("./a_manage/index.html", window.location.href);
-        const currentParams = new URLSearchParams(window.location.search);
-        for (const [key, value] of currentParams.entries()) {
-          if (!nextUrl.searchParams.has(key)) {
-            nextUrl.searchParams.set(key, value);
-          }
-        }
-        window.location.replace(nextUrl.toString());
+        window.location.replace("/#/plugin-page/meme_manager_master/a_manage");
       })();
     </script>
   </body>

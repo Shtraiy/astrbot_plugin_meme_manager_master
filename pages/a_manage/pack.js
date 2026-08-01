@@ -308,7 +308,7 @@ window.MemeManagerUI.pack.syncManagedPackQuery = function (managedPackId) {
     window.history.replaceState(null, "", nextUrl.toString());
   }
 window.MemeManagerUI.pack.buildCatalogPageUrl = function () {
-    return window.MemeManagerUI.api.withCurrentPageParams("../catalog/index.html", {
+    return window.MemeManagerUI.api.withCurrentPageParams("catalog", {
       view: "catalog",
     }).toString();
   }
