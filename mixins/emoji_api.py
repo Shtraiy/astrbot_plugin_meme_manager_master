@@ -83,6 +83,31 @@ MAX_PACK_UPLOAD_REQUEST_BYTES = MAX_PACK_ARCHIVE_BYTES + 1024 * 1024
 
 class EmojiAPIMixin:
     @staticmethod
+    def _build_file_data_url(file_path: Path, mime_type: str) -> str:
+        with file_path.open("rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
+
+    @staticmethod
+    def _build_preview_data_url(file_path: Path) -> tuple[str, str]:
+        resample_filter = getattr(
+            getattr(PILImage, "Resampling", PILImage),
+            "LANCZOS",
+            PILImage.BICUBIC,
+        )
+        with PILImage.open(file_path) as image:
+            image.thumbnail(
+                (PREVIEW_IMAGE_MAX_DIMENSION, PREVIEW_IMAGE_MAX_DIMENSION),
+                resample_filter,
+            )
+            if image.mode not in {"RGB", "RGBA"}:
+                image = image.convert("RGBA")
+            output = io.BytesIO()
+            image.save(output, format="WEBP", quality=82, method=4)
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
+        return f"data:image/webp;base64,{encoded}", "image/webp"
+
+    @staticmethod
     def _safe_image_filename(value: str) -> bool:
         normalized = str(value or "").strip()
         return bool(

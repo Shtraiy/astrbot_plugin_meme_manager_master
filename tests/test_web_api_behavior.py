@@ -138,6 +138,21 @@ class WebApiBehaviorTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertIn("message", payload)
 
+    def test_image_data_helpers_build_raw_and_thumbnail_data_urls(self):
+        from PIL import Image
+
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "preview.png"
+            Image.new("RGBA", (4, 4), (20, 120, 80, 255)).save(image_path)
+
+            raw_url = instance._build_file_data_url(image_path, "image/png")
+            preview_url, preview_mime = instance._build_preview_data_url(image_path)
+
+        self.assertTrue(raw_url.startswith("data:image/png;base64,"))
+        self.assertTrue(preview_url.startswith("data:image/webp;base64,"))
+        self.assertEqual(preview_mime, "image/webp")
+
     def test_oversized_preview_returns_413(self):
         from quart import request
 
