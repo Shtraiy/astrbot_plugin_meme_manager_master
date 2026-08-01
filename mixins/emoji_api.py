@@ -82,6 +82,18 @@ MAX_PACK_UPLOAD_REQUEST_BYTES = MAX_PACK_ARCHIVE_BYTES + 1024 * 1024
 
 
 class EmojiAPIMixin:
+    @staticmethod
+    def _safe_image_filename(value: str) -> bool:
+        normalized = str(value or "").strip()
+        return bool(
+            normalized
+            and normalized not in {".", ".."}
+            and Path(normalized).name == normalized
+            and "/" not in normalized
+            and "\\" not in normalized
+            and Path(normalized).suffix.lower() in IMAGE_EXTENSIONS
+        )
+
     async def _api_get_emojis(self):
         view_context = self._resolve_webui_pack_view_context()
         if view_context:

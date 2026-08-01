@@ -61,6 +61,7 @@ from ..storage import (
     scan_pack_emojis,
 )
 from .web_routes import enabled_route_specs
+from .capture_index_api import CaptureIndexAPIMixin
 from .emoji_api import EmojiAPIMixin
 from .pack_api import PackAPIMixin
 from ..config import (
@@ -83,7 +84,7 @@ MAX_PACK_UPLOAD_REQUEST_BYTES = MAX_PACK_ARCHIVE_BYTES + 1024 * 1024
 
 
 
-class WebAPIMixin(EmojiAPIMixin, PackAPIMixin):
+class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
     def _get_github_accelerator_url(self) -> str:
         value = self._read_config_value(
             ("community", "github_accelerator_url"),
@@ -268,7 +269,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin):
             for pack_id in reversed(locked_pack_ids):
                 guard.end_external_pack_operation(pack_id)
 
-    def _prepare_archive_upload_request() -> None:
+    def _prepare_archive_upload_request(self) -> None:
         """覆盖 Quart 兼容层默认的 16 MB 请求上限。"""
         try:
             request.max_content_length = MAX_PACK_UPLOAD_REQUEST_BYTES
@@ -296,7 +297,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin):
         session_dir.mkdir(parents=True, exist_ok=True)
         return session_dir / f"{normalized}.zip", session_dir / f"{normalized}.json"
 
-    def _cleanup_pack_import_sessions() -> None:
+    def _cleanup_pack_import_sessions(self) -> None:
         session_dir = TEMP_DIR / "pack_import_sessions"
         if not session_dir.is_dir():
             return
@@ -328,7 +329,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin):
             )
         return result
 
-    def _default_pack_context() -> dict[str, Path | str]:
+    def _default_pack_context(self) -> dict[str, Path | str]:
         try:
             return get_active_pack_paths()
         except Exception:
@@ -372,10 +373,10 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin):
             "manifest_path": pack_dir / "manifest.json",
         }
 
-    def _scan_pack_emojis(memes_dir: Path) -> dict:
+    def _scan_pack_emojis(self, memes_dir: Path) -> dict:
         return scan_pack_emojis(memes_dir)
 
-    def _load_pack_descriptions(view_context: dict) -> dict:
+    def _load_pack_descriptions(self, view_context: dict) -> dict:
         descriptions = {}
         memes_data_path = view_context["memes_data_path"]
         if memes_data_path.is_file():

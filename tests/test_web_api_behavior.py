@@ -3,6 +3,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.fakes import install_package_alias, install_runtime_stubs
 
@@ -54,6 +55,7 @@ _install_web_stubs()
 
 from meme_manager_master.mixins.web_api import WebAPIMixin  # noqa: E402
 from meme_manager_master.mixins import emoji_api  # noqa: E402
+from meme_manager_master.mixins import web_api  # noqa: E402
 
 
 class WebApiBehaviorTests(unittest.TestCase):
@@ -71,6 +73,21 @@ class WebApiBehaviorTests(unittest.TestCase):
             payload = asyncio_run(instance._api_get_emojis())
         finally:
             emoji_api.scan_emoji_folder = original_scan
+
+        self.assertEqual(payload, {"happy": ["smile.png"]})
+
+    def test_get_emojis_from_managed_pack_returns_images(self):
+        from quart import request
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "demo"
+            category_dir = pack_dir / "memes" / "happy"
+            category_dir.mkdir(parents=True)
+            (category_dir / "smile.png").write_bytes(b"image")
+            request.args = {"managed_pack_id": "demo"}
+            instance = WebAPIMixin.__new__(WebAPIMixin)
+            with patch.object(web_api, "PACKS_DIR", Path(temp_dir)):
+                payload = asyncio_run(instance._api_get_emojis())
 
         self.assertEqual(payload, {"happy": ["smile.png"]})
 
@@ -106,6 +123,20 @@ class WebApiBehaviorTests(unittest.TestCase):
             payload, status = asyncio_run(instance._api_serve_meme_image())
             self.assertEqual(status, 404)
             self.assertIn("message", payload)
+
+    def test_image_data_rejects_missing_file_without_missing_helper_error(self):
+        from quart import request
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            instance = WebAPIMixin.__new__(WebAPIMixin)
+            instance._default_pack_context = lambda: {
+                "memes_dir": Path(temp_dir),
+            }
+            request.args = {"category": "happy", "filename": "ghost.png"}
+            payload, status = asyncio_run(instance._api_get_meme_image_data())
+
+        self.assertEqual(status, 404)
+        self.assertIn("message", payload)
 
     def test_oversized_preview_returns_413(self):
         from quart import request

@@ -9,7 +9,15 @@ class WebRouteCapabilityTests(unittest.TestCase):
         paths = {
             spec.path for spec in enabled_route_specs(DEFAULT_CAPABILITIES)
         }
-        for route in ("emoji", "emotions", "packs", "packs/import", "settings/rules"):
+        for route in (
+            "emoji",
+            "emotions",
+            "packs",
+            "packs/import",
+            "settings/rules",
+            "capture/workspace",
+            "capture/index",
+        ):
             self.assertIn(route, paths, f"default surface must register {route}")
 
     def test_semantic_routes_are_removed_from_every_capability_surface(self):

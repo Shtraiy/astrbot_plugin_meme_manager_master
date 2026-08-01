@@ -66,6 +66,20 @@ ROUTES: tuple[WebRouteSpec, ...] = (
     ),
     WebRouteSpec("emotions", "_api_get_emotions", ("GET",), "获取分类描述"),
     WebRouteSpec(
+        "capture/workspace",
+        "_api_capture_workspace",
+        ("GET",),
+        "获取偷取表情包索引工作台数据",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
+        "capture/index",
+        "_api_capture_index",
+        ("POST",),
+        "手动处理偷取表情包分类索引",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
         "category/delete", "_api_delete_category", ("POST",), "删除分类及其文件"
     ),
     WebRouteSpec(

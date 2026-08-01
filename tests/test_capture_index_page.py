@@ -6,8 +6,22 @@ ROOT = Path(__file__).parents[1]
 
 
 class CaptureIndexPageTests(unittest.TestCase):
-    def test_semantic_page_and_assets_are_removed(self):
-        self.assertFalse((ROOT / "pages" / "semantic").exists())
+    def test_capture_index_page_is_available(self):
+        page = ROOT / "pages" / "semantic" / "index.html"
+        self.assertTrue(page.is_file())
+        source = page.read_text(encoding="utf-8")
+        self.assertIn("表情索引", source)
+        self.assertIn("capture-indexed-items", source)
+        self.assertIn("capture-pending-items", source)
+
+    def test_capture_index_page_uses_non_semantic_capture_routes(self):
+        source = (ROOT / "pages" / "semantic" / "script.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"capture/workspace"', source)
+        self.assertIn('"capture/index"', source)
+        self.assertNotIn('"semantic/capture-workspace"', source)
+        self.assertNotIn('"semantic/capture-index"', source)
 
 
 if __name__ == "__main__":

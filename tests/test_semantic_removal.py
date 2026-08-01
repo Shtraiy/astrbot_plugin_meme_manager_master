@@ -40,7 +40,6 @@ class SemanticRemovalTests(unittest.TestCase):
 
     def test_manage_page_has_no_semantic_controls(self):
         html = (ROOT / "pages" / "a_manage" / "index.html").read_text(encoding="utf-8")
-        self.assertNotIn("../semantic/index.html", html)
         self.assertNotIn("pack-semantic-status", html)
         self.assertNotIn("rebuild-pack-vectors-btn", html)
         self.assertIn("Image semanticization controls were removed", html)
