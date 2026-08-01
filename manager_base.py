@@ -95,32 +95,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         if self.semantic_task_manager is not None:
             self.web_capabilities = self.web_capabilities | {"vector_semantic"}
 
-    def _create_vector_semantic_manager(self, context):
-        """Create the vector task manager only when enabled and FAISS exists."""
-        if not self.runtime_config.vector_semantic_enabled:
-            return None
-        try:
-            from .backend.semantic_index import faiss_is_available
-            from .backend.semantic_task import SemanticTaskManager
-
-            if not faiss_is_available():
-                logger.error(
-                    "[meme_manager_master] vector_semantic_enabled 已开启，"
-                    "但当前环境缺少 faiss-cpu，向量语义能力不可用"
-                )
-                return None
-            return SemanticTaskManager(
-                PLUGIN_DATA_DIR,
-                context=context,
-                config={
-                    "vision_provider_id": self.semantic_vision_provider_id,
-                    "embedding_provider_id": self.semantic_embedding_provider_id,
-                },
-            )
-        except Exception as exc:
-            logger.error("[meme_manager_master] 初始化向量语义能力失败: %s", exc)
-            return None
-
         # 初始化插件
         if not init_plugin():
             raise RuntimeError("插件初始化失败")
@@ -233,6 +207,32 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
 
         # 注册 WebUI API
         self._register_web_apis()
+
+    def _create_vector_semantic_manager(self, context):
+        """Create the vector task manager only when enabled and FAISS exists."""
+        if not self.runtime_config.vector_semantic_enabled:
+            return None
+        try:
+            from .backend.semantic_index import faiss_is_available
+            from .backend.semantic_task import SemanticTaskManager
+
+            if not faiss_is_available():
+                logger.error(
+                    "[meme_manager_master] vector_semantic_enabled 已开启，"
+                    "但当前环境缺少 faiss-cpu，向量语义能力不可用"
+                )
+                return None
+            return SemanticTaskManager(
+                PLUGIN_DATA_DIR,
+                context=context,
+                config={
+                    "vision_provider_id": self.semantic_vision_provider_id,
+                    "embedding_provider_id": self.semantic_embedding_provider_id,
+                },
+            )
+        except Exception as exc:
+            logger.error("[meme_manager_master] 初始化向量语义能力失败: %s", exc)
+            return None
 
     @classmethod
     def _normalize_mixin_handler_module_paths(cls):
