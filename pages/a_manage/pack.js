@@ -308,12 +308,14 @@ window.MemeManagerUI.pack.syncManagedPackQuery = function (managedPackId) {
     window.history.replaceState(null, "", nextUrl.toString());
   }
 window.MemeManagerUI.pack.buildCatalogPageUrl = function () {
-    return window.MemeManagerUI.api.withCurrentPageParams("catalog", {
-      view: "catalog",
-    }).toString();
+    const catalogLink = document.querySelector('a[data-nav-page="catalog"]');
+    return catalogLink?.href || "";
   }
 window.MemeManagerUI.pack.openCatalogPage = function () {
-    window.location.href = window.MemeManagerUI.pack.buildCatalogPageUrl();
+    const catalogUrl = window.MemeManagerUI.pack.buildCatalogPageUrl();
+    if (catalogUrl) {
+      window.location.href = catalogUrl;
+    }
   }
 window.MemeManagerUI.pack.isSingleEmptyPack = function (packs) {
     if (!Array.isArray(packs) || packs.length !== 1) {

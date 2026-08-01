@@ -1,44 +1,8 @@
 window.MemeManagerUI = window.MemeManagerUI || {};
 window.MemeManagerUI.api = window.MemeManagerUI.api || {};
-window.MemeManagerUI.api.withCurrentPageParams = function (pageName, extraParams = {}) {
-    const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
-    if (!allowedPages.has(pageName)) {
-      return null;
-    }
-    const currentParams = new URLSearchParams(window.location.search);
-    for (const [key, value] of Object.entries(extraParams)) {
-      if (value === null || value === undefined || value === "") {
-        currentParams.delete(key);
-      } else {
-        currentParams.set(key, String(value));
-      }
-    }
-    const routeParams = new URLSearchParams();
-    for (const key of ["view", "managed_pack_id"]) {
-      const value = currentParams.get(key);
-      if (value) {
-        routeParams.set(key, value);
-      }
-    }
-    const nextUrl = new URL(window.location.origin + "/");
-    const suffix = routeParams.toString() ? `?${routeParams}` : "";
-    nextUrl.hash = `/plugin-page/meme_manager_master/${pageName}${suffix}`;
-    return nextUrl;
-  }
 window.MemeManagerUI.api.applySecureNavLinks = function () {
     document.querySelectorAll("a[data-nav-page]").forEach((link) => {
-      const pageName = link.getAttribute("data-nav-page");
-      if (!pageName) {
-        return;
-      }
-      const navView = link.getAttribute("data-nav-view") || "";
-      const nextUrl = window.MemeManagerUI.api.withCurrentPageParams(pageName, {
-        view: navView || null,
-      });
-      if (nextUrl) {
-        link.target = "_top";
-        link.href = nextUrl.toString();
-      }
+      link.removeAttribute("target");
     });
   }
 window.MemeManagerUI.api.apiGet = async function (endpoint, params = {}) {
