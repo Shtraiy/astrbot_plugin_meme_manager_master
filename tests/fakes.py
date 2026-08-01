@@ -186,6 +186,9 @@ def install_runtime_stubs() -> None:
 
     aiohttp = types.ModuleType("aiohttp")
 
+    class ClientError(Exception):
+        pass
+
     class ClientTimeout:
         def __init__(self, **kwargs: Any) -> None:
             pass
@@ -201,8 +204,9 @@ def install_runtime_stubs() -> None:
             return False
 
         async def get(self, *args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("network disabled in offline tests")
+            raise ClientError("network disabled in offline tests")
 
+    aiohttp.ClientError = ClientError
     aiohttp.ClientTimeout = ClientTimeout
     aiohttp.ClientSession = ClientSession
     sys.modules["aiohttp"] = aiohttp

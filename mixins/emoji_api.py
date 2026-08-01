@@ -201,6 +201,8 @@ class EmojiAPIMixin:
                     ),
                     409,
                 )
+            except ValueError as e:
+                return jsonify({"message": str(e)}), 400
             except RuntimeError as e:
                 return jsonify({"message": str(e)}), 409
         except Exception as e:

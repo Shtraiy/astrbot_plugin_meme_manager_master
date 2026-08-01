@@ -9,11 +9,13 @@ from pathlib import Path
 from werkzeug.utils import secure_filename
 
 from ..config import MEMES_DIR, get_active_pack_paths
-from ..storage import is_safe_category_segment
+from ..storage import detect_image_extension, is_safe_category_segment
+from .atomic_io import atomic_write_bytes
 from .pack_repository import PackRepository
 
 logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 class DuplicateEmojiError(ValueError):
@@ -147,9 +149,8 @@ def add_emoji_to_category(
         logger.error("文件名为空")
         raise ValueError("文件名为空")
 
-    # 确保类别目录存在
+    # 计算目标目录，但在验证上传内容前不创建它。
     category_path = _get_category_path(category, memes_dir)
-    category_path.mkdir(parents=True, exist_ok=True)
 
     # 保存文件
     filename = image_file.filename
@@ -167,6 +168,26 @@ def add_emoji_to_category(
     file_path = category_path / filename
 
     try:
+        image_file.stream.seek(0)
+        content = image_file.stream.read(MAX_UPLOAD_IMAGE_BYTES + 1)
+        if not content:
+            logger.error("文件内容为空")
+            raise ValueError("上传文件内容为空")
+        if len(content) > MAX_UPLOAD_IMAGE_BYTES:
+            raise ValueError("上传图片超过 10 MB 限制")
+
+        detected_extension = detect_image_extension(content)
+        allowed_extensions = {
+            ".jpg": {".jpg", ".jpeg"},
+            ".jpeg": {".jpg", ".jpeg"},
+        }
+        expected_extensions = allowed_extensions.get(
+            Path(filename).suffix.lower(), {Path(filename).suffix.lower()}
+        )
+        if detected_extension is None or detected_extension not in expected_extensions:
+            raise ValueError("上传文件不是有效图片或扩展名与内容不匹配")
+
+        category_path.mkdir(parents=True, exist_ok=True)
         # 检查目录是否可写
         if not os.access(category_path, os.W_OK):
             logger.error(f"没有权限写入目录: {category_path}")
@@ -178,13 +199,6 @@ def add_emoji_to_category(
         if free < 10 * 1024 * 1024:
             logger.error(f"磁盘空间不足: 只有 {free / 1024 / 1024:.2f}MB")
             raise OSError("磁盘空间不足")
-
-        # 直接以二进制方式读取和写入文件，避免FileStorage.save可能存在的问题
-        image_file.stream.seek(0)  # 确保从头开始读取
-        content = image_file.stream.read()
-        if not content:
-            logger.error("文件内容为空")
-            raise OSError("上传文件内容为空")
 
         content_hash = _calculate_file_hash(content)
         duplicate_path = _find_duplicate_image(category_path, content_hash)
@@ -202,9 +216,7 @@ def add_emoji_to_category(
         # 记录日志，包括绝对路径
         logger.info(f"准备保存文件到: {file_path.absolute()}")
 
-        # 以二进制写入模式保存文件
-        with open(file_path, "wb") as f:
-            f.write(content)
+        atomic_write_bytes(file_path, content)
 
         # 验证文件是否成功保存
         if not file_path.exists():
@@ -221,7 +233,7 @@ def add_emoji_to_category(
         return {"path": str(file_path), "filename": file_path.name}
 
     except Exception as e:
-        if isinstance(e, DuplicateEmojiError):
+        if isinstance(e, (DuplicateEmojiError, ValueError)):
             raise
         logger.error(f"保存文件时出错: {str(e)}", exc_info=True)
         # 如果文件已部分创建，尝试删除

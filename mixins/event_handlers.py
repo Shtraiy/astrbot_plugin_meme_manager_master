@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import io
 import json
 import os
 import random
 import re
-import ssl
 import tempfile
 import time
 import traceback
 from pathlib import Path
 from typing import Any
 
-import aiohttp
 from PIL import Image as PILImage
 
 from astrbot.api import logger
@@ -24,6 +21,7 @@ from astrbot.core.message.components import Image, Plain
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 
 from ..backend.models import IMAGE_EXTENSIONS
+from ..backend.image_download import download_image
 from ..backend.semantic_models import (
     REVIEW_CATEGORY,
     compact_semantic_query,
@@ -40,6 +38,9 @@ from ..backend.semantic_query import (
 )
 from ..backend.semantic_storage import invalidate_semantic_metadata
 from ..config import MEMES_DIR, PLUGIN_DATA_DIR
+
+
+MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 class EventHandlerMixin:
@@ -558,43 +559,36 @@ class EventHandlerMixin:
         try:
             os.makedirs(save_dir, exist_ok=True)
             saved_files = []
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
             for idx, img in enumerate(images, 1):
-                timestamp = int(time.time())
+                temp_path = None
                 try:
-                    if "multimedia.nt.qq.com.cn" in img.url:
-                        insecure_url = img.url.replace("https://", "http://", 1)
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(insecure_url) as resp:
-                                content = await resp.read()
-                    else:
-                        async with aiohttp.ClientSession(
-                            connector=aiohttp.TCPConnector(ssl=ssl_context)
-                        ) as session:
-                            async with session.get(img.url) as resp:
-                                content = await resp.read()
-                    try:
-                        with PILImage.open(io.BytesIO(content)) as pil_img:
-                            file_type = pil_img.format.lower()
-                    except Exception:
-                        file_type = "unknown"
-                    ext_mapping = {
-                        "jpeg": ".jpg",
-                        "png": ".png",
-                        "gif": ".gif",
-                        "webp": ".webp",
-                    }
-                    ext = ext_mapping.get(file_type, ".bin")
-                    filename = f"{timestamp}_{idx}{ext}"
+                    timeout_seconds = max(
+                        1,
+                        int(getattr(self.runtime_config, "download_timeout", 20) or 20),
+                    )
+                    downloaded = await download_image(
+                        str(getattr(img, "url", "") or ""),
+                        MAX_UPLOAD_IMAGE_BYTES,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    if downloaded is None:
+                        raise ValueError("下载内容不是受支持的图片或超过大小限制")
+                    filename = f"{time.time_ns()}_{idx}{downloaded.extension}"
                     save_path = save_dir / filename
-                    with open(save_path, "wb") as f:
-                        f.write(content)
+                    temp_path = save_dir / f".{filename}.{os.getpid()}.tmp"
+                    with open(temp_path, "wb") as file_obj:
+                        file_obj.write(downloaded.content)
+                    os.replace(temp_path, save_path)
                     saved_files.append(filename)
                 except Exception as e:
-                    logger.error(f"下载图片失败: {str(e)}")
-                    yield event.plain_result(f"文件 {img.url} 下载失败啦: {str(e)}")
+                    logger.error("下载图片失败: %s", e)
+                    yield event.plain_result(f"第 {idx} 个文件下载失败啦: {str(e)}")
+                finally:
+                    if temp_path and os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except OSError:
+                            pass
                     continue
             del self.upload_states[user_key]
             result_msg = [
@@ -701,12 +695,15 @@ class EventHandlerMixin:
         )
         selected_id = ""
         try:
+            provider_resolver = getattr(self, "_resolve_embedding_provider", None)
+            if not callable(provider_resolver):
+                return await self._resp_semantic_impl(event, response, text)
             result = await search_memes(
                 pack_context["pack_dir"],
                 PLUGIN_DATA_DIR,
                 pack_id,
                 query,
-                self._resolve_embedding_provider(pack_id),
+                provider_resolver(pack_id),
                 top_k=self.semantic_top_k,
                 min_score=self.semantic_min_score,
                 _verified_complete=pack_id == verified_pack_id,

@@ -56,6 +56,8 @@ MAX_ARCHIVE_FILE_COUNT = 20_000
 MAX_ARCHIVE_COMPRESSED_BYTES = 1024 * 1024 * 1024
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
 MAX_ARCHIVE_SINGLE_FILE_BYTES = 1024 * 1024 * 1024
+MAX_REMOTE_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_REMOTE_INDEX_BYTES = 8 * 1024 * 1024
 MIN_FREE_SPACE_RESERVE_BYTES = 512 * 1024 * 1024
 ARCHIVE_JSON_SIZE_LIMITS = {
     "manifest.json": 4 * 1024 * 1024,
@@ -64,6 +66,39 @@ ARCHIVE_JSON_SIZE_LIMITS = {
     "semantic_metadata.json": 256 * 1024 * 1024,
     "index_manifest.json": 256 * 1024 * 1024,
 }
+
+
+def _resolve_pack_directory(
+    pack_id: str,
+    context: str = "表情包",
+    *,
+    require_exists: bool = False,
+) -> tuple[str, Path]:
+    """Validate a pack ID and keep its resolved directory inside PACKS_DIR."""
+    normalized = validate_pack_id(pack_id, context)
+    packs_root = PACKS_DIR.resolve(strict=False)
+    pack_dir = (PACKS_DIR / normalized).resolve(strict=False)
+    try:
+        relative = pack_dir.relative_to(packs_root)
+    except ValueError as exc:
+        raise ValueError(f"{context}路径超出资源包目录范围") from exc
+    if len(relative.parts) != 1 or relative.parts[0] != normalized:
+        raise ValueError(f"{context}路径必须是资源包目录的直接子目录")
+    if require_exists and not pack_dir.is_dir():
+        raise FileNotFoundError(f"表情包 {normalized} 不存在")
+    return normalized, pack_dir
+
+
+def _resolve_backup_output_dir(output_dir: str | None = None) -> Path:
+    """Keep user-selected backup output inside the configured backup root."""
+    backup_root = BACKUP_DIR.resolve(strict=False)
+    requested = Path(output_dir).expanduser() if output_dir else BACKUP_DIR
+    target_dir = requested.resolve(strict=False)
+    try:
+        target_dir.relative_to(backup_root)
+    except ValueError as exc:
+        raise ValueError("备份输出目录必须位于插件 backup 目录内") from exc
+    return target_dir
 
 
 def _build_accelerated_url(raw_url: str, github_accelerator_url: str) -> str:
@@ -88,7 +123,9 @@ def _http_get_with_optional_acceleration(
 
     if request_url and request_url != raw_url:
         try:
-            accelerated_response = requests.get(request_url, timeout=timeout)
+            accelerated_response = requests.get(
+                request_url, timeout=timeout, stream=True
+            )
             if accelerated_response.status_code == 200:
                 return accelerated_response
             last_error = ValueError(
@@ -99,12 +136,73 @@ def _http_get_with_optional_acceleration(
             last_error = exc
 
     try:
-        native_response = requests.get(raw_url, timeout=timeout)
+        native_response = requests.get(raw_url, timeout=timeout, stream=True)
         return native_response
     except Exception as exc:
         if last_error is not None:
             raise ValueError(f"加速与原生请求均失败: {last_error}; {exc}") from exc
         raise
+
+
+def _response_length(response: requests.Response) -> int | None:
+    raw_length = response.headers.get("Content-Length")
+    if not raw_length:
+        return None
+    try:
+        return int(raw_length)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("远程响应的 Content-Length 无效") from exc
+
+
+def _read_bounded_response(response: requests.Response, limit: int) -> bytes:
+    declared_length = _response_length(response)
+    if declared_length is not None and declared_length > limit:
+        response.close()
+        raise ValueError("远程响应超过大小限制")
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > limit:
+                raise ValueError("远程响应超过大小限制")
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        response.close()
+
+
+def _write_bounded_response(
+    response: requests.Response, target_path: Path, limit: int
+) -> None:
+    declared_length = _response_length(response)
+    if declared_length is not None and declared_length > limit:
+        response.close()
+        raise ValueError("远程压缩包超过大小限制")
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{target_path.name}.", suffix=".tmp", dir=target_path.parent
+    )
+    total = 0
+    try:
+        with os.fdopen(fd, "wb") as file_obj:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > limit:
+                    raise ValueError("远程压缩包超过大小限制")
+                file_obj.write(chunk)
+            file_obj.flush()
+            os.fsync(file_obj.fileno())
+        os.replace(temp_name, target_path)
+    finally:
+        response.close()
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
 def _load_json(path: Path, default):
@@ -471,13 +569,7 @@ def list_installed_packs() -> list[dict]:
 
 
 def get_pack_detail(pack_id: str) -> dict:
-    pack_id = str(pack_id or "").strip()
-    if not pack_id:
-        raise ValueError("pack_id 不能为空")
-
-    pack_dir = PACKS_DIR / pack_id
-    if not pack_dir.is_dir():
-        raise FileNotFoundError(f"表情包 {pack_id} 不存在")
+    pack_id, pack_dir = _resolve_pack_directory(pack_id, require_exists=True)
 
     manifest = _load_manifest(pack_id)
     memes_dir = pack_dir / "memes"
@@ -513,11 +605,7 @@ def get_pack_detail(pack_id: str) -> dict:
 
 
 def set_default_pack(pack_id: str) -> dict:
-    pack_id = str(pack_id or "").strip()
-    if not pack_id:
-        raise ValueError("pack_id 不能为空")
-    if not (PACKS_DIR / pack_id).is_dir():
-        raise FileNotFoundError(f"表情包 {pack_id} 不存在")
+    pack_id, _pack_dir = _resolve_pack_directory(pack_id, require_exists=True)
 
     selection_rules = _load_selection_rules()
     rules = [
@@ -1185,7 +1273,7 @@ def export_pack_archive(
     export_mode: str = "share",
     operation_guard: PackOperationGuard | None = None,
 ) -> dict:
-    pack_id = validate_pack_id(pack_id, "表情包")
+    pack_id, pack_dir = _resolve_pack_directory(pack_id, require_exists=True)
     export_mode = str(export_mode or "share").strip().lower()
     # Keep the public export entry point compatible, but no longer package
     # semantic metadata or FAISS indexes in either export mode.
@@ -1194,14 +1282,11 @@ def export_pack_archive(
     if export_mode not in PACK_EXPORT_MODES:
         raise ValueError("导出类型仅支持 share 或 backup")
 
-    pack_dir = PACKS_DIR / pack_id
-    if not pack_dir.is_dir():
-        raise FileNotFoundError(f"表情包 {pack_id} 不存在")
     _require_regular_tree(pack_dir, "导出表情包")
     if operation_guard:
         operation_guard(pack_id, "导出资源包")
 
-    target_dir = Path(output_dir).expanduser().resolve() if output_dir else BACKUP_DIR
+    target_dir = _resolve_backup_output_dir(output_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     archive_base = target_dir / f"{pack_id}_{export_mode}_{timestamp}"
@@ -1300,15 +1385,9 @@ def export_pack_archive(
 def uninstall_pack(
     pack_id: str, operation_guard: PackOperationGuard | None = None
 ) -> dict:
-    pack_id = str(pack_id or "").strip()
-    if not pack_id:
-        raise ValueError("pack_id 不能为空")
+    pack_id, pack_dir = _resolve_pack_directory(pack_id, require_exists=True)
 
     previous_default_pack_id = _current_default_pack_id()
-
-    pack_dir = PACKS_DIR / pack_id
-    if not pack_dir.is_dir():
-        raise FileNotFoundError(f"表情包 {pack_id} 不存在")
     if operation_guard:
         operation_guard(pack_id, "卸载资源包")
 
@@ -1419,8 +1498,7 @@ def _download_github_archive(
     )
     if response.status_code != 200:
         raise ValueError(f"下载 GitHub 压缩包失败，状态码: {response.status_code}")
-    target_zip_path.parent.mkdir(parents=True, exist_ok=True)
-    target_zip_path.write_bytes(response.content)
+    _write_bounded_response(response, target_zip_path, MAX_REMOTE_ARCHIVE_BYTES)
 
 
 def fetch_and_cache_community_index(
@@ -1440,7 +1518,9 @@ def fetch_and_cache_community_index(
         raise ValueError(f"下载社区索引失败，状态码: {response.status_code}")
 
     try:
-        index_data = response.json()
+        index_data = json.loads(
+            _read_bounded_response(response, MAX_REMOTE_INDEX_BYTES).decode("utf-8-sig")
+        )
     except Exception as exc:
         raise ValueError(f"社区索引不是有效 JSON: {exc}") from exc
 
@@ -1683,7 +1763,7 @@ def export_runtime_backup(
     output_dir: str | None = None,
     operation_guard: PackOperationGuard | None = None,
 ) -> dict:
-    target_dir = Path(output_dir).expanduser().resolve() if output_dir else BACKUP_DIR
+    target_dir = _resolve_backup_output_dir(output_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
 

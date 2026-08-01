@@ -59,6 +59,70 @@ from meme_manager_master.mixins import web_api  # noqa: E402
 
 
 class WebApiBehaviorTests(unittest.TestCase):
+    def test_bound_webui_response_status_helper_accepts_response(self):
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        self.assertEqual(instance._get_webui_response_status(({}, 201)), 201)
+
+    def test_bound_upload_helper_supports_sync_and_async_save(self):
+        class SyncUpload:
+            def save(self, destination):
+                Path(destination).write_bytes(b"sync")
+
+        class AsyncUpload:
+            async def save(self, destination):
+                Path(destination).write_bytes(b"async")
+
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sync_path = Path(temp_dir) / "sync.zip"
+            async_path = Path(temp_dir) / "async.zip"
+            asyncio_run(instance._save_uploaded_file(SyncUpload(), sync_path))
+            asyncio_run(instance._save_uploaded_file(AsyncUpload(), async_path))
+            self.assertEqual(sync_path.read_bytes(), b"sync")
+            self.assertEqual(async_path.read_bytes(), b"async")
+
+    def test_bound_pack_import_session_helper_validates_token(self):
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(web_api, "TEMP_DIR", Path(temp_dir)):
+                archive_path, metadata_path = instance._pack_import_session_paths(
+                    "a" * 32
+                )
+                self.assertEqual(archive_path.name, "".join(["a"] * 32) + ".zip")
+                self.assertEqual(metadata_path.suffix, ".json")
+                with self.assertRaises(ValueError):
+                    instance._pack_import_session_paths("invalid")
+
+    def test_invalid_webui_upload_returns_bad_request(self):
+        from quart import request
+
+        class AwaitableFiles(dict):
+            def __await__(self):
+                async def resolve():
+                    return self
+
+                return resolve().__await__()
+
+        request.files = AwaitableFiles(
+            {"file": types.SimpleNamespace(filename="fake.png")}
+        )
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.category_manager = types.SimpleNamespace(sync_with_filesystem=lambda: None)
+
+        async def run_mutation(_operation, mutate):
+            return mutate()
+
+        instance._run_default_pack_mutation = run_mutation
+        original = emoji_api.add_emoji_to_category
+        emoji_api.add_emoji_to_category = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("上传文件不是有效图片")
+        )
+        try:
+            _payload, status = asyncio_run(instance._api_add_emoji("happy"))
+        finally:
+            emoji_api.add_emoji_to_category = original
+        self.assertEqual(status, 400)
+
     def test_get_emojis_without_managed_pack_does_not_raise_binding_error(self):
         from quart import request
 

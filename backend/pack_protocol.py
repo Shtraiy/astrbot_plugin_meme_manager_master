@@ -1,9 +1,15 @@
+import re
 from pathlib import Path
 
 PACK_TRANSFER_FORMAT = "astrbot-meme-pack"
 PACK_TRANSFER_VERSION = 2
 PACK_TRANSFER_MANIFEST = "meme_pack_export.json"
 PACK_EXPORT_MODES = {"share", "backup"}
+_GITHUB_REPO_RE = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,38})/[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$"
+)
+_GITHUB_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+_GITHUB_SUBPATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 
 
 def _require_str(payload: dict, key: str, context: str) -> str:
@@ -17,6 +23,8 @@ def _ensure_pack_id(pack_id: str, context: str) -> str:
     pack_id = str(pack_id or "").strip()
     if not pack_id:
         raise ValueError(f"{context} 的 id 不能为空")
+    if pack_id in {".", ".."}:
+        raise ValueError(f"{context} 的 id 不能是路径保留名")
     if len(pack_id) < 2 or len(pack_id) > 64:
         raise ValueError(f"{context} 的 id 长度非法")
     allowed = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
@@ -73,12 +81,25 @@ def validate_source_descriptor(source: dict, context: str = "source") -> dict:
         raise ValueError(f"{context}.type 目前仅支持 github")
 
     repo = _require_str(source, "repo", context)
-    if "/" not in repo:
+    if not _GITHUB_REPO_RE.fullmatch(repo):
         raise ValueError(f"{context}.repo 格式应为 owner/repo")
 
     ref = _require_str(source, "ref", context)
+    if (
+        not _GITHUB_REF_RE.fullmatch(ref)
+        or any(part in {".", ".."} for part in ref.split("/"))
+        or "//" in ref
+    ):
+        raise ValueError(f"{context}.ref 非法")
+
     subpath = _require_str(source, "subpath", context).strip("/")
-    if ".." in Path(subpath).parts or "\\" in subpath:
+    if (
+        not subpath
+        or not _GITHUB_SUBPATH_RE.fullmatch(subpath)
+        or any(part in {".", ".."} for part in Path(subpath).parts)
+        or "\\" in subpath
+        or "//" in subpath
+    ):
         raise ValueError(f"{context}.subpath 非法")
 
     return {

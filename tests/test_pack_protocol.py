@@ -28,6 +28,19 @@ class PackProtocolTests(unittest.TestCase):
                 {"type": "github", "repo": "owner/repo", "ref": "main", "subpath": "../pack"}
             )
 
+    def test_source_descriptor_rejects_unsafe_repo_and_ref(self):
+        invalid_sources = [
+            {"type": "github", "repo": "https://github.com/owner/repo", "ref": "main", "subpath": "pack"},
+            {"type": "github", "repo": "owner/repo/extra", "ref": "main", "subpath": "pack"},
+            {"type": "github", "repo": "owner/repo", "ref": "../main", "subpath": "pack"},
+            {"type": "github", "repo": "owner/repo", "ref": "main\nX", "subpath": "pack"},
+            {"type": "github", "repo": "owner/repo", "ref": "main", "subpath": "./pack"},
+        ]
+        for source in invalid_sources:
+            with self.subTest(source=source):
+                with self.assertRaises(ValueError):
+                    validate_source_descriptor(source)
+
     def test_pack_manifest_normalizes_category_descriptions(self):
         result = validate_pack_manifest(
             {

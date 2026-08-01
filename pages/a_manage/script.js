@@ -470,42 +470,6 @@ async function initApp() {
   window.MemeManagerUI.pack.updateExportModeAppearance();
   await window.MemeManagerUI.pack.loadManagePackSwitcher();
   await window.MemeManagerUI.emoji.fetchEmojis();
-  window.MemeManagerUI.state.semanticReviewStats?.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-review-filter]");
-    if (!button) return;
-    window.MemeManagerUI.state.activeSemanticReviewFilter = String(button.dataset.reviewFilter || "all");
-    window.MemeManagerUI.emoji.updateSemanticReviewToolbar();
-    window.MemeManagerUI.emoji.displayCategories(window.MemeManagerUI.state.latestEmojiData, window.MemeManagerUI.state.latestTagDescriptions);
-    window.MemeManagerUI.emoji.updateSidebar(window.MemeManagerUI.state.latestEmojiData, window.MemeManagerUI.state.latestTagDescriptions);
-  });
-  window.MemeManagerUI.state.imagePreviewCategoryConfirmBtn?.addEventListener("click", () => {
-    void window.MemeManagerUI.emoji.confirmCurrentImageCategory();
-  });
-  window.MemeManagerUI.state.imagePreviewEditBtn?.addEventListener("click", () => {
-    window.MemeManagerUI.emoji.setImageSemanticEditing(true);
-  });
-  window.MemeManagerUI.state.imagePreviewReviewEditBtn?.addEventListener("click", () => {
-    window.MemeManagerUI.emoji.setImageSemanticEditing(true);
-  });
-  window.MemeManagerUI.state.imagePreviewEditCancelBtn?.addEventListener("click", () => {
-    window.MemeManagerUI.emoji.setImageSemanticEditing(false);
-  });
-  window.MemeManagerUI.state.imagePreviewEditForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void window.MemeManagerUI.emoji.saveCurrentImageSemantic({ updateVector: false });
-  });
-  window.MemeManagerUI.state.imagePreviewSaveVectorBtn?.addEventListener("click", () => {
-    void window.MemeManagerUI.emoji.saveCurrentImageSemantic({ updateVector: true });
-  });
-  window.MemeManagerUI.state.imagePreviewReviewRewriteBtn?.addEventListener("click", () => {
-    void window.MemeManagerUI.emoji.requestImageSemanticRevision();
-  });
-  window.MemeManagerUI.state.imagePreviewTargetCategory?.addEventListener("change", () => {
-    window.MemeManagerUI.emoji.updateImageSemanticMoveChoice();
-  });
-  window.MemeManagerUI.state.imagePreviewRestoreAutoBtn?.addEventListener("click", () => {
-    void window.MemeManagerUI.emoji.restoreCurrentImageAutoSemantic();
-  });
   window.MemeManagerUI.state.switchManagePackBtn?.addEventListener("click", () => {
     void window.MemeManagerUI.pack.switchManagePack();
   });

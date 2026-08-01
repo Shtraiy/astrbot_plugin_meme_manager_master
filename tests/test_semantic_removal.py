@@ -32,6 +32,10 @@ class SemanticRemovalTests(unittest.TestCase):
         self.assertNotIn("SemanticTaskManager", source)
         self.assertNotIn("VectorSemanticService", source)
 
+    def test_retired_semantic_path_has_no_undefined_provider_call(self):
+        source = (ROOT / "mixins" / "event_handlers.py").read_text(encoding="utf-8")
+        self.assertNotIn("self._resolve_embedding_provider(", source)
+
     def test_semantic_routes_are_not_registered(self):
         paths = {spec.path for spec in enabled_route_specs({"core", "catalog_index"})}
         self.assertFalse(
@@ -42,7 +46,12 @@ class SemanticRemovalTests(unittest.TestCase):
         html = (ROOT / "pages" / "a_manage" / "index.html").read_text(encoding="utf-8")
         self.assertNotIn("pack-semantic-status", html)
         self.assertNotIn("rebuild-pack-vectors-btn", html)
-        self.assertIn("Image semanticization controls were removed", html)
+
+    def test_manage_page_has_no_stale_semantic_preview_markup(self):
+        html = (ROOT / "pages" / "a_manage" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("image-preview-semantic", html)
+        self.assertNotIn("image-preview-edit-form", html)
+        self.assertNotIn("image-preview-save-vector-btn", html)
 
     def test_manage_scripts_do_not_call_semantic_endpoints(self):
         paths = ("emoji.js", "pack.js", "script.js")
@@ -51,6 +60,15 @@ class SemanticRemovalTests(unittest.TestCase):
             for path in paths
         )
         self.assertNotIn("semantic/", source)
+
+    def test_manage_scripts_have_no_removed_semantic_placeholders(self):
+        source = "\n".join(
+            (ROOT / "pages" / "a_manage" / path).read_text(encoding="utf-8")
+            for path in ("emoji.js", "pack.js", "script.js")
+        )
+        self.assertNotIn("功能已移除", source)
+        self.assertNotIn('apiGet("removed"', source)
+        self.assertNotIn('apiPost("removed"', source)
 
 
 if __name__ == "__main__":

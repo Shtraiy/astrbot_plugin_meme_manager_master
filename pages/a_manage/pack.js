@@ -134,321 +134,6 @@ window.MemeManagerUI.pack.downloadCurrentPack = async function () {
       window.MemeManagerUI.pack.updateExportModeAppearance();
     }
   }
-window.MemeManagerUI.pack.packSupportsVectorStatus = function (packId) {
-    const pack = window.MemeManagerUI.state.managePacksById.get(String(packId || "").trim());
-    return pack?.supports_vector_rebuild === true;
-  }
-window.MemeManagerUI.pack.hideManagePackVectorStatus = function () {
-    window.MemeManagerUI.state.packVectorStatus?.classList.add("hidden");
-    window.MemeManagerUI.state.rebuildPackVectorsBtn?.classList.add("hidden");
-    window.MemeManagerUI.state.latestManagePackVectorStatus = null;
-    window.MemeManagerUI.state.latestManagePackVectorStatusId = "";
-  }
-window.MemeManagerUI.pack.renderManagePackVectorStatus = function (packId, status, state = "ready") {
-    const normalizedPackId = String(packId || "").trim();
-    if (!normalizedPackId || !window.MemeManagerUI.pack.packSupportsVectorStatus(normalizedPackId)) {
-      window.MemeManagerUI.pack.hideManagePackVectorStatus();
-      return;
-    }
-
-    window.MemeManagerUI.state.packVectorStatus?.classList.remove(
-      "hidden",
-      "vector-ready",
-      "vector-rebuild",
-      "vector-unconfigured",
-      "vector-pending",
-      "vector-loading",
-    );
-    window.MemeManagerUI.state.rebuildPackVectorsBtn?.classList.remove("hidden");
-
-    if (state === "loading") {
-      window.MemeManagerUI.state.packVectorStatus?.classList.add("vector-loading");
-      if (window.MemeManagerUI.state.packVectorStatusText) {
-        window.MemeManagerUI.state.packVectorStatusText.textContent = "正在读取向量维度…";
-      }
-      if (window.MemeManagerUI.state.rebuildPackVectorsBtn) {
-        window.MemeManagerUI.state.rebuildPackVectorsBtn.disabled = true;
-        window.MemeManagerUI.state.rebuildPackVectorsBtn.innerHTML =
-          '<i class="fas fa-spinner fa-spin icon"></i>读取中';
-      }
-      return;
-    }
-
-    if (state === "error" || !status) {
-      window.MemeManagerUI.state.packVectorStatus?.classList.add("vector-pending");
-      if (window.MemeManagerUI.state.packVectorStatusText) {
-        window.MemeManagerUI.state.packVectorStatusText.textContent = "向量状态读取失败";
-      }
-      if (window.MemeManagerUI.state.packVectorStatus) {
-        window.MemeManagerUI.state.packVectorStatus.title = "暂时无法读取当前包的向量状态，请稍后重试。";
-      }
-      if (window.MemeManagerUI.state.rebuildPackVectorsBtn) {
-        window.MemeManagerUI.state.rebuildPackVectorsBtn.disabled = true;
-        window.MemeManagerUI.state.rebuildPackVectorsBtn.innerHTML =
-          '<i class="fas fa-arrows-rotate icon"></i>状态不可用';
-      }
-      return;
-    }
-
-    const providerReady = Boolean(status.embedding_provider_ready);
-    const captionComplete = Boolean(status.semantic_caption_complete);
-    const indexReady = Boolean(status.index_ready);
-    const rebuildRequired = Boolean(status.dimension_rebuild_required);
-    const configuredDimension = Number(
-      status.embedding_configured_dimension || 0,
-    );
-    const indexDimension = Number(status.index_embedding_dimension || 0);
-    const taskStatus = String(status.task_status || "idle");
-    const taskBusy = ["running", "paused"].includes(taskStatus);
-    const currentDimensionLabel = configuredDimension
-      ? `${configuredDimension} 维`
-      : "维度待检测";
-    const modelLabel = [
-      String(status.embedding_provider_id || "").trim(),
-      String(status.embedding_model || "").trim(),
-    ]
-      .filter(Boolean)
-      .join(" / ");
-
-    if (!providerReady) {
-      window.MemeManagerUI.state.packVectorStatus?.classList.add("vector-unconfigured");
-      if (window.MemeManagerUI.state.packVectorStatusText) {
-        window.MemeManagerUI.state.packVectorStatusText.textContent = indexDimension
-          ? `索引 ${indexDimension} 维 · 未配置向量模型`
-          : "未配置向量模型";
-      }
-      if (window.MemeManagerUI.state.packVectorStatus) {
-        window.MemeManagerUI.state.packVectorStatus.title =
-          "当前没有可用的向量模型。已有语义描述不会丢失，配置模型后即可在此重建。";
-      }
-      if (window.MemeManagerUI.state.rebuildPackVectorsBtn) {
-        window.MemeManagerUI.state.rebuildPackVectorsBtn.disabled = true;
-        window.MemeManagerUI.state.rebuildPackVectorsBtn.title =
-          "请先在插件配置中选择并启用向量模型。";
-        window.MemeManagerUI.state.rebuildPackVectorsBtn.innerHTML =
-          '<i class="fas fa-circle-exclamation icon"></i>先配置向量模型';
-      }
-      return;
-    }
-
-    if (taskBusy) {
-      window.MemeManagerUI.state.packVectorStatus?.classList.add("vector-pending");
-      if (window.MemeManagerUI.state.packVectorStatusText) {
-        window.MemeManagerUI.state.packVectorStatusText.textContent =
-          taskStatus === "paused"
-            ? `当前 ${currentDimensionLabel} · 任务已暂停`
-            : `当前 ${currentDimensionLabel} · 正在处理`;
-      }
-    } else if (!captionComplete) {
-      window.MemeManagerUI.state.packVectorStatus?.classList.add("vector-pending");
-      if (window.MemeManagerUI.state.packVectorStatusText) {
-        window.MemeManagerUI.state.packVectorStatusText.textContent =
-          `当前 ${currentDimensionLabel} · 描述未完成`;
-      }
-    } else if (indexReady && !rebuildRequired) {
-      window.MemeManagerUI.state.packVectorStatus?.classList.add("vector-ready");
-      if (window.MemeManagerUI.state.packVectorStatusText) {
-        window.MemeManagerUI.state.packVectorStatusText.textContent =
-          `向量 ${indexDimension || configuredDimension || "未知"} 维`;
-      }
-    } else {
-      window.MemeManagerUI.state.packVectorStatus?.classList.add("vector-rebuild");
-      if (window.MemeManagerUI.state.packVectorStatusText) {
-        const oldIndexHint =
-          indexDimension && indexDimension !== configuredDimension
-            ? ` · 原索引 ${indexDimension} 维`
-            : "";
-        window.MemeManagerUI.state.packVectorStatusText.textContent =
-          `当前 ${currentDimensionLabel}${oldIndexHint} · 待重建`;
-      }
-    }
-
-    if (window.MemeManagerUI.state.packVectorStatus) {
-      const indexHint = indexDimension
-        ? `包内索引为 ${indexDimension} 维。`
-        : "当前包还没有可用的本机向量索引。";
-      window.MemeManagerUI.state.packVectorStatus.title =
-        `${modelLabel ? `当前模型：${modelLabel}；` : ""}` +
-        `模型维度：${currentDimensionLabel}；${indexHint}`;
-    }
-    if (window.MemeManagerUI.state.rebuildPackVectorsBtn) {
-      window.MemeManagerUI.state.rebuildPackVectorsBtn.disabled = taskBusy || !captionComplete;
-      window.MemeManagerUI.state.rebuildPackVectorsBtn.title = taskBusy
-        ? "语义任务进行中，结束后才能重建向量。"
-        : !captionComplete
-          ? "请先完成当前包的全部语义描述。"
-          : "使用当前向量模型重新建立本机向量索引。";
-      window.MemeManagerUI.state.rebuildPackVectorsBtn.innerHTML = taskBusy
-        ? '<i class="fas fa-spinner fa-spin icon"></i>正在处理'
-        : !captionComplete
-          ? '<i class="fas fa-clock icon"></i>等待语义描述'
-          : `<i class="fas fa-arrows-rotate icon"></i>按${
-              configuredDimension ? ` ${configuredDimension} 维` : "当前维度"
-            }重建`;
-    }
-  }
-window.MemeManagerUI.pack.refreshManagePackVectorStatus = async function (packId = window.MemeManagerUI.state.activeManagePackId) {
-    return null;
-    const normalizedPackId = String(packId || "").trim();
-    const requestId = ++window.MemeManagerUI.state.managePackVectorStatusRequestId;
-    if (!normalizedPackId || !window.MemeManagerUI.pack.packSupportsVectorStatus(normalizedPackId)) {
-      window.MemeManagerUI.pack.hideManagePackVectorStatus();
-      return null;
-    }
-
-    window.MemeManagerUI.pack.renderManagePackVectorStatus(normalizedPackId, null, "loading");
-    try {
-      throw new Error("向量语义功能已移除");
-      const status = await window.MemeManagerUI.api.apiGet("removed", {
-        pack_id: normalizedPackId,
-      });
-      if (requestId !== window.MemeManagerUI.state.managePackVectorStatusRequestId) {
-        return null;
-      }
-      window.MemeManagerUI.state.latestManagePackVectorStatus = status;
-      window.MemeManagerUI.state.latestManagePackVectorStatusId = normalizedPackId;
-      window.MemeManagerUI.pack.renderManagePackVectorStatus(normalizedPackId, status);
-      return status;
-    } catch (error) {
-      if (requestId === window.MemeManagerUI.state.managePackVectorStatusRequestId) {
-        window.MemeManagerUI.state.latestManagePackVectorStatus = null;
-        window.MemeManagerUI.state.latestManagePackVectorStatusId = "";
-        window.MemeManagerUI.pack.renderManagePackVectorStatus(normalizedPackId, null, "error");
-      }
-      console.warn("读取当前图包向量状态失败:", error);
-      return null;
-    }
-  }
-window.MemeManagerUI.pack.performVectorRebuild = async function (packId, knownStatus = null) {
-    const normalizedPackId = String(packId || "").trim();
-    if (!normalizedPackId || !window.MemeManagerUI.pack.packSupportsVectorStatus(normalizedPackId)) {
-      window.MemeManagerUI.dialogs.showToast("旧版表情包不支持向量重建。", "warning", "无法重建");
-      return false;
-    }
-    const status =
-      knownStatus ||
-      (window.MemeManagerUI.state.latestManagePackVectorStatusId === normalizedPackId
-        ? window.MemeManagerUI.state.latestManagePackVectorStatus
-        : null) ||
-      (await window.MemeManagerUI.pack.refreshManagePackVectorStatus(normalizedPackId));
-    if (!status) {
-      window.MemeManagerUI.dialogs.showToast("暂时无法读取向量状态，请稍后重试。", "error", "无法重建");
-      return false;
-    }
-    if (!status.embedding_provider_ready) {
-      window.MemeManagerUI.dialogs.showToast(
-        "请先在插件配置中选择并启用向量模型。",
-        "warning",
-        "未配置向量模型",
-      );
-      return false;
-    }
-    if (!status.semantic_caption_complete) {
-      window.MemeManagerUI.dialogs.showToast("请先完成当前包的全部语义描述。", "warning", "暂不能重建");
-      return false;
-    }
-    if (["running", "paused"].includes(String(status.task_status || ""))) {
-      window.MemeManagerUI.dialogs.showToast("当前语义任务尚未结束。", "warning", "暂不能重建");
-      return false;
-    }
-
-    window.MemeManagerUI.emoji.setButtonBusy(window.MemeManagerUI.state.rebuildPackVectorsBtn, "正在重建…");
-    try {
-      window.MemeManagerUI.dialogs.showToast("正在按当前向量模型建立索引…", "info", "开始重建");
-      throw new Error("向量语义功能已移除");
-      const result = await window.MemeManagerUI.api.apiPost("removed", {
-        pack_id: normalizedPackId,
-        force: true,
-      });
-      await window.MemeManagerUI.pack.refreshManagePackSummaries();
-      window.MemeManagerUI.dialogs.showToast(result?.message || "向量索引已建立。", "success", "重建完成");
-      return true;
-    } catch (error) {
-      window.MemeManagerUI.dialogs.showToast(
-        error?.message || String(error),
-        "error",
-        "向量重建失败",
-        5000,
-      );
-      return false;
-    } finally {
-      window.MemeManagerUI.emoji.restoreButton(window.MemeManagerUI.state.rebuildPackVectorsBtn);
-      await window.MemeManagerUI.pack.refreshManagePackVectorStatus(normalizedPackId);
-    }
-  }
-window.MemeManagerUI.pack.confirmAndRebuildVector = async function (
-    packId,
-    status,
-    { importedShare = false, manual = false } = {},
-  ) {
-    const normalizedPackId = String(packId || "").trim();
-    const pack = window.MemeManagerUI.state.managePacksById.get(normalizedPackId);
-    const packName = String(pack?.name || normalizedPackId);
-    const modelLabel = [
-      String(status?.embedding_model || "").trim(),
-      Number(status?.embedding_configured_dimension || 0)
-        ? `${Number(status.embedding_configured_dimension)} 维`
-        : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    const alreadyReady = Boolean(status?.index_ready);
-    const confirmed = await window.MemeManagerUI.dialogs.showConfirm({
-      title: importedShare
-        ? "分享包需要重建向量"
-        : alreadyReady && manual
-          ? "重新建立当前包向量？"
-          : "当前表情包需要重建向量",
-      description:
-        `「${packName}」${
-          importedShare
-            ? "来自无向量分享版，需要在本机补建向量。"
-            : alreadyReady && manual
-              ? "已有可用向量，重建后会替换当前本机索引。"
-              : "尚未按当前向量模型建立可用的本机索引。"
-        }` +
-        `本次只会调用向量模型${modelLabel ? `（${modelLabel}）` : ""}，` +
-        "不会重新调用视觉模型，也不会覆盖现有语义描述。是否继续？",
-      confirmLabel: "立即重建向量",
-    });
-    if (!confirmed) {
-      if (!manual) {
-        window.MemeManagerUI.dialogs.showToast(
-          "语义描述已保留，可稍后点击首页的重建按钮。",
-          "warning",
-          "稍后重建",
-        );
-      }
-      return false;
-    }
-    return window.MemeManagerUI.pack.performVectorRebuild(normalizedPackId, status);
-  }
-window.MemeManagerUI.pack.maybeOfferVectorRebuild = async function (packId, guidance = null) {
-    const normalizedPackId = String(packId || "").trim();
-    if (!normalizedPackId || !window.MemeManagerUI.pack.packSupportsVectorStatus(normalizedPackId)) {
-      return false;
-    }
-    const status =
-      window.MemeManagerUI.state.latestManagePackVectorStatusId === normalizedPackId
-        ? window.MemeManagerUI.state.latestManagePackVectorStatus
-        : await window.MemeManagerUI.pack.refreshManagePackVectorStatus(normalizedPackId);
-    if (!status) {
-      return false;
-    }
-    const rebuildRequired = Boolean(
-      status.semantic_enabled &&
-        status.embedding_provider_ready &&
-        status.semantic_caption_complete &&
-        status.dimension_rebuild_required &&
-        !["running", "paused"].includes(String(status.task_status || "")),
-    );
-    if (!rebuildRequired) {
-      return false;
-    }
-    return window.MemeManagerUI.pack.confirmAndRebuildVector(normalizedPackId, status, {
-      importedShare: String(guidance?.export_mode || "") === "share",
-    });
-  }
 window.MemeManagerUI.pack.resetPackImportPreview = function ({ keepResult = false } = {}) {
     window.MemeManagerUI.state.pendingPackImportToken = "";
     if (window.MemeManagerUI.state.packImportFile) window.MemeManagerUI.state.packImportFile.value = "";
@@ -579,7 +264,6 @@ window.MemeManagerUI.pack.confirmPackImport = async function () {
       await window.MemeManagerUI.emoji.refreshUi({ emojis: true, syncStatus: true });
       await window.MemeManagerUI.pack.refreshPackExportCapability(importedPackId);
       window.MemeManagerUI.dialogs.showToast(`表情包 ${importedPackId} 已导入。`, "success", "导入成功");
-      await window.MemeManagerUI.pack.maybeOfferVectorRebuild(importedPackId, data);
     } catch (error) {
       window.MemeManagerUI.pack.setPackTransferResult(
         window.MemeManagerUI.state.packImportResult,
@@ -590,60 +274,6 @@ window.MemeManagerUI.pack.confirmPackImport = async function () {
     } finally {
       window.MemeManagerUI.emoji.restoreButton(window.MemeManagerUI.state.packImportConfirmBtn);
     }
-  }
-window.MemeManagerUI.pack.updateManagePackSemanticAppearance = function (packId) {
-    const normalizedPackId = String(packId || "").trim();
-    const pack = window.MemeManagerUI.state.managePacksById.get(normalizedPackId);
-    const content = document.getElementById("content");
-    const knownStatuses = ["none", "partial", "complete"];
-    const status = knownStatuses.includes(String(pack?.semantic_status || ""))
-      ? String(pack.semantic_status)
-      : "none";
-
-    knownStatuses.forEach((item) => {
-      window.MemeManagerUI.state.packSemanticStatus?.classList.toggle(`semantic-${item}`, item === status);
-      content?.classList.toggle(`pack-semantic-${item}`, item === status);
-    });
-
-    if (!pack || !window.MemeManagerUI.state.packSemanticStatusText) {
-      window.MemeManagerUI.emoji.applySemanticReviewData({ available: false });
-      if (window.MemeManagerUI.state.packSemanticStatusText) {
-        window.MemeManagerUI.state.packSemanticStatusText.textContent = "未语义化";
-      }
-      return;
-    }
-
-    const imageCount = Number(pack.image_count || 0);
-    const completedCount = Number(pack.semantic_caption_done || 0);
-    const semanticTotal = Number(pack.semantic_caption_total || 0);
-    const failedCount = Number(pack.semantic_caption_failed || 0);
-    if (status === "complete") {
-      window.MemeManagerUI.state.packSemanticStatusText.textContent = `语义已完成 · ${imageCount} 张`;
-      window.MemeManagerUI.state.packSemanticStatus.title =
-        semanticTotal && semanticTotal !== imageCount
-          ? `${imageCount} 张图片中有重复内容，共复用 ${semanticTotal} 条语义描述。`
-          : `当前图包的 ${imageCount} 张图片均已有语义描述。`;
-      return;
-    }
-    if (status === "partial") {
-      const failureHint = failedCount > 0 ? `，${failedCount} 条失败` : "";
-      window.MemeManagerUI.state.packSemanticStatusText.textContent = pack.semantic_files_changed
-        ? `语义待更新 · 已有 ${completedCount} 条`
-        : semanticTotal
-          ? `部分语义 · ${completedCount}/${semanticTotal}${failureHint}`
-          : "部分语义 · 尚未完成";
-      window.MemeManagerUI.state.packSemanticStatus.title = pack.semantic_files_changed
-        ? "图包新增了图片，或原图片内容已被替换，需要继续语义化。"
-        : "当前图包仍有图片的语义描述未完成。";
-      return;
-    }
-    window.MemeManagerUI.state.packSemanticStatusText.textContent =
-      imageCount > 0 ? "未语义化" : "空图包 · 暂无语义";
-    window.MemeManagerUI.state.packSemanticStatus.title =
-      imageCount > 0
-        ? "当前图包还没有可用的图片语义描述。"
-        : "空图包无需语义化。";
-    window.MemeManagerUI.emoji.applySemanticReviewData({ available: false });
   }
 window.MemeManagerUI.pack.refreshManagePackSummaries = async function () {
     try {
@@ -727,8 +357,6 @@ window.MemeManagerUI.pack.loadManagePackSwitcher = async function (preferredPack
         window.MemeManagerUI.state.managePackSelect.appendChild(option);
         window.MemeManagerUI.state.managePackSelect.disabled = true;
         window.MemeManagerUI.state.activeManagePackId = "";
-        window.MemeManagerUI.pack.updateManagePackSemanticAppearance("");
-        window.MemeManagerUI.pack.hideManagePackVectorStatus();
         await window.MemeManagerUI.pack.refreshPackExportCapability("");
         if (window.MemeManagerUI.state.switchManagePackBtn) {
           window.MemeManagerUI.state.switchManagePackBtn.disabled = true;
@@ -779,12 +407,8 @@ window.MemeManagerUI.pack.loadManagePackSwitcher = async function (preferredPack
       }
       window.MemeManagerUI.state.managePackSelect.value = selectedPackId;
       window.MemeManagerUI.state.activeManagePackId = selectedPackId;
-      window.MemeManagerUI.pack.updateManagePackSemanticAppearance(selectedPackId);
       window.MemeManagerUI.pack.syncManagedPackQuery(selectedPackId);
-      await Promise.all([
-        window.MemeManagerUI.pack.refreshPackExportCapability(selectedPackId),
-        window.MemeManagerUI.pack.refreshManagePackVectorStatus(selectedPackId),
-      ]);
+      await window.MemeManagerUI.pack.refreshPackExportCapability(selectedPackId);
 
       await window.MemeManagerUI.pack.maybeShowFirstUseCatalogGuide(packs);
       return packs;
@@ -807,22 +431,15 @@ window.MemeManagerUI.pack.switchManagePack = async function () {
     window.MemeManagerUI.emoji.closeImagePreview();
     const previousActivePackId = window.MemeManagerUI.state.activeManagePackId;
     window.MemeManagerUI.state.activeManagePackId = targetPackId;
-    window.MemeManagerUI.emoji.applySemanticReviewData({ available: false });
-    window.MemeManagerUI.pack.updateManagePackSemanticAppearance(targetPackId);
     try {
       window.MemeManagerUI.pack.syncManagedPackQuery(targetPackId);
       await window.MemeManagerUI.emoji.refreshUi({ emojis: true });
       await window.MemeManagerUI.pack.refreshPackExportCapability(targetPackId);
       window.MemeManagerUI.dialogs.showToast(`已切换管理视图到 ${targetPackId}。`, "success", "切换成功");
-      await window.MemeManagerUI.pack.maybeOfferVectorRebuild(targetPackId);
     } catch (error) {
       window.MemeManagerUI.state.activeManagePackId = previousActivePackId;
-      window.MemeManagerUI.pack.updateManagePackSemanticAppearance(previousActivePackId);
       window.MemeManagerUI.pack.syncManagedPackQuery(previousActivePackId);
-      await Promise.all([
-        window.MemeManagerUI.pack.refreshPackExportCapability(previousActivePackId),
-        window.MemeManagerUI.pack.refreshManagePackVectorStatus(previousActivePackId),
-      ]);
+      await window.MemeManagerUI.pack.refreshPackExportCapability(previousActivePackId);
       window.MemeManagerUI.dialogs.showToast(error?.message || String(error), "error", "切换失败");
     } finally {
       window.MemeManagerUI.emoji.restoreButton(window.MemeManagerUI.state.switchManagePackBtn);

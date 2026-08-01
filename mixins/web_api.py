@@ -122,86 +122,13 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
         logged_handler.__name__ = f"webui_{handler.__name__}"
         self.context.register_web_api(route_path, logged_handler, methods, desc)
 
-    def _get_webui_response_status(response) -> int | str:
+    def _get_webui_response_status(self, response) -> int | str:
         if isinstance(response, tuple) and len(response) > 1:
             return response[1]
         return getattr(response, "status_code", "unknown")
 
     def _semantic_operation_guard(self, pack_id: str, operation: str) -> None:
         self.catalog_index_service.assert_pack_mutation_allowed(pack_id, operation)
-
-    def _semantic_rebuild_guidance(self, pack_id: str) -> dict:
-        return {}
-        """返回切换或导入资源包后是否需要补建本机向量。"""
-        guidance = {
-            "semantic_rebuild_required": False,
-            "semantic_rebuild_pack_id": str(pack_id or "").strip(),
-        }
-        if not guidance["semantic_rebuild_pack_id"] or not bool(
-            getattr(self, "semantic_enabled", False)
-        ):
-            return guidance
-        manager = getattr(self, "semantic_task_manager", None)
-        if manager is None:
-            return guidance
-        try:
-            status = manager.status(guidance["semantic_rebuild_pack_id"])
-        except Exception as exc:
-            logger.warning(
-                "读取资源包向量重建提示失败: %s | pack_id=%s",
-                exc,
-                guidance["semantic_rebuild_pack_id"],
-            )
-            return guidance
-        task_status = str(status.get("task_status") or "")
-        guidance.update(
-            {
-                "semantic_rebuild_required": bool(
-                    status.get("dimension_rebuild_required")
-                    and status.get("semantic_caption_complete")
-                    and task_status not in {"running", "paused"}
-                ),
-                "semantic_task_status": task_status,
-                "semantic_caption_complete": bool(
-                    status.get("semantic_caption_complete")
-                ),
-                "semantic_index_ready": bool(status.get("index_ready")),
-                "semantic_embedding_provider_id": str(
-                    status.get("embedding_provider_id") or ""
-                ),
-                "semantic_embedding_model": str(status.get("embedding_model") or ""),
-                "semantic_embedding_dimension": int(
-                    status.get("embedding_configured_dimension", 0) or 0
-                ),
-            }
-        )
-        return guidance
-
-    def _pack_import_embedding_signature(self) -> dict:
-        return {}
-        """Return the active local embedding signature for safe backup restore."""
-        try:
-            provider = self._resolve_embedding_provider()
-            embedding = EmbeddingAdapter(
-                provider, str(getattr(self, "semantic_embedding_provider_id", "") or "")
-            )
-        except Exception:
-            return {
-                "embedding_provider_id": "",
-                "embedding_model": "",
-                "embedding_dimension": 0,
-            }
-        if not embedding.ready:
-            return {
-                "embedding_provider_id": "",
-                "embedding_model": "",
-                "embedding_dimension": 0,
-            }
-        return {
-            "embedding_provider_id": embedding.provider_id,
-            "embedding_model": embedding.model_name,
-            "embedding_dimension": embedding.dimension,
-        }
 
     async def _run_guarded_pack_file_operation(
         self,
@@ -277,7 +204,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
             # 新版 AstrBot 使用 Starlette 上传对象，不需要在这里调整限制。
             pass
 
-    async def _save_uploaded_file(uploaded_file, destination: Path) -> None:
+    async def _save_uploaded_file(self, uploaded_file, destination: Path) -> None:
         """同时兼容 Quart 的异步 save 与旧版同步 save。"""
         save_method = uploaded_file.save
         if inspect.iscoroutinefunction(save_method):
@@ -287,7 +214,7 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
         if inspect.isawaitable(result):
             await result
 
-    def _pack_import_session_paths(token: str) -> tuple[Path, Path]:
+    def _pack_import_session_paths(self, token: str) -> tuple[Path, Path]:
         normalized = str(token or "").strip().lower()
         if len(normalized) != 32 or any(
             character not in "0123456789abcdef" for character in normalized
@@ -340,14 +267,8 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
             }
 
     def _invalidate_default_pack_semantics(self) -> None:
-        return
-        pack_dir = Path(self._default_pack_context()["pack_dir"]).resolve()
-        if not (pack_dir / "semantic_metadata.json").is_file():
-            return
-        try:
-            invalidate_semantic_metadata(pack_dir)
-        except Exception as exc:
-            logger.error("图片变更后刷新语义元数据失败: %s", exc, exc_info=True)
+        """Compatibility no-op after semanticization was removed."""
+        return None
 
     def _resolve_webui_pack_view_context(self) -> dict | None:
         managed_pack_id = str(request.args.get("managed_pack_id") or "").strip()
