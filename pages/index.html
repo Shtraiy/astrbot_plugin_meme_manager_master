@@ -11,9 +11,6 @@
         const nextUrl = new URL("./a_manage/index.html", window.location.href);
         const currentParams = new URLSearchParams(window.location.search);
         for (const [key, value] of currentParams.entries()) {
-          if (key === "asset_token") {
-            continue;
-          }
           if (!nextUrl.searchParams.has(key)) {
             nextUrl.searchParams.set(key, value);
           }

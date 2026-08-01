@@ -4,7 +4,7 @@ async function initSettingsPage() {
   function withCurrentPageParams(targetPath, extraParams = {}) {
     const nextUrl = new URL(targetPath, window.location.href);
     const currentParams = new URLSearchParams(window.location.search);
-    for (const key of ["view", "managed_pack_id"]) {
+    for (const key of ["view", "managed_pack_id", "asset_token"]) {
       const value = currentParams.get(key);
       if (value && !nextUrl.searchParams.has(key)) {
         nextUrl.searchParams.set(key, value);

@@ -18,6 +18,20 @@ async function initCaptureIndexPage() {
     return;
   }
 
+  const currentParams = new URLSearchParams(window.location.search);
+  document.querySelectorAll("a[data-nav-target]").forEach((link) => {
+    const targetPath = link.getAttribute("data-nav-target");
+    if (!targetPath) return;
+    const nextUrl = new URL(targetPath, window.location.href);
+    for (const key of ["view", "managed_pack_id", "asset_token"]) {
+      const value = currentParams.get(key);
+      if (value && !nextUrl.searchParams.has(key)) {
+        nextUrl.searchParams.set(key, value);
+      }
+    }
+    link.href = nextUrl.toString();
+  });
+
   const apiGet = (path, params = {}) => pageApi.apiGet(path, params);
   const apiPost = (path, body = {}) => pageApi.apiPost(path, body);
   const showError = (error) => {
