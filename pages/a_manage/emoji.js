@@ -49,26 +49,58 @@ window.MemeManagerUI.emoji.applySemanticReviewData = function (payload) {
     window.MemeManagerUI.emoji.updateSemanticReviewToolbar();
   }
 window.MemeManagerUI.emoji.fetchEmojis = async function () {
+    window.MemeManagerUI.state.loading = true;
+    window.MemeManagerUI.state.error = null;
     try {
-      const [emojiResponse, tagDescriptions, reviewResult] = await Promise.all([
+      // The image list is the primary payload.  A broken description or
+      // optional review request must not blank an otherwise usable catalog.
+      const [emojiResult, descriptionsResult, reviewResult] = await Promise.allSettled([
         window.MemeManagerUI.api.apiGet("emoji"),
         window.MemeManagerUI.api.apiGet("emotions"),
-        window.MemeManagerUI.api.apiGet("semantic/reviews").catch((error) => {
-          console.warn("读取分类审核状态失败:", error);
-          return { items: [], statistics: {} };
-        }),
+        window.MemeManagerUI.api.apiGet("semantic/reviews"),
       ]);
+      if (emojiResult.status !== "fulfilled") {
+        throw emojiResult.reason || new Error("表情包目录加载失败");
+      }
+      const emojiResponse =
+        emojiResult.value && typeof emojiResult.value === "object" && !Array.isArray(emojiResult.value)
+          ? emojiResult.value
+          : {};
+      const tagDescriptions =
+        descriptionsResult.status === "fulfilled" &&
+        descriptionsResult.value &&
+        typeof descriptionsResult.value === "object" &&
+        !Array.isArray(descriptionsResult.value)
+          ? descriptionsResult.value
+          : {};
+      if (descriptionsResult.status !== "fulfilled") {
+        console.warn("读取分类描述失败，继续显示表情包目录:", descriptionsResult.reason);
+      }
+      const normalizedReviewResult =
+        reviewResult.status === "fulfilled" && reviewResult.value
+          ? reviewResult.value
+          : { items: [], statistics: {} };
+      if (reviewResult.status !== "fulfilled") {
+        console.warn("读取分类审核状态失败:", reviewResult.reason);
+      }
       window.MemeManagerUI.emoji.clearDragMode();
       window.MemeManagerUI.emoji.closeBatchContextMenu();
       window.MemeManagerUI.state.latestEmojiData = emojiResponse;
       window.MemeManagerUI.state.latestTagDescriptions = tagDescriptions;
-      window.MemeManagerUI.emoji.applySemanticReviewData(reviewResult);
+      window.MemeManagerUI.emoji.applySemanticReviewData(normalizedReviewResult);
       window.MemeManagerUI.emoji.pruneSelectionState();
       window.MemeManagerUI.emoji.displayCategories(emojiResponse, tagDescriptions);
       window.MemeManagerUI.emoji.updateSidebar(emojiResponse, tagDescriptions);
       window.MemeManagerUI.emoji.updateSelectionUI();
     } catch (error) {
+      window.MemeManagerUI.state.error = error?.message || String(error);
       console.error("加载表情包数据失败", error);
+      window.MemeManagerUI.state.latestEmojiData = {};
+      window.MemeManagerUI.state.latestTagDescriptions = {};
+      window.MemeManagerUI.emoji.displayCategories({}, {});
+      window.MemeManagerUI.emoji.updateSidebar({}, {});
+    } finally {
+      window.MemeManagerUI.state.loading = false;
     }
   }
 window.MemeManagerUI.emoji.createButton = function ({

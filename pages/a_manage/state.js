@@ -1,5 +1,7 @@
 window.MemeManagerUI = window.MemeManagerUI || {};
 window.MemeManagerUI.state = {
+  loading: false,
+  error: null,
   managedPackIdFromUrl: String(
     new URLSearchParams(window.location.search).get("managed_pack_id") || "",
   ).trim(),
