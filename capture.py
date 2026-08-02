@@ -30,6 +30,7 @@ from .collector import (
     explicit_meme_request,
     extract_meme_markers,
     extract_image_sources,
+    filter_reply_hook_available,
     group_id_from_event,
     is_meme_follow_up_request,
     is_safe_remote_image_url,
@@ -955,6 +956,18 @@ class CaptureMixin:
 
         details = self._image_details(image_path)
         result.chain = drop_empty_text_components(chain)
+        if not plain_texts or not filter_reply_hook_available(event):
+            # A marker-only or otherwise textless result may never trigger
+            # after_message_sent. Likewise, without Filter's reply hook there
+            # is nobody to wait for. Put the selected image into the current
+            # result so AstrBot can deliver it without a follow-up hook.
+            result.chain.append(Comp.Image.fromFileSystem(str(image_path)))
+            self._queue_send_weight_mark(event, image_path)
+            logger.info(
+                "[meme_manager_master] 无 Filter 回复钩子或无可见正文，直接加入当前消息链发送自动表情包 path=%s",
+                image_path,
+            )
+            return
         event.set_extra("meme_manager_master_auto_send_path", str(image_path))
         event.set_extra("meme_manager_master_auto_send_details", details)
         logger.info(

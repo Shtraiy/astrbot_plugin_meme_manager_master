@@ -2,11 +2,13 @@ import asyncio
 import tempfile
 import time
 import unittest
+from unittest.mock import AsyncMock
 from pathlib import Path
 
 from tests.fakes import (
     FakeContext,
     FakeEvent,
+    FakeResult,
     install_package_alias,
     install_runtime_stubs,
 )
@@ -25,9 +27,9 @@ ROOT = Path(__file__).parents[1]
 
 
 class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
-    def _make_mixin(self) -> CaptureMixin:
+    def _make_mixin(self, config=None) -> CaptureMixin:
         async def create():
-            return CaptureMixin(FakeContext(), {})
+            return CaptureMixin(FakeContext(), config or {})
 
         return asyncio.run(create())
 
@@ -48,6 +50,93 @@ class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
             self.assertIsInstance(chain[0], CompPlain)
             self.assertEqual(chain[0].text, "这也太离谱了哈哈。")
             self.assertIsInstance(chain[1], CompImage)
+
+    def test_marker_only_reply_embeds_selected_meme_in_current_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "meme.png"
+            path.write_bytes(b"placeholder")
+            event = FakeEvent()
+            event.set_result(FakeResult([CompPlain("&&sad&&")]))
+            mixin = self._make_mixin(
+                {"auto_send_probability": 100, "auto_send_cooldown": 0}
+            )
+            mixin._manager_ready = AsyncMock(return_value=True)
+            mixin._choose_outgoing_meme_from_index = AsyncMock(return_value=path)
+            mixin._image_details = lambda _path: {
+                "category": "sad",
+                "filename": path.name,
+                "description": "",
+                "emotion": "sad",
+                "tags": [],
+            }
+
+            asyncio.run(mixin.on_decorating_result(event))
+
+            self.assertEqual(len(event.get_result().chain), 1)
+            self.assertIsInstance(event.get_result().chain[0], CompImage)
+            self.assertIsNone(event.get_extra("meme_manager_master_auto_send_path"))
+            self.assertEqual(
+                event.get_extra("meme_manager_master_send_mark_path"),
+                str(path),
+            )
+
+    def test_text_reply_without_filter_hook_embeds_selected_meme_in_current_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "meme.png"
+            path.write_bytes(b"placeholder")
+            event = FakeEvent()
+            event.set_result(FakeResult([CompPlain("我也觉得很遗憾。 &&sad&&")]))
+            mixin = self._make_mixin(
+                {"auto_send_probability": 100, "auto_send_cooldown": 0}
+            )
+            mixin._manager_ready = AsyncMock(return_value=True)
+            mixin._choose_outgoing_meme_from_index = AsyncMock(return_value=path)
+            mixin._image_details = lambda _path: {
+                "category": "sad",
+                "filename": path.name,
+                "description": "",
+                "emotion": "sad",
+                "tags": [],
+            }
+
+            asyncio.run(mixin.on_decorating_result(event))
+
+            self.assertEqual(len(event.get_result().chain), 2)
+            self.assertEqual(event.get_result().chain[0].text, "我也觉得很遗憾。")
+            self.assertIsInstance(event.get_result().chain[1], CompImage)
+            self.assertIsNone(event.get_extra("meme_manager_master_auto_send_path"))
+
+    def test_text_reply_with_filter_hook_defers_selected_meme_until_after_send(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "meme.png"
+            path.write_bytes(b"placeholder")
+            event = FakeEvent()
+            event.set_result(FakeResult([CompPlain("我也觉得很遗憾。 &&sad&&")]))
+            async def add_filter_lock():
+                event.set_extra("astrbot_plugin_filter_reply_lock", asyncio.Lock())
+
+            asyncio.run(add_filter_lock())
+            mixin = self._make_mixin(
+                {"auto_send_probability": 100, "auto_send_cooldown": 0}
+            )
+            mixin._manager_ready = AsyncMock(return_value=True)
+            mixin._choose_outgoing_meme_from_index = AsyncMock(return_value=path)
+            mixin._image_details = lambda _path: {
+                "category": "sad",
+                "filename": path.name,
+                "description": "",
+                "emotion": "sad",
+                "tags": [],
+            }
+
+            asyncio.run(mixin.on_decorating_result(event))
+
+            self.assertEqual(len(event.get_result().chain), 1)
+            self.assertEqual(event.get_result().chain[0].text, "我也觉得很遗憾。")
+            self.assertEqual(
+                event.get_extra("meme_manager_master_auto_send_path"),
+                str(path),
+            )
 
     def test_unverified_send_claim_is_rewritten_without_receipt(self):
         event = FakeEvent()

@@ -21,6 +21,18 @@ from urllib.parse import urlparse
 FILTER_REPLY_LOCK_EXTRA = "astrbot_plugin_filter_reply_lock"
 
 
+def filter_reply_hook_available(event) -> bool:
+    """Return whether Filter exposed its reply-completion hook for an event."""
+    getter = getattr(event, "get_extra", None)
+    if not callable(getter):
+        return False
+    try:
+        reply_lock = getter(FILTER_REPLY_LOCK_EXTRA)
+    except Exception:
+        return False
+    return isinstance(reply_lock, asyncio.Lock)
+
+
 async def wait_for_filter_reply_lock(event, timeout: float = 30.0) -> str:
     """Wait until Filter finishes all follow-up text messages for this event."""
     getter = getattr(event, "get_extra", None)

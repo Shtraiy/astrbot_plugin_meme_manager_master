@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from collector import wait_for_filter_reply_lock
+from collector import filter_reply_hook_available, wait_for_filter_reply_lock
 
 
 class FakeEvent:
@@ -13,6 +13,16 @@ class FakeEvent:
 
 
 class FilterFollowupLockTests(unittest.TestCase):
+    def test_filter_reply_hook_is_detected_from_event_lock(self):
+        self.assertFalse(filter_reply_hook_available(FakeEvent()))
+
+        async def scenario():
+            lock = asyncio.Lock()
+            event = FakeEvent({"astrbot_plugin_filter_reply_lock": lock})
+            return filter_reply_hook_available(event)
+
+        self.assertTrue(asyncio.run(scenario()))
+
     def test_missing_filter_lock_returns_without_waiting(self):
         result = asyncio.run(wait_for_filter_reply_lock(FakeEvent()))
 
