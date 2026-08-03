@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import re
 from pathlib import Path
 from typing import Any
@@ -60,4 +61,7 @@ class CatalogIndexService:
             raise TypeError("mutation 必须可调用")
         async with self._lock(pack_id):
             self.assert_pack_mutation_allowed(pack_id, operation)
-            return mutation()
+            result = mutation()
+            if inspect.isawaitable(result):
+                return await result
+            return result

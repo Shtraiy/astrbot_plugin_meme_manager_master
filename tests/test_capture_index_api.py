@@ -42,6 +42,7 @@ if "quart" not in sys.modules:
 from capture_activity import record_capture_event
 from meme_manager_master.mixins import capture_index_api
 from meme_manager_master.mixins.capture_index_api import CaptureIndexAPIMixin
+from meme_manager_master.backend.catalog_index_service import CatalogIndexService
 from storage import MemeStore
 
 
@@ -162,6 +163,38 @@ class CaptureIndexApiTests(unittest.TestCase):
                     next(item for item in catalog["items"] if item["filename"] == "happy_0002.png")["description"],
                     "保留",
                 )
+
+
+class ReindexProgressApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reindex_reports_running_progress_then_completed_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            store.save_image(b"first", "happy", ".png")
+            store.save_image(b"second", "sad", ".png")
+
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance.catalog_index_service = CatalogIndexService(pack_dir.parent)
+            instance._capture_pack_id = lambda data=None: "pack"
+
+            class _Request:
+                args = {}
+
+                async def get_json(self):
+                    return {"pack_id": "pack"}
+
+            with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent), patch.object(
+                capture_index_api, "request", _Request()
+            ):
+                started = await instance._api_capture_reindex()
+                self.assertEqual(started["status"], "running")
+                self.assertEqual(started["total"], 2)
+                await instance._reindex_tasks["pack"]
+                finished = await instance._api_capture_reindex_status()
+
+        self.assertEqual(finished["status"], "completed")
+        self.assertEqual(finished["processed"], 2)
+        self.assertEqual(finished["total"], 2)
 
 
 if __name__ == "__main__":

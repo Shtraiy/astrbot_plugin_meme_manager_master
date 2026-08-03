@@ -25,7 +25,16 @@
         <label for="pack">资源包</label>
         <select id="pack" aria-label="选择资源包"></select>
         <button id="capture-refresh-button" type="button">刷新记录</button>
-        <button id="capture-reindex-button" type="button">重索引</button>
+        <div class="reindex-control">
+          <button id="capture-reindex-button" type="button">重索引</button>
+          <div id="capture-reindex-progress" class="reindex-progress" hidden aria-live="polite">
+            <div class="reindex-progress-heading">
+              <span id="capture-reindex-progress-label">尚未开始重索引</span>
+              <span id="capture-reindex-progress-count">0/0</span>
+            </div>
+            <progress id="capture-reindex-progress-bar" max="1" value="0">0%</progress>
+          </div>
+        </div>
         <button id="capture-index-button" type="button" class="primary">
           分类索引待处理项
         </button>

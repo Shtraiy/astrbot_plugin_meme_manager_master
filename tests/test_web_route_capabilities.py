@@ -18,6 +18,7 @@ class WebRouteCapabilityTests(unittest.TestCase):
             "capture/workspace",
             "capture/index",
             "capture/reindex",
+            "capture/reindex/status",
         ):
             self.assertIn(route, paths, f"default surface must register {route}")
 

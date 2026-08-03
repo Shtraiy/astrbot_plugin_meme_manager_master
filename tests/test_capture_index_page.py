@@ -29,6 +29,29 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn('apiPost("capture/reindex"', script)
         self.assertIn(".sections-stack", style)
 
+    def test_reindex_button_is_not_silently_disabled_by_model_index_state(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertNotIn(
+                'reindexButton.disabled = state.status === "running";',
+                script,
+            )
+            self.assertIn("正在重索引表情文件", script)
+
+    def test_reindex_progress_contract_exists_in_both_page_copies(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            script = (page_dir / "script.js").read_text(encoding="utf-8")
+            style = (page_dir / "style.css").read_text(encoding="utf-8")
+            self.assertIn("capture-reindex-progress", source)
+            self.assertIn("capture-reindex-progress-bar", source)
+            self.assertIn('apiGet("capture/reindex/status"', script)
+            self.assertIn("setTimeout", script)
+            self.assertIn("reindex-progress", style)
+
     def test_capture_index_page_uses_non_semantic_capture_routes(self):
         source = (ROOT / "pages" / "semantic" / "script.js").read_text(
             encoding="utf-8"

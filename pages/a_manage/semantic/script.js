@@ -10,11 +10,17 @@ async function initCaptureIndexPage() {
   const pendingCount = document.querySelector("#capture-pending-count");
   const refreshButton = document.querySelector("#capture-refresh-button");
   const reindexButton = document.querySelector("#capture-reindex-button");
+  const reindexProgress = document.querySelector("#capture-reindex-progress");
+  const reindexProgressLabel = document.querySelector("#capture-reindex-progress-label");
+  const reindexProgressCount = document.querySelector("#capture-reindex-progress-count");
+  const reindexProgressBar = document.querySelector("#capture-reindex-progress-bar");
   const indexButton = document.querySelector("#capture-index-button");
   const categoryFilters = document.querySelector("#capture-category-filters");
   const previewMask = document.querySelector("#preview-mask");
   const previewImage = document.querySelector("#preview-image");
   let selectedCategory = "";
+  let reindexing = false;
+  let reindexPollTimer = null;
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -32,6 +38,50 @@ async function initCaptureIndexPage() {
     notice.textContent = String(error?.message || error || "操作失败");
     notice.classList.add("error");
   };
+
+  function stopReindexPolling() {
+    if (reindexPollTimer !== null) {
+      window.clearTimeout(reindexPollTimer);
+      reindexPollTimer = null;
+    }
+  }
+
+  function renderReindexProgress(state) {
+    const status = String(state?.status || "idle");
+    if (status === "idle" && !reindexing) {
+      reindexProgress.hidden = true;
+      return;
+    }
+    const total = Math.max(Number(state?.total || 0), 1);
+    const processed = Math.min(Math.max(Number(state?.processed || 0), 0), total);
+    reindexProgress.hidden = false;
+    reindexProgress.classList.toggle("error", status === "error");
+    reindexProgressLabel.textContent = String(state?.message || "正在准备重索引……");
+    reindexProgressCount.textContent = `${processed}/${Number(state?.total || 0)}`;
+    reindexProgressBar.max = total;
+    reindexProgressBar.value = processed;
+  }
+
+  async function pollReindexStatus() {
+    if (!packSelect.value) return;
+    try {
+      const state = await apiGet("capture/reindex/status", { pack_id: packSelect.value });
+      renderReindexProgress(state);
+      if (state.status === "running") {
+        reindexing = true;
+        reindexButton.disabled = true;
+        reindexPollTimer = window.setTimeout(() => void pollReindexStatus(), 500);
+        return;
+      }
+      reindexing = false;
+      reindexButton.disabled = false;
+      if (state.status !== "idle") await loadWorkspace();
+    } catch (error) {
+      reindexing = false;
+      reindexButton.disabled = false;
+      showError(error);
+    }
+  }
 
   function renderEmpty(target, message) {
     target.replaceChildren();
@@ -187,7 +237,7 @@ async function initCaptureIndexPage() {
     const state = data.library_index || {};
     indexButton.disabled =
       state.status === "running" || !state.active_pack || !(stats.pending || stats.duplicate);
-    reindexButton.disabled = state.status === "running";
+    reindexButton.disabled = reindexing;
     notice.textContent = state.message || "目录索引已加载";
     notice.classList.remove("error");
   }
@@ -215,7 +265,10 @@ async function initCaptureIndexPage() {
   }
 
   packSelect.addEventListener("change", () => {
+    stopReindexPolling();
     selectedCategory = "";
+    reindexing = false;
+    reindexProgress.hidden = true;
     void loadWorkspace();
   });
   refreshButton.addEventListener("click", () => void loadWorkspace());
@@ -231,15 +284,18 @@ async function initCaptureIndexPage() {
   });
   reindexButton.addEventListener("click", async () => {
     if (!packSelect.value || !window.confirm("只重新编号并同步索引中的文件名，不会重新识别表情。继续吗？")) return;
+    reindexing = true;
     reindexButton.disabled = true;
+    notice.classList.remove("error");
+    notice.textContent = "正在重索引表情文件，请稍候……";
     try {
       const result = await apiPost("capture/reindex", { pack_id: packSelect.value });
-      notice.textContent = result.message || "重索引完成";
-      await loadWorkspace();
+      renderReindexProgress(result);
+      void pollReindexStatus();
     } catch (error) {
-      showError(error);
-    } finally {
+      reindexing = false;
       reindexButton.disabled = false;
+      showError(error);
     }
   });
   document.querySelector("#preview-close").addEventListener("click", () => {
@@ -254,6 +310,7 @@ async function initCaptureIndexPage() {
   try {
     await loadPacks();
     await loadWorkspace();
+    void pollReindexStatus();
   } catch (error) {
     showError(error);
   }

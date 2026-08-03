@@ -195,6 +195,74 @@ class CaptureIndexAPIMixin:
             "changed_file_count": changed_file_count,
         }
 
+    def _new_reindex_state(self, pack_id: str) -> dict[str, int | str]:
+        pack_dir = (PACKS_DIR / str(pack_id)).resolve()
+        if not pack_dir.is_dir():
+            raise FileNotFoundError(f"表情包 {pack_id} 不存在")
+        store = MemeStore(pack_dir)
+        total = sum(
+            len(store.image_paths(category))
+            for category in store.directory_categories()
+        )
+        return {
+            "pack_id": str(pack_id),
+            "status": "running",
+            "processed": 0,
+            "total": total,
+            "changed_file_count": 0,
+            "current_category": "",
+            "message": "正在准备重索引……",
+        }
+
+    async def _reindex_pack_catalog_with_progress(
+        self, pack_id: str, state: dict[str, int | str]
+    ) -> dict[str, int | str]:
+        pack_dir = (PACKS_DIR / str(pack_id)).resolve()
+        store = MemeStore(pack_dir)
+        processed = 0
+        changed_file_count = 0
+        for category in sorted(store.directory_categories()):
+            paths = store.image_paths(category)
+            state["current_category"] = category
+            state["message"] = f"正在重索引 {category}……"
+            mapping = await asyncio.to_thread(store.reindex_category, category)
+            processed += len(paths)
+            changed_file_count += sum(
+                1 for old, new in mapping.items() if old != new
+            )
+            state["processed"] = processed
+            state["changed_file_count"] = changed_file_count
+            await asyncio.sleep(0)
+        return {
+            "pack_id": str(pack_id),
+            "category_count": len(store.directory_categories()),
+            "changed_file_count": changed_file_count,
+            "processed": processed,
+            "total": int(state["total"]),
+        }
+
+    async def _run_reindex_task(
+        self, pack_id: str, state: dict[str, int | str]
+    ) -> None:
+        try:
+            result = await self.catalog_index_service.run_locked_pack_mutation(
+                pack_id,
+                "重索引表情文件",
+                lambda: self._reindex_pack_catalog_with_progress(pack_id, state),
+            )
+            state.update(result)
+            state.update(
+                status="completed",
+                current_category="",
+                message=(
+                    f"重索引完成：整理 {result['category_count']} 个分类，"
+                    f"更新 {result['changed_file_count']} 个文件名"
+                ),
+            )
+        except Exception as exc:
+            logger.error("重索引表情包失败: %s", exc, exc_info=True)
+            state.update(status="error", message=f"重索引失败：{exc}")
+
     async def _api_capture_workspace(self):
         try:
             pack_id = self._capture_pack_id()
@@ -240,19 +308,19 @@ class CaptureIndexAPIMixin:
             task = getattr(self, "_library_task", None)
             if task is not None and not task.done():
                 return jsonify({"message": "分类索引正在处理中，请稍后再重索引", "status": "running"}), 409
-            result = await self.catalog_index_service.run_locked_pack_mutation(
-                pack_id,
-                "重索引表情文件",
-                lambda: self._reindex_pack_catalog(pack_id),
-            )
-            return jsonify({
-                "message": (
-                    f"重索引完成：整理 {result['category_count']} 个分类，"
-                    f"更新 {result['changed_file_count']} 个文件名"
-                ),
-                "status": "completed",
-                **result,
-            })
+            existing_task = getattr(self, "_reindex_tasks", {}).get(pack_id)
+            if existing_task is not None and not existing_task.done():
+                state = getattr(self, "_reindex_states", {}).get(pack_id, {})
+                return jsonify(dict(state)), 409
+            state = self._new_reindex_state(pack_id)
+            states = getattr(self, "_reindex_states", {})
+            tasks = getattr(self, "_reindex_tasks", {})
+            states[pack_id] = state
+            self._reindex_states = states
+            task = asyncio.create_task(self._run_reindex_task(pack_id, state))
+            tasks[pack_id] = task
+            self._reindex_tasks = tasks
+            return jsonify(dict(state))
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"message": str(exc)}), 400
         except RuntimeError as exc:
@@ -260,3 +328,24 @@ class CaptureIndexAPIMixin:
         except Exception as exc:
             logger.error("重索引表情包失败: %s", exc, exc_info=True)
             return jsonify({"message": "重索引表情包失败"}), 500
+
+    async def _api_capture_reindex_status(self):
+        try:
+            pack_id = self._capture_pack_id()
+            state = getattr(self, "_reindex_states", {}).get(pack_id)
+            if state is None:
+                return jsonify({
+                    "pack_id": pack_id,
+                    "status": "idle",
+                    "processed": 0,
+                    "total": 0,
+                    "changed_file_count": 0,
+                    "current_category": "",
+                    "message": "尚未开始重索引",
+                })
+            return jsonify(dict(state))
+        except (FileNotFoundError, ValueError) as exc:
+            return jsonify({"message": str(exc)}), 400
+        except Exception as exc:
+            logger.error("读取重索引进度失败: %s", exc, exc_info=True)
+            return jsonify({"message": "读取重索引进度失败"}), 500
