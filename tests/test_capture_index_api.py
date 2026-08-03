@@ -4,7 +4,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from tests.fakes import install_package_alias, install_runtime_stubs
 
@@ -164,6 +164,38 @@ class CaptureIndexApiTests(unittest.TestCase):
                     next(item for item in catalog["items"] if item.get("description"))["description"],
                     "保留",
                 )
+
+
+class ManualIndexApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_index_queues_task_before_returning_to_the_page(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance.store = store
+            instance._library_task = None
+            instance._library_index_state = {"status": "completed", "message": "旧状态"}
+            instance._library_completed_key = ("old", ())
+            instance._library_retry_key = None
+            instance._library_retry_at = 0.0
+            instance._capture_pack_id = lambda data=None: str((data or {}).get("pack_id") or "pack")
+            instance._ensure_library_index = AsyncMock()
+            instance._log_library_task_failure = lambda task: None
+
+            class Request:
+                async def get_json(self):
+                    return {"pack_id": "pack"}
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                response = await instance._api_capture_index()
+
+            self.assertEqual(response[1], 202)
+            self.assertEqual(instance._library_index_state["status"], "queued")
+            await instance._library_task
 
 
 class ReindexProgressApiTests(unittest.IsolatedAsyncioTestCase):

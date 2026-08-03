@@ -52,6 +52,25 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("setTimeout", script)
             self.assertIn("reindex-progress", style)
 
+    def test_reindex_progress_is_outside_the_resource_toolbar(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            toolbar_end = source.index("</section>", source.index('class="toolbar panel"'))
+            progress_row = source.index('class="capture-progress-row"')
+            self.assertGreater(progress_row, toolbar_end)
+
+    def test_manual_index_polls_until_the_backend_task_finishes(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn('apiPost("capture/index"', script)
+            self.assertIn("pollIndexStatus", script)
+            self.assertIn('setTimeout(() => void pollIndexStatus(), 500)', script)
+            self.assertIn('["queued", "running"]', script)
+            self.assertIn('state.message !== "没有待索引图片"', script)
+
     def test_progress_page_assets_use_a_cache_busting_script_version(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")

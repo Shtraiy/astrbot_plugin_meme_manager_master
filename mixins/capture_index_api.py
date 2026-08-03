@@ -416,6 +416,14 @@ class CaptureIndexAPIMixin:
             self._library_completed_key = None
             self._library_retry_key = None
             self._library_retry_at = 0.0
+            self._library_index_state.update(
+                status="queued",
+                processed=0,
+                total=0,
+                classified=0,
+                errors=0,
+                message="已提交分类索引，正在启动……",
+            )
             task = asyncio.create_task(self._ensure_library_index())
             self._library_task = task
             task.add_done_callback(self._log_library_task_failure)

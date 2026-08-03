@@ -10,6 +10,7 @@ async function initCaptureIndexPage() {
   const pendingCount = document.querySelector("#capture-pending-count");
   const refreshButton = document.querySelector("#capture-refresh-button");
   const reindexButton = document.querySelector("#capture-reindex-button");
+  const progressRow = document.querySelector(".capture-progress-row");
   const reindexProgress = document.querySelector("#capture-reindex-progress");
   const reindexProgressLabel = document.querySelector("#capture-reindex-progress-label");
   const reindexProgressCount = document.querySelector("#capture-reindex-progress-count");
@@ -21,6 +22,8 @@ async function initCaptureIndexPage() {
   let selectedCategory = "";
   let reindexing = false;
   let reindexPollTimer = null;
+  let indexing = false;
+  let indexPollTimer = null;
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -46,15 +49,24 @@ async function initCaptureIndexPage() {
     }
   }
 
+  function stopIndexPolling() {
+    if (indexPollTimer !== null) {
+      window.clearTimeout(indexPollTimer);
+      indexPollTimer = null;
+    }
+  }
+
   function renderReindexProgress(state) {
     const status = String(state?.status || "idle");
     if (status === "idle" && !reindexing) {
       reindexProgress.hidden = true;
+      progressRow.classList.remove("active");
       return;
     }
     const total = Math.max(Number(state?.total || 0), 1);
     const processed = Math.min(Math.max(Number(state?.processed || 0), 0), total);
     reindexProgress.hidden = false;
+    progressRow.classList.add("active");
     reindexProgress.classList.toggle("error", status === "error");
     reindexProgressLabel.textContent = String(state?.message || "正在准备重索引……");
     reindexProgressCount.textContent = `${processed}/${Number(state?.total || 0)}`;
@@ -79,6 +91,28 @@ async function initCaptureIndexPage() {
     } catch (error) {
       reindexing = false;
       reindexButton.disabled = false;
+      showError(error);
+    }
+  }
+
+  async function pollIndexStatus() {
+    if (!packSelect.value || !indexing) return;
+    try {
+      const data = await loadWorkspace();
+      const state = data?.library_index || {};
+      const stillRunning = ["queued", "running"].includes(state.status)
+        || (state.status === "idle" && state.message !== "没有待索引图片");
+      if (indexing && stillRunning) {
+        indexPollTimer = window.setTimeout(() => void pollIndexStatus(), 500);
+        return;
+      }
+      indexing = false;
+      indexPollTimer = null;
+      if (data) renderWorkspace(data);
+    } catch (error) {
+      indexing = false;
+      indexPollTimer = null;
+      indexButton.disabled = false;
       showError(error);
     }
   }
@@ -235,10 +269,14 @@ async function initCaptureIndexPage() {
     else renderEmpty(pendingItems, "当前没有待处理偷取图片");
 
     const state = data.library_index || {};
+    const indexInProgress = indexing || ["queued", "running"].includes(state.status);
     indexButton.disabled =
-      state.status === "running" || !state.active_pack || !(stats.pending || stats.duplicate);
+      indexInProgress || !state.active_pack || !(stats.pending || stats.duplicate);
+    indexButton.textContent = indexInProgress ? "分类索引中……" : "分类索引待处理项";
     reindexButton.disabled = reindexing;
-    notice.textContent = state.message || "目录索引已加载";
+    notice.textContent = indexing && state.status === "idle"
+      ? "已提交分类索引，正在启动……"
+      : state.message || "目录索引已加载";
     notice.classList.remove("error");
   }
 
@@ -247,7 +285,9 @@ async function initCaptureIndexPage() {
     try {
       const params = { pack_id: packSelect.value };
       if (selectedCategory) params.category = selectedCategory;
-      renderWorkspace(await apiGet("capture/workspace", params));
+      const data = await apiGet("capture/workspace", params);
+      renderWorkspace(data);
+      return data;
     } catch (error) {
       showError(error);
     }
@@ -266,19 +306,27 @@ async function initCaptureIndexPage() {
 
   packSelect.addEventListener("change", () => {
     stopReindexPolling();
+    stopIndexPolling();
     selectedCategory = "";
     reindexing = false;
+    indexing = false;
     reindexProgress.hidden = true;
+    progressRow.classList.remove("active");
     void loadWorkspace();
   });
   refreshButton.addEventListener("click", () => void loadWorkspace());
   indexButton.addEventListener("click", async () => {
+    if (indexing || !packSelect.value) return;
+    indexing = true;
     indexButton.disabled = true;
     try {
       const result = await apiPost("capture/index", { pack_id: packSelect.value });
       notice.textContent = result.message || "分类索引已开始";
       await loadWorkspace();
+      void pollIndexStatus();
     } catch (error) {
+      indexing = false;
+      await loadWorkspace();
       showError(error);
     }
   });
@@ -309,7 +357,11 @@ async function initCaptureIndexPage() {
 
   try {
     await loadPacks();
-    await loadWorkspace();
+    const initialWorkspace = await loadWorkspace();
+    if (["queued", "running"].includes(initialWorkspace?.library_index?.status)) {
+      indexing = true;
+      void pollIndexStatus();
+    }
     void pollReindexStatus();
   } catch (error) {
     showError(error);

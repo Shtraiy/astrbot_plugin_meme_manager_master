@@ -709,13 +709,16 @@ class CaptureMixin:
             60,
         )
 
-    @staticmethod
-    def _log_library_task_failure(task: asyncio.Task) -> None:
+    def _log_library_task_failure(self, task: asyncio.Task) -> None:
         try:
             exception = task.exception()
         except asyncio.CancelledError:
             return
         if exception:
+            self._library_index_state.update(
+                status="error",
+                message=f"标签索引失败：{exception}",
+            )
             logger.error("[meme_manager_master] 后台表情包索引任务异常: %s", exception)
 
     async def on_message(

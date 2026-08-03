@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>表情索引</title>
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./style.css?v=20260803-capture-progress-1" />
   </head>
   <body>
     <header class="page-header">
@@ -27,18 +27,21 @@
         <button id="capture-refresh-button" type="button">刷新记录</button>
         <div class="reindex-control">
           <button id="capture-reindex-button" type="button">重索引</button>
-          <div id="capture-reindex-progress" class="reindex-progress" hidden aria-live="polite">
-            <div class="reindex-progress-heading">
-              <span id="capture-reindex-progress-label">尚未开始重索引</span>
-              <span id="capture-reindex-progress-count">0/0</span>
-            </div>
-            <progress id="capture-reindex-progress-bar" max="1" value="0">0%</progress>
-          </div>
         </div>
         <button id="capture-index-button" type="button" class="primary">
           分类索引待处理项
         </button>
       </section>
+
+      <div class="capture-progress-row">
+        <div id="capture-reindex-progress" class="reindex-progress" hidden aria-live="polite">
+          <div class="reindex-progress-heading">
+            <span id="capture-reindex-progress-label">尚未开始重索引</span>
+            <span id="capture-reindex-progress-count">0/0</span>
+          </div>
+          <progress id="capture-reindex-progress-bar" max="1" value="0">0%</progress>
+        </div>
+      </div>
 
       <p id="notice" class="notice" aria-live="polite"></p>
       <section id="capture-summary" class="summary" aria-live="polite"></section>
@@ -73,6 +76,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260803-reindex-progress-2"></script>
+    <script type="module" src="./script.js?v=20260803-reindex-progress-3"></script>
   </body>
 </html>
