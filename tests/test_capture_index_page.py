@@ -52,6 +52,11 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("setTimeout", script)
             self.assertIn("reindex-progress", style)
 
+    def test_progress_page_assets_use_a_cache_busting_script_version(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            self.assertRegex(source, r'<script type="module" src="\./script\.js\?v=[^"]+"')
+
     def test_capture_index_page_uses_non_semantic_capture_routes(self):
         source = (ROOT / "pages" / "semantic" / "script.js").read_text(
             encoding="utf-8"
