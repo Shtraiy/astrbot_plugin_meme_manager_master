@@ -98,7 +98,7 @@ async function initCaptureIndexPage() {
   async function pollIndexStatus() {
     if (!packSelect.value || !indexing) return;
     try {
-      const data = await loadWorkspace();
+      const data = await loadWorkspace({ renderItems: false });
       const state = data?.library_index || {};
       const stillRunning = ["queued", "running"].includes(state.status)
         || (state.status === "idle" && state.message !== "没有待索引图片");
@@ -212,7 +212,7 @@ async function initCaptureIndexPage() {
     void loadThumbnail(item, image, card);
   }
 
-  function renderWorkspace(data) {
+  function renderWorkspace(data, { renderItems = true } = {}) {
     const stats = data.summary || {};
     summary.replaceChildren();
     for (const [label, value] of [
@@ -257,16 +257,18 @@ async function initCaptureIndexPage() {
       categoryFilters.append(button);
     }
 
-    indexedItems.replaceChildren();
-    pendingItems.replaceChildren();
     const indexed = data.indexed_items || [];
     const pending = data.pending_items || [];
     indexedCount.textContent = `${stats.indexed || 0} 张`;
     pendingCount.textContent = `${(stats.pending || 0) + (stats.duplicate || 0)} 条`;
-    if (indexed.length) indexed.forEach((item) => renderCard(item, indexedItems));
-    else renderEmpty(indexedItems, "暂无已完成的偷取索引");
-    if (pending.length) pending.forEach((item) => renderCard(item, pendingItems));
-    else renderEmpty(pendingItems, "当前没有待处理偷取图片");
+    if (renderItems) {
+      indexedItems.replaceChildren();
+      pendingItems.replaceChildren();
+      if (indexed.length) indexed.forEach((item) => renderCard(item, indexedItems));
+      else renderEmpty(indexedItems, "暂无已完成的偷取索引");
+      if (pending.length) pending.forEach((item) => renderCard(item, pendingItems));
+      else renderEmpty(pendingItems, "当前没有待处理偷取图片");
+    }
 
     const state = data.library_index || {};
     const indexInProgress = indexing || ["queued", "running"].includes(state.status);
@@ -280,13 +282,13 @@ async function initCaptureIndexPage() {
     notice.classList.remove("error");
   }
 
-  async function loadWorkspace() {
+  async function loadWorkspace({ renderItems = true } = {}) {
     if (!packSelect.value) return;
     try {
       const params = { pack_id: packSelect.value };
       if (selectedCategory) params.category = selectedCategory;
       const data = await apiGet("capture/workspace", params);
-      renderWorkspace(data);
+      renderWorkspace(data, { renderItems });
       return data;
     } catch (error) {
       showError(error);

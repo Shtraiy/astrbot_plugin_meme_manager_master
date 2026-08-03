@@ -111,20 +111,6 @@ class CapturePipeline:
                     statuses[index] = "unavailable"
                     continue
                 threshold = self._duplicate_threshold()
-                duplicate_path = self.store.find_duplicate(payload.content, threshold)
-                if duplicate_path is not None:
-                    logger.debug("[meme_manager_master] 图片在识别前已存在，跳过模型调用")
-                    statuses[index] = "duplicate"
-                    duplicate_category = duplicate_path.parent.name
-                    self._record_capture_event(
-                        self.store.root,
-                        category=duplicate_category,
-                        filename=duplicate_path.name,
-                        digest=self.store.image_digest(duplicate_path),
-                        status="duplicate",
-                        duplicate_of=f"{duplicate_category}/{duplicate_path.name}",
-                    )
-                    continue
                 if any(
                     self.store.is_similar(payload.content, previous.content, threshold)
                     for _previous_index, previous, _previous_path in loaded
@@ -237,31 +223,36 @@ class CapturePipeline:
                         if result.status in {"saved", "duplicate"}:
                             self._bind_saved_result(event, result.path)
                         statuses[index] = result.status
-                        if result.status == "saved":
+                        if result.status in {"saved", "duplicate"}:
                             catalog_entry = self._catalog_entry_builder(
                                 result.path, category, vision, scene
                             )
                             catalog_entry["perceptual_hash"] = (
                                 self.store.image_perceptual_hash(result.path)
                             )
-                            self.store.upsert_catalog_entry(
-                                category,
-                                catalog_entry,
-                            )
-                            self._record_capture_event(
-                                self.store.root,
-                                category=category,
-                                filename=result.path.name,
-                                digest=result.digest,
-                                status="pending",
-                            )
-                            logger.info(
-                                "[meme_manager_master] 已收集表情包 category=%s path=%s",
-                                category,
-                                result.path,
-                            )
-                        else:
-                            if result.status == "duplicate":
+                            if result.status == "saved":
+                                self.store.upsert_catalog_entry(
+                                    category,
+                                    catalog_entry,
+                                )
+                                self._record_capture_event(
+                                    self.store.root,
+                                    category=category,
+                                    filename=result.path.name,
+                                    digest=result.digest,
+                                    status="pending",
+                                )
+                                logger.info(
+                                    "[meme_manager_master] 已收集表情包 category=%s path=%s",
+                                    category,
+                                    result.path,
+                                )
+                            else:
+                                self.store.merge_catalog_entry(
+                                    catalog_entry,
+                                    digest=result.digest,
+                                    tags=tags,
+                                )
                                 self._record_capture_event(
                                     self.store.root,
                                     category=category,
@@ -270,9 +261,9 @@ class CapturePipeline:
                                     status="duplicate",
                                     duplicate_of=result.path.name,
                                 )
-                            logger.debug(
-                                "[meme_manager_master] 跳过重复表情包 path=%s", result.path
-                            )
+                                logger.debug(
+                                    "[meme_manager_master] 跳过重复表情包 path=%s", result.path
+                                )
                 return statuses
             except Exception:
                 logger.error("[meme_manager_master] 批量处理群聊图片失败", exc_info=True)

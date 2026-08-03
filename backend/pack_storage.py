@@ -51,7 +51,7 @@ from .semantic_storage import (
 )
 
 PackOperationGuard = Callable[[str, str], None]
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 MAX_ARCHIVE_FILE_COUNT = 20_000
 MAX_ARCHIVE_COMPRESSED_BYTES = 1024 * 1024 * 1024
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
@@ -419,17 +419,14 @@ def _count_images(memes_dir: Path) -> int:
         return 0
     total = 0
     for category_dir in memes_dir.iterdir():
-        if not category_dir.is_dir():
-            continue
-        for file_path in category_dir.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in {
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".gif",
-                ".webp",
-            }:
+        if category_dir.is_file():
+            if category_dir.suffix.lower() in IMAGE_EXTENSIONS:
                 total += 1
+            continue
+        if category_dir.is_dir():
+            for file_path in category_dir.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() in IMAGE_EXTENSIONS:
+                    total += 1
     return total
 
 

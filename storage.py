@@ -101,6 +101,7 @@ class MemeStore:
     def __init__(self, root: Path):
         self.root = Path(root).resolve()
         self.memes_dir = self.root / "memes"
+        self.tag_index_path = self.memes_dir / "tag_index.json"
         self.metadata_path = self.root / "memes_data.json"
         self.temp_dir = self.root / "temp"
         self._perceptual_hash_cache: dict[Path, tuple[int, int, str | None]] = {}
@@ -264,20 +265,26 @@ class MemeStore:
         """Pick an indexed image, reducing the weight of recently sent ones."""
         tags = set(normalize_tags(preferred_tags, fallback="")) if preferred_tags else set()
         current_time = time.time() if now is None else float(now)
+        lookup = self._load_tag_index()
+        lookup_items = lookup.get("items", {})
+        candidate_ids: set[str] = set()
+        if tags:
+            for tag in tags:
+                candidate_ids.update(lookup.get("by_tag", {}).get(tag, []))
+        else:
+            candidate_ids.update(lookup_items)
         candidates: list[Path] = []
         weights: list[float] = []
-        for item in self.load_catalog().get("items", []):
+        for meme_id in sorted(candidate_ids):
+            item = lookup_items.get(meme_id)
             if not isinstance(item, dict):
                 continue
             filename = Path(str(item.get("filename", ""))).name
-            item_tags = set(item.get("tags", []))
             path = self.memes_dir / filename
             if (
                 filename == str(item.get("filename", ""))
                 and path.is_file()
                 and path.suffix.lower() in IMAGE_EXTENSIONS
-                and (not tags or tags.intersection(item_tags))
-                and item.get("indexed", item.get("status") != "pending")
             ):
                 candidates.append(path)
                 weights.append(self._send_weight(item, current_time, repeat_window))
@@ -589,6 +596,142 @@ class MemeStore:
             self.memes_dir / "README.md",
             self._catalog_markdown("表情包", normalized_entries).encode("utf-8"),
         )
+        self._write_tag_index(normalized_entries, int(data["updated_at"]))
+
+    def rebuild_tag_index(self) -> dict:
+        """Rebuild and return the derived tag lookup from the main catalog."""
+        catalog = self.load_catalog()
+        return self._write_tag_index(
+            catalog.get("items", []),
+            int(catalog.get("updated_at") or 0),
+        )
+
+    @staticmethod
+    def _catalog_item_is_indexed(item: dict) -> bool:
+        return bool(item.get("indexed", item.get("status") != "pending"))
+
+    def _build_tag_index(
+        self,
+        entries: list[dict],
+        source_updated_at: int,
+    ) -> dict:
+        by_tag: dict[str, list[str]] = {}
+        lookup_items: dict[str, dict] = {}
+        for raw in entries:
+            if not isinstance(raw, dict) or not self._catalog_item_is_indexed(raw):
+                continue
+            filename = Path(str(raw.get("filename", ""))).name
+            path = self.memes_dir / filename
+            if (
+                not filename
+                or filename != str(raw.get("filename", ""))
+                or not path.is_file()
+                or path.suffix.lower() not in IMAGE_EXTENSIONS
+            ):
+                continue
+            raw_tags = raw.get("tags")
+            tags = normalize_tags(raw_tags, fallback="") if raw_tags else []
+            if tags == ["其他"] and not raw_tags:
+                tags = []
+            meme_id = str(raw.get("id") or path.stem)
+            lookup_items[meme_id] = {
+                "filename": filename,
+                "tags": tags,
+                "indexed": True,
+                "send_count": raw.get("send_count", 0),
+                "last_sent_at": raw.get("last_sent_at", 0),
+            }
+            for tag in tags:
+                by_tag.setdefault(tag, []).append(meme_id)
+        for tag, ids in by_tag.items():
+            by_tag[tag] = sorted(set(ids))
+        return {
+            "version": 1,
+            "source_version": 2,
+            "source_updated_at": int(source_updated_at),
+            "source_mtime_ns": self._catalog_mtime_ns(),
+            "updated_at": int(time.time()),
+            "by_tag": dict(sorted(by_tag.items())),
+            "items": {
+                meme_id: lookup_items[meme_id]
+                for meme_id in sorted(lookup_items)
+            },
+        }
+
+    def _write_tag_index(self, entries: object, source_updated_at: int) -> dict:
+        normalized_entries = [
+            item for item in entries if isinstance(item, dict)
+        ] if isinstance(entries, list) else []
+        data = self._build_tag_index(normalized_entries, source_updated_at)
+        self.memes_dir.mkdir(parents=True, exist_ok=True)
+        self._atomic_write_json(self.tag_index_path, data)
+        return data
+
+    def _load_tag_index(self, catalog: dict | None = None) -> dict:
+        expected_source = (
+            int(catalog.get("updated_at") or 0) if catalog is not None else None
+        )
+        try:
+            data = json.loads(self.tag_index_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            catalog = catalog or self.load_catalog()
+            return self._write_tag_index(
+                catalog.get("items", []),
+                int(catalog.get("updated_at") or 0),
+            )
+        if not self._valid_tag_index(data, expected_source):
+            catalog = catalog or self.load_catalog()
+            return self._write_tag_index(
+                catalog.get("items", []),
+                int(catalog.get("updated_at") or 0),
+            )
+        return data
+
+    def _valid_tag_index(self, data: object, expected_source: int | None) -> bool:
+        if not isinstance(data, dict):
+            return False
+        if data.get("version") != 1 or data.get("source_version") != 2:
+            return False
+        if expected_source is not None:
+            try:
+                if int(data.get("source_updated_at")) != expected_source:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        try:
+            if int(data.get("source_mtime_ns")) != self._catalog_mtime_ns():
+                return False
+        except (TypeError, ValueError):
+            return False
+        by_tag = data.get("by_tag")
+        items = data.get("items")
+        if not isinstance(by_tag, dict) or not isinstance(items, dict):
+            return False
+        for tag, ids in by_tag.items():
+            if not canonical_tag(tag) or not isinstance(ids, list):
+                return False
+            if len(ids) != len(set(ids)):
+                return False
+            for meme_id in ids:
+                item = items.get(meme_id)
+                if not isinstance(item, dict) or tag not in item.get("tags", []):
+                    return False
+                filename = Path(str(item.get("filename", ""))).name
+                path = self.memes_dir / filename
+                if (
+                    filename != str(item.get("filename", ""))
+                    or not path.is_file()
+                    or path.suffix.lower() not in IMAGE_EXTENSIONS
+                    or not item.get("indexed", False)
+                ):
+                    return False
+        return True
+
+    def _catalog_mtime_ns(self) -> int:
+        try:
+            return int((self.memes_dir / "index.json").stat().st_mtime_ns)
+        except OSError:
+            return 0
 
     def upsert_catalog_entry(
         self,
@@ -614,6 +757,29 @@ class MemeStore:
         items.append(item)
         self.write_catalog(items, metadata or {})
 
+    def merge_catalog_entry(
+        self,
+        entry: dict,
+        *,
+        digest: str,
+        tags: object = None,
+    ) -> dict:
+        """Merge useful metadata into an existing flat image entry."""
+        filename = str(entry.get("filename", ""))
+        if not filename:
+            return {}
+        metadata = {
+            key: value
+            for key, value in entry.items()
+            if key not in {"filename", "tags", "id", "sha256"}
+        }
+        return self._merge_flat_entry(
+            filename,
+            digest=digest,
+            tags=tags if tags is not None else entry.get("tags"),
+            metadata=metadata,
+        )
+
     def _merge_flat_entry(
         self,
         filename: str,
@@ -638,7 +804,7 @@ class MemeStore:
             )
         if metadata:
             for key, value in metadata.items():
-                if value not in (None, "", []):
+                if value not in (None, "", []) and not existing.get(key):
                     existing[key] = value
         self.write_catalog(items)
         return existing

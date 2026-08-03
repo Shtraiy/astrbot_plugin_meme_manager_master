@@ -3,10 +3,24 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.fakes import install_package_alias
 from storage import MemeStore, is_safe_category_segment, scan_pack_emojis
 
 
+install_package_alias()
+
+from meme_manager_master.backend.pack_storage import _count_images  # noqa: E402
+
+
 class PackStorageRuntimeTests(unittest.TestCase):
+    def test_pack_image_count_includes_flat_meme_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memes_dir = Path(temp_dir) / "memes"
+            memes_dir.mkdir(parents=True)
+            (memes_dir / "meme_abc.png").write_bytes(b"flat-image")
+
+            self.assertEqual(_count_images(memes_dir), 1)
+
     def test_webui_scan_uses_runtime_image_contract(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             memes_dir = Path(temp_dir) / "memes"

@@ -18,6 +18,12 @@ class TaggingTests(unittest.TestCase):
         self.assertEqual(normalize_tags(["未知长句"]), ["其他"])
         self.assertEqual(normalize_tags(["其他", "震惊"]), ["震惊"])
 
+    def test_normalize_tags_allows_six_fixed_tags(self):
+        self.assertEqual(
+            normalize_tags(["开心", "愤怒", "悲伤", "震惊", "疑惑", "尴尬", "害怕"]),
+            ["开心", "愤怒", "悲伤", "震惊", "疑惑", "尴尬"],
+        )
+
     def test_normalize_tags_accepts_delimited_text(self):
         self.assertEqual(
             normalize_tags("生气，吃惊 / 无语"),

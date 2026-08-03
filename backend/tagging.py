@@ -37,7 +37,7 @@ CANONICAL_TAGS: tuple[str, ...] = (
     "发钱",
     "其他",
 )
-MAX_TAGS = 5
+MAX_TAGS = 6
 
 _ALIASES: dict[str, str] = {
     "生气": "愤怒",
@@ -121,7 +121,7 @@ def _tag_values(value: Any) -> list[str]:
 
 
 def normalize_tags(value: Any, *, fallback: str = "其他") -> list[str]:
-    """Normalize arbitrary model/user values to at most five known tags."""
+    """Normalize arbitrary model/user values to at most six known tags."""
     found = {tag for item in _tag_values(value) if (tag := canonical_tag(item))}
     if len(found) > 1:
         found.discard("其他")

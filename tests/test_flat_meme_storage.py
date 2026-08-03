@@ -21,6 +21,24 @@ class FlatMemeStorageTests(unittest.TestCase):
                 store.load_catalog()["items"][0]["tags"], ["愤怒", "震惊"]
             )
 
+    def test_duplicate_image_merges_tags_without_creating_a_second_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "pack")
+
+            first = store.save_image(b"same-image", ["开心"], ".png", None)
+            duplicate = store.save_image(b"same-image", ["嘲讽"], ".png", None)
+
+            self.assertEqual(duplicate.status, "duplicate")
+            self.assertEqual(duplicate.path, first.path)
+            self.assertEqual(
+                list(store.memes_dir.glob("meme_*.png")),
+                [first.path],
+            )
+            self.assertEqual(
+                store.load_catalog()["items"][0]["tags"],
+                ["开心", "嘲讽"],
+            )
+
     def test_reindex_flattens_legacy_category_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemeStore(Path(temp_dir) / "pack")

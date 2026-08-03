@@ -52,6 +52,20 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("setTimeout", script)
             self.assertIn("reindex-progress", style)
 
+    def test_reindex_progress_hidden_state_is_not_rendered_by_display_rule(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            style = (page_dir / "style.css").read_text(encoding="utf-8")
+            self.assertIn(".reindex-progress[hidden]", style)
+
+    def test_index_polling_does_not_rebuild_thumbnail_cards(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn("loadWorkspace({ renderItems: false })", script)
+            self.assertIn("renderItems = true", script)
+
     def test_reindex_progress_is_outside_the_resource_toolbar(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")
