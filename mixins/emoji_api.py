@@ -133,6 +133,8 @@ class EmojiAPIMixin:
     async def _api_get_emoji_by_category(self, category):
         view_context = self._resolve_webui_pack_view_context()
         if view_context:
+            emojis = get_emoji_by_category(category, view_context["memes_dir"])
+            return jsonify(emojis), 200
             if not is_safe_category_segment(category):
                 return jsonify({"message": "分类名无效"}), 400
             category_path = view_context["memes_dir"] / category
@@ -439,6 +441,7 @@ class EmojiAPIMixin:
             return jsonify({"error": "获取标签描述失败"}), 500
 
     async def _api_delete_category(self):
+        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 409
         try:
             data = await request.get_json()
             category = data.get("category")
@@ -479,14 +482,17 @@ class EmojiAPIMixin:
                 {
                     "message": "分类表情已清空",
                     "category": category,
-                    "deleted_files": result["deleted_files"],
-                    "deleted_count": len(result["deleted_files"]),
+                    "deleted_files": [],
+                    "untagged_files": result.get("untagged_files", []),
+                    "deleted_count": 0,
+                    "untagged_count": len(result.get("untagged_files", [])),
                 }
             ),
             200,
         )
 
     async def _api_restore_category(self):
+        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 409
         try:
             data = await request.get_json()
             category = data.get("category")
@@ -509,6 +515,7 @@ class EmojiAPIMixin:
             return jsonify({"message": f"分类创建失败: {str(e)}"}), 500
 
     async def _api_rename_category(self):
+        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 409
         try:
             data = await request.get_json()
             old_name = data.get("old_name")
@@ -613,7 +620,11 @@ class EmojiAPIMixin:
             if view_context
             else Path(self._default_pack_context()["memes_dir"]).resolve()
         )
-        file_path = (memes_root / category / filename).resolve()
+        file_path = (memes_root / filename).resolve()
+        if not file_path.is_file():
+            legacy_path = (memes_root / category / filename).resolve()
+            if legacy_path.is_file():
+                file_path = legacy_path
         try:
             file_path.relative_to(memes_root)
         except ValueError:
@@ -634,7 +645,11 @@ class EmojiAPIMixin:
             if view_context
             else Path(self._default_pack_context()["memes_dir"]).resolve()
         )
-        file_path = (memes_root / category / filename).resolve()
+        file_path = (memes_root / filename).resolve()
+        if not file_path.is_file():
+            legacy_path = (memes_root / category / filename).resolve()
+            if legacy_path.is_file():
+                file_path = legacy_path
 
         try:
             file_path.relative_to(memes_root)

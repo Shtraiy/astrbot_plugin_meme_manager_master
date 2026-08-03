@@ -168,7 +168,11 @@ class WebApiBehaviorTests(unittest.TestCase):
             with patch.object(web_api, "PACKS_DIR", Path(temp_dir)):
                 payload = asyncio_run(instance._api_get_emojis())
 
-        self.assertEqual(payload, {"happy": ["smile.png"]})
+        self.assertEqual(len(payload), 1)
+        tag, filenames = next(iter(payload.items()))
+        self.assertEqual(tag, "开心")
+        self.assertEqual(len(filenames), 1)
+        self.assertTrue(filenames[0].startswith("meme_"))
 
     def _make_instance(self, memes_root: Path) -> WebAPIMixin:
         instance = WebAPIMixin.__new__(WebAPIMixin)

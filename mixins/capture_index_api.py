@@ -10,6 +10,7 @@ from astrbot.api import logger
 
 from ..capture_activity import load_capture_activity
 from ..config import PACKS_DIR, get_active_pack_paths
+from ..backend.tagging import canonical_tag
 from ..storage import MemeStore, is_safe_category_segment
 
 
@@ -53,6 +54,108 @@ class CaptureIndexAPIMixin:
         return fallback
 
     def _capture_workspace_for_pack(self, pack_id: str, category: str = "") -> dict:
+        return self._flat_capture_workspace_for_pack(pack_id, category)
+
+    def _flat_capture_workspace_for_pack(self, pack_id: str, category: str = "") -> dict:
+        """Build the capture workspace from flat files and virtual tags."""
+        selected_tag = canonical_tag(category) if str(category or "").strip() else None
+        if category and not selected_tag:
+            raise ValueError("invalid tag")
+        pack_dir = (PACKS_DIR / pack_id).resolve()
+        store = MemeStore(pack_dir)
+        store.reindex_flat_catalog()
+        activity = load_capture_activity(pack_dir)
+        indexed_items: list[dict] = []
+        pending_items: list[dict] = []
+        folders: list[dict] = []
+        tag_counts: dict[str, dict[str, int]] = {}
+        for entry in store.load_catalog().get("items", []):
+            if not isinstance(entry, dict):
+                continue
+            filename = Path(str(entry.get("filename") or "")).name
+            path = store.memes_dir / filename
+            if filename != str(entry.get("filename")) or not path.is_file():
+                continue
+            indexed = bool(entry.get("indexed"))
+            modified_at = int(path.stat().st_mtime)
+            for tag in entry.get("tags", []):
+                counts = tag_counts.setdefault(tag, {"total": 0, "indexed": 0, "pending": 0})
+                counts["total"] += 1
+                counts["indexed" if indexed else "pending"] += 1
+                if selected_tag and tag != selected_tag:
+                    continue
+                item = {
+                    **entry,
+                    "category": tag,
+                    "tag": tag,
+                    "filename": filename,
+                    "relative_path": f"memes/{filename}",
+                    "indexed": indexed,
+                    "captured_at": int(entry.get("captured_at") or modified_at),
+                }
+                if indexed:
+                    indexed_items.append(item)
+                else:
+                    item["activity_status"] = "pending"
+                    pending_items.append(item)
+        for tag, counts in sorted(tag_counts.items()):
+            folders.append({
+                "category": tag,
+                "tag": tag,
+                **counts,
+                "complete": counts["indexed"] == counts["total"],
+                "indexed_at": None,
+                "index_provider_id": "",
+            })
+        duplicate_items = []
+        duplicate_count = 0
+        for event in activity.get("events", []):
+            if not isinstance(event, dict) or event.get("status") != "duplicate":
+                continue
+            event_tag = canonical_tag(event.get("category")) or ""
+            if selected_tag and event_tag != selected_tag:
+                continue
+            filename = str(event.get("filename") or "")
+            path = store.memes_dir / Path(filename).name
+            if not path.is_file():
+                continue
+            duplicate_count += 1
+            duplicate_items.append({
+                "id": event.get("id", ""),
+                "category": event_tag,
+                "tag": event_tag,
+                "filename": filename,
+                "sha256": event.get("sha256", ""),
+                "relative_path": f"memes/{filename}",
+                "indexed": False,
+                "duplicate": True,
+                "activity_status": "duplicate",
+                "duplicate_of": event.get("duplicate_of", ""),
+                "captured_at": event.get("captured_at", 0),
+            })
+        pending_items.extend(duplicate_items)
+        indexed_items.sort(key=self._capture_item_time, reverse=True)
+        pending_items.sort(key=self._capture_item_time, reverse=True)
+        state = dict(getattr(self, "_library_index_state", {}) or {})
+        active_store = getattr(self, "store", None)
+        state["active_pack"] = bool(
+            active_store is not None and Path(getattr(active_store, "root", "")).resolve() == pack_dir
+        )
+        visible_folders = [folder for folder in folders if not selected_tag or folder["tag"] == selected_tag]
+        return {
+            "pack_id": pack_id,
+            "library_index": state,
+            "summary": {
+                "indexed": len(indexed_items),
+                "pending": len(pending_items) - duplicate_count,
+                "duplicate": duplicate_count,
+                "complete_folders": sum(1 for folder in visible_folders if folder["complete"]),
+                "folder_total": len(visible_folders),
+            },
+            "folders": folders,
+            "indexed_items": indexed_items if selected_tag else indexed_items[:48],
+            "pending_items": pending_items if selected_tag else pending_items[:48],
+        }
         selected_category = str(category or "").strip()
         if selected_category and not is_safe_category_segment(selected_category):
             raise ValueError("category 无效")
@@ -185,7 +288,13 @@ class CaptureIndexAPIMixin:
         if not pack_dir.is_dir():
             raise FileNotFoundError(f"表情包 {pack_id} 不存在")
         store = MemeStore(pack_dir)
-        mappings = store.reindex_all_categories()
+        result = store.reindex_flat_catalog()
+        return {
+            "pack_id": str(pack_id),
+            "category_count": result["tag_count"],
+            "changed_file_count": result["migrated_file_count"],
+            **result,
+        }
         changed_file_count = sum(
             1 for mapping in mappings.values() for old, new in mapping.items() if old != new
         )
@@ -201,8 +310,11 @@ class CaptureIndexAPIMixin:
             raise FileNotFoundError(f"表情包 {pack_id} 不存在")
         store = MemeStore(pack_dir)
         total = sum(
-            len(store.image_paths(category))
-            for category in store.directory_categories()
+            1
+            for path in store.memes_dir.rglob("*")
+            if path.is_file() and path.suffix.lower() in {
+                ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"
+            }
         )
         return {
             "pack_id": str(pack_id),
@@ -219,6 +331,19 @@ class CaptureIndexAPIMixin:
     ) -> dict[str, int | str]:
         pack_dir = (PACKS_DIR / str(pack_id)).resolve()
         store = MemeStore(pack_dir)
+        result = await asyncio.to_thread(store.reindex_flat_catalog)
+        state["processed"] = result["processed"]
+        state["total"] = result["total"]
+        state["changed_file_count"] = result["migrated_file_count"]
+        state["current_category"] = ""
+        return {
+            "pack_id": str(pack_id),
+            "category_count": result["tag_count"],
+            "changed_file_count": result["migrated_file_count"],
+            "processed": result["processed"],
+            "total": result["total"],
+            **result,
+        }
         processed = 0
         changed_file_count = 0
         for category in sorted(store.directory_categories()):

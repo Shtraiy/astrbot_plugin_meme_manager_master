@@ -1,6 +1,7 @@
 import os
 import re
 import time
+from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.all import *
@@ -13,6 +14,8 @@ from ..backend.models import (
 )
 from ..backend.pack_storage import install_first_official_pack_from_index
 from ..config import COMMUNITY_INDEX_URL
+from ..backend.tagging import canonical_tag
+from ..storage import MemeStore
 
 
 class CommandMixin:
@@ -141,6 +144,8 @@ class CommandMixin:
     @filter.permission_type(filter.PermissionType.ADMIN)
     @meme_manager_master.command("添加分类")
     async def add_category_command(self, event: AstrMessageEvent, category: str = None):
+        yield event.plain_result("表情包分类目录已取消，请直接使用固定标签管理表情包。")
+        return
         if not category:
             yield event.plain_result(
                 "📌 若要添加分类，请按照此格式操作：\n"
@@ -149,6 +154,7 @@ class CommandMixin:
             )
             return
         category = category.strip()
+        category = canonical_tag(category) or category
         if category in self._get_manageable_categories():
             yield event.plain_result(f"ℹ️ 分类「{category}」已存在，无需重复创建。")
             return
@@ -173,6 +179,7 @@ class CommandMixin:
     @filter.permission_type(filter.PermissionType.ADMIN)
     @meme_manager_master.command("添加表情")
     async def upload_meme(self, event: AstrMessageEvent, category: str = None):
+        category = canonical_tag(category) if category else category
         if not category:
             yield event.plain_result(
                 "📌 若要添加表情，请按照此格式操作：\n/表情管理 添加表情 [类别名称]\n（输入/查看图库 可获取类别列表）"
@@ -321,6 +328,8 @@ class CommandMixin:
     async def delete_category_command(
         self, event: AstrMessageEvent, category: str = None
     ):
+        yield event.plain_result("表情包分类目录已取消，不能删除标签本身；可使用清空标签移除标签关联。")
+        return
         """删除指定类型本身，同时移除其描述配置和本地文件夹。"""
         if not category:
             yield event.plain_result(
@@ -364,6 +373,18 @@ class CommandMixin:
 
     @meme_manager_master.command("图库统计")
     async def show_library_stats(self, event: AstrMessageEvent):
+        store = MemeStore(Path(self._default_pack_context()["pack_dir"]).resolve())
+        store.reindex_flat_catalog()
+        counts: dict[str, int] = {}
+        for item in store.load_catalog().get("items", []):
+            if isinstance(item, dict):
+                for tag in item.get("tags", []):
+                    counts[tag] = counts.get(tag, 0) + 1
+        total = len(store.load_catalog().get("items", []))
+        lines = ["表情包图书馆统计", "", f"本地文件总数: {total}", f"标签数: {len(counts)}", ""]
+        lines.extend(f"- {tag}: {count}" for tag, count in sorted(counts.items()))
+        yield event.plain_result("\n".join(lines))
+        return
         """显示图库详细统计信息"""
         try:
             result = ["📊 表情包图库统计报告", "", "📁 本地图库统计:"]

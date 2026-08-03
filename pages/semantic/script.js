@@ -115,7 +115,7 @@ async function initCaptureIndexPage() {
   function getImageLocation(item) {
     const relative = String(item.relative_path || "").split("/");
     const filename = relative.pop() || "";
-    const category = relative[relative.length - 1] || "";
+    const category = item.tag || item.category || "其他";
     if (!category || !filename || !packSelect.value) return null;
     return {
       managed_pack_id: packSelect.value,
@@ -217,7 +217,7 @@ async function initCaptureIndexPage() {
       ["已索引", stats.indexed || 0],
       ["待分类", stats.pending || 0],
       ["重复", stats.duplicate || 0],
-      ["完成目录", `${stats.complete_folders || 0}/${stats.folder_total || 0}`],
+      ["完成标签", `${stats.complete_folders || 0}/${stats.folder_total || 0}`],
     ]) {
       const item = document.createElement("div");
       item.className = "stat panel";
@@ -237,7 +237,7 @@ async function initCaptureIndexPage() {
     const allCategories = document.createElement("button");
     allCategories.type = "button";
     allCategories.className = `category-filter${selectedCategory ? "" : " active"}`;
-    allCategories.textContent = "全部分类";
+    allCategories.textContent = "全部标签";
     allCategories.addEventListener("click", () => {
       selectedCategory = "";
       void loadWorkspace();
@@ -315,7 +315,7 @@ async function initCaptureIndexPage() {
     }
   });
   reindexButton.addEventListener("click", async () => {
-    if (!packSelect.value || !window.confirm("只重新编号并同步索引中的文件名，不会重新识别表情。继续吗？")) return;
+    if (!packSelect.value || !window.confirm("将旧分类目录迁移到平铺目录，并按 meme_<哈希> 重建标签索引。继续吗？")) return;
     reindexing = true;
     reindexButton.disabled = true;
     notice.classList.remove("error");

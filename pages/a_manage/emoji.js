@@ -2012,6 +2012,10 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
         onClick: () => window.MemeManagerUI.emoji.deleteCategory(category),
       });
 
+      // Tags are fixed vocabulary entries; there are no category-directory controls.
+      editButton.hidden = true;
+      clearCategoryButton.hidden = true;
+      deleteCategoryButton.hidden = true;
       actionsDiv.appendChild(editButton);
       actionsDiv.appendChild(toggleCategoryButton);
       actionsDiv.appendChild(clearCategoryButton);

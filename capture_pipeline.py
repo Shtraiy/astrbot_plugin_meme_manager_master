@@ -21,6 +21,7 @@ from .collector import (
     normalize_category,
     parse_model_json,
 )
+from .backend.tagging import normalize_tags
 
 
 VISION_BATCH_SYSTEM_PROMPT = """
@@ -224,11 +225,12 @@ class CapturePipeline:
                     category = normalize_category(
                         scene.get("category"), categories, fallback
                     )
+                    tags = normalize_tags([category, scene.get("tags"), vision.get("tags")])
                     payload = payload_by_index[index]
                     async with self._save_lock:
                         result = self.store.save_image(
                             payload.content,
-                            category,
+                            tags,
                             payload.extension,
                             self._duplicate_threshold(),
                         )
@@ -260,14 +262,13 @@ class CapturePipeline:
                             )
                         else:
                             if result.status == "duplicate":
-                                duplicate_category = result.path.parent.name
                                 self._record_capture_event(
                                     self.store.root,
-                                    category=duplicate_category,
+                                    category=category,
                                     filename=result.path.name,
                                     digest=result.digest,
                                     status="duplicate",
-                                    duplicate_of=f"{duplicate_category}/{result.path.name}",
+                                    duplicate_of=result.path.name,
                                 )
                             logger.debug(
                                 "[meme_manager_master] 跳过重复表情包 path=%s", result.path

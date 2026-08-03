@@ -105,7 +105,7 @@ class CaptureIndexApiTests(unittest.TestCase):
 
         serialized = json.dumps(workspace, ensure_ascii=False)
         self.assertNotIn(str(pack_dir), serialized)
-        self.assertIn(f"memes/happy/{image.name}", serialized)
+        self.assertIn(f"memes/{image.name}", serialized)
 
     def test_workspace_can_filter_items_by_category(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -123,9 +123,9 @@ class CaptureIndexApiTests(unittest.TestCase):
             with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent):
                 workspace = instance._capture_workspace_for_pack("pack", "happy")
 
-        self.assertEqual({item["category"] for item in workspace["indexed_items"]}, {"happy"})
+        self.assertEqual({item["category"] for item in workspace["indexed_items"]}, {"开心"})
         self.assertEqual({item["category"] for item in workspace["pending_items"]}, set())
-        self.assertEqual({folder["category"] for folder in workspace["folders"]}, {"happy", "sad"})
+        self.assertEqual({folder["category"] for folder in workspace["folders"]}, {"开心", "悲伤"})
         self.assertEqual(workspace["summary"]["indexed"], 1)
         self.assertEqual(workspace["summary"]["pending"], 0)
         self.assertEqual(workspace["summary"]["folder_total"], 1)
@@ -155,12 +155,13 @@ class CaptureIndexApiTests(unittest.TestCase):
                 result = instance._reindex_pack_catalog("pack")
 
                 self.assertEqual(result["category_count"], 1)
-                self.assertEqual(result["changed_file_count"], 1)
-                catalog = MemeStore(pack_dir).load_catalog("happy")
+                self.assertEqual(result["changed_file_count"], 2)
+                catalog = MemeStore(pack_dir).load_catalog()
                 filenames = {item["filename"] for item in catalog["items"]}
-                self.assertEqual(filenames, {"happy_0001.png", "happy_0002.png"})
+                self.assertEqual(len(filenames), 2)
+                self.assertTrue(all(name.startswith("meme_") for name in filenames))
                 self.assertEqual(
-                    next(item for item in catalog["items"] if item["filename"] == "happy_0002.png")["description"],
+                    next(item for item in catalog["items"] if item.get("description"))["description"],
                     "保留",
                 )
 

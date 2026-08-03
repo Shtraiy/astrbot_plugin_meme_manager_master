@@ -13,10 +13,10 @@ from pathlib import Path
 
 try:
     from .backend.atomic_io import atomic_write_bytes, atomic_write_json
-    from .backend.tagging import canonical_tag, normalize_tags
+    from .backend.tagging import CANONICAL_TAGS, canonical_tag, normalize_tags
 except ImportError:  # standalone test imports (repo root on sys.path)
     from backend.atomic_io import atomic_write_bytes, atomic_write_json
-    from backend.tagging import canonical_tag, normalize_tags
+    from backend.tagging import CANONICAL_TAGS, canonical_tag, normalize_tags
 
 try:
     from PIL import Image
@@ -136,21 +136,30 @@ class MemeStore:
         return cls(root)
 
     def available_categories(self) -> set[str]:
-        categories = set()
-        if self.memes_dir.is_dir():
-            categories = {
-                item.name for item in self.memes_dir.iterdir() if item.is_dir()
-            }
+        categories = {
+            tag
+            for item in self.load_catalog().get("items", [])
+            if isinstance(item, dict)
+            for tag in item.get("tags", [])
+            if canonical_tag(tag)
+        }
         metadata = self._load_metadata()
-        categories.update(metadata)
-        return categories or set(DEFAULT_CATEGORY_DESCRIPTIONS)
+        categories.update(
+            canonical_tag(category) or category
+            for category in metadata
+            if canonical_tag(category) or category in CANONICAL_TAGS
+        )
+        return categories or set(CANONICAL_TAGS)
 
     def category_descriptions(self) -> dict[str, str]:
         """Return descriptions used by meme_manager_master's category prompt."""
         metadata = self._load_metadata()
         categories = self.available_categories()
         return {
-            category: str(metadata.get(category) or DEFAULT_CATEGORY_DESCRIPTIONS.get(category, ""))
+            category: str(
+                metadata.get(category)
+                or DEFAULT_CATEGORY_DESCRIPTIONS.get(category, "")
+            )
             for category in categories
         }
 
@@ -395,22 +404,36 @@ class MemeStore:
         )
 
     def reconcile_category(self, category: str) -> bool:
-        """Migrate one legacy category through the unified reconciler."""
-        if not _is_safe_segment(category) or not (self.memes_dir / category).is_dir():
+        """Repair a legacy directory catalog without making it active again."""
+        if not _is_safe_segment(category):
             return False
-        result = self.reindex_flat_catalog()
-        return bool(
-            result["migrated_file_count"]
-            or result["deduplicated_file_count"]
-            or result["skipped_path_count"]
+        category_dir = self.memes_dir / category
+        if not category_dir.is_dir():
+            return False
+        old = self._read_catalog_file(category_dir / "index.json", category=category)
+        by_filename = {
+            str(item.get("filename")): dict(item)
+            for item in old.get("items", [])
+            if isinstance(item, dict) and item.get("filename")
+        }
+        entries = []
+        for path in self.image_paths(category):
+            entry = by_filename.get(path.name) or self._minimal_catalog_entry(path)
+            entry["filename"] = path.name
+            entry["tags"] = normalize_tags([category, *(entry.get("tags") or [])])
+            entries.append(entry)
+        atomic_write_json(
+            category_dir / "index.json",
+            {"version": 1, "category": category, "items": entries},
         )
+        return True
 
     def reconcile_categories(self, categories) -> int:
         """Reconcile legacy categories once through the flat catalog."""
         safe = {
             str(item) for item in categories if _is_safe_segment(str(item))
         }
-        return 1 if safe and self.reconcile_category(sorted(safe)[0]) else 0
+        return sum(1 for category in sorted(safe) if self.reconcile_category(category))
 
     def reconcile_catalogs(self) -> int:
         """Create or repair the unified index for every image on disk."""
@@ -633,7 +656,13 @@ class MemeStore:
         for category_dir in legacy_dirs:
             source_paths.extend(self.image_paths(category_dir.name))
         total = len(source_paths)
-        old_unified = self.load_catalog().get("items", [])
+        unified_catalog = self._read_catalog_file(self.memes_dir / "index.json")
+        old_unified = unified_catalog.get("items", [])
+        catalog_metadata = {
+            key: value
+            for key, value in unified_catalog.items()
+            if key not in {"version", "updated_at", "items", "category"}
+        }
         by_filename = {
             str(item.get("filename")): item
             for item in old_unified
@@ -647,6 +676,13 @@ class MemeStore:
             if category and category in {item.name for item in legacy_dirs}:
                 legacy_catalog = self._read_catalog_file(
                     source.parent / "index.json", category=category
+                )
+                catalog_metadata.update(
+                    {
+                        key: value
+                        for key, value in legacy_catalog.items()
+                        if key not in {"version", "updated_at", "items", "category"}
+                    }
                 )
                 old_entry = next(
                     (
@@ -704,7 +740,10 @@ class MemeStore:
             if target.exists():
                 target.unlink()
             temporary.rename(target)
-        self.write_catalog(sorted(final_entries, key=lambda item: item["filename"]))
+        self.write_catalog(
+            sorted(final_entries, key=lambda item: item["filename"]),
+            catalog_metadata,
+        )
 
         skipped = 0
         for category_dir in legacy_dirs:
@@ -943,23 +982,26 @@ def resolve_safe_category_dir(root: Path | str, category: str) -> Path:
 
 
 def scan_pack_emojis(memes_dir: Path | str) -> dict[str, list[str]]:
-    """Scan one pack using the same image contract as runtime selection."""
+    """Scan one pack into virtual tag buckets backed by the flat catalog."""
     root = Path(memes_dir)
     if not root.is_dir():
         return {}
-
+    store = MemeStore(root.parent)
+    store.reindex_flat_catalog()
     result: dict[str, list[str]] = {}
-    for category_dir in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
-        if not category_dir.is_dir() or not is_safe_category_segment(category_dir.name):
+    for item in store.load_catalog().get("items", []):
+        if not isinstance(item, dict):
             continue
-        result[category_dir.name] = [
-            path.name
-            for path in sorted(
-                category_dir.iterdir(), key=lambda item: item.name.casefold()
-            )
-            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-        ]
-    return result
+        filename = Path(str(item.get("filename") or "")).name
+        path = root / filename
+        if filename != str(item.get("filename")) or not path.is_file():
+            continue
+        for tag in item.get("tags", []):
+            result.setdefault(str(tag), []).append(filename)
+    return {
+        tag: sorted(set(names), key=str.casefold)
+        for tag, names in sorted(result.items(), key=lambda pair: pair[0])
+    }
 
 
 def _is_safe_segment(value: str) -> bool:

@@ -1,40 +1,26 @@
+"""Compatibility API for flat meme storage and controlled tags."""
+
 from __future__ import annotations
 
-import hashlib
 import logging
-import os
-import shutil
 from pathlib import Path
 
 from werkzeug.utils import secure_filename
 
 from ..config import MEMES_DIR, get_active_pack_paths
-from ..storage import detect_image_extension, is_safe_category_segment
-from .atomic_io import atomic_write_bytes
-from .pack_repository import PackRepository
+from ..storage import IMAGE_EXTENSIONS, MemeStore, detect_image_extension
+from .tagging import canonical_tag, normalize_tags
 
 logger = logging.getLogger(__name__)
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 class DuplicateEmojiError(ValueError):
-    """Raised when an uploaded emoji already exists in the target category."""
+    """Kept for callers that still import the legacy exception."""
 
     def __init__(self, existing_filename: str):
         self.existing_filename = existing_filename
-        super().__init__(f"同一分类中已存在相同文件：{existing_filename}")
-
-
-def _is_supported_image(filename: str) -> bool:
-    return filename.lower().endswith(IMAGE_EXTENSIONS)
-
-
-def _get_category_path(category: str, memes_dir: str | Path | None = None) -> Path:
-    raw_category = str(category or "")
-    if not is_safe_category_segment(raw_category):
-        raise ValueError("invalid category name")
-    return Path(memes_dir or get_active_pack_paths()["memes_dir"]).resolve() / raw_category
+        super().__init__(f"duplicate meme: {existing_filename}")
 
 
 def _default_memes_dir() -> Path:
@@ -44,440 +30,267 @@ def _default_memes_dir() -> Path:
         return Path(MEMES_DIR).resolve()
 
 
-def _repository_for(memes_dir: str | Path | None = None) -> PackRepository:
-    memes_root = Path(memes_dir or _default_memes_dir()).resolve()
-    return PackRepository(memes_root.parent)
+def _memes_path(memes_dir: str | Path | None = None) -> Path:
+    return Path(memes_dir or _default_memes_dir()).resolve()
 
 
-def _iter_category_image_paths(category_path: Path) -> list[Path]:
-    if not category_path.is_dir():
-        return []
-    return [
-        path
-        for path in category_path.iterdir()
-        if path.is_file() and _is_supported_image(path.name)
-    ]
+def _store_for(memes_dir: str | Path | None = None) -> MemeStore:
+    memes_root = _memes_path(memes_dir)
+    return MemeStore(memes_root.parent)
 
 
-def _calculate_file_hash(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
+def _tag(value: object) -> str | None:
+    return canonical_tag(value)
 
 
-def _find_duplicate_image(category_path: Path, content_hash: str) -> Path | None:
-    for existing_path in _iter_category_image_paths(category_path):
-        try:
-            if _calculate_file_hash(existing_path.read_bytes()) == content_hash:
-                return existing_path
-        except OSError as exc:
-            logger.warning(
-                "读取现有文件失败，跳过判重: %s, 错误: %s", existing_path, exc
-            )
-    return None
+def _image_name(value: object) -> str:
+    name = Path(str(value or "")).name
+    if name != str(value or "") or Path(name).suffix.lower() not in IMAGE_EXTENSIONS:
+        return ""
+    return name
 
 
-def _build_available_file_path(category_path: Path, filename: str) -> Path:
-    candidate = category_path / filename
-    if not candidate.exists():
-        return candidate
-
-    suffix = Path(filename).suffix
-    stem = Path(filename).stem
-    index = 1
-    while True:
-        candidate = category_path / f"{stem}_{index}{suffix}"
-        if not candidate.exists():
-            return candidate
-        index += 1
+def _catalog_items(store: MemeStore) -> list[dict]:
+    store.reindex_flat_catalog()
+    return [item for item in store.load_catalog().get("items", []) if isinstance(item, dict)]
 
 
-def _reconcile_catalogs(memes_dir: str | Path | None = None) -> None:
-    """Keep category index documents in sync for every mutation entry point."""
-    try:
-        from ..storage import MemeStore
+def _write_items(store: MemeStore, items: list[dict]) -> None:
+    metadata = {
+        key: value
+        for key, value in store.load_catalog().items()
+        if key not in {"version", "updated_at", "items"}
+    }
+    store.write_catalog(items, metadata)
 
-        root = Path(memes_dir or _default_memes_dir()).resolve().parent
-        MemeStore(root).reconcile_catalogs()
-    except Exception as exc:
-        logger.warning("分类索引同步失败: %s", exc)
+
+def _find_item(store: MemeStore, filename: str) -> dict | None:
+    return next(
+        (item for item in _catalog_items(store) if item.get("filename") == filename),
+        None,
+    )
+
+
+def _mutate_tags(
+    filename: str,
+    memes_dir: str | Path | None,
+    *,
+    add: object = None,
+    remove: object = None,
+) -> bool:
+    store = _store_for(memes_dir)
+    name = _image_name(filename)
+    target = _tag(add) if add is not None else None
+    source = _tag(remove) if remove is not None else None
+    if not name or not (store.memes_dir / name).is_file():
+        return False
+    items = _catalog_items(store)
+    changed = False
+    for item in items:
+        if item.get("filename") != name:
+            continue
+        tags = list(item.get("tags") or [])
+        if source in tags:
+            tags.remove(source)
+            changed = True
+        if target and target not in tags:
+            tags = normalize_tags([*tags, target])
+            changed = True
+        item["tags"] = normalize_tags(tags)
+        break
+    if not changed:
+        return False
+    _write_items(store, items)
+    return True
 
 
 async def scan_emoji_folder(memes_dir: str | Path | None = None):
-    """扫描表情包文件夹，返回所有类别及其表情包"""
-    emoji_data = {}
-    memes_root = Path(memes_dir or _default_memes_dir()).resolve()
-    if not memes_root.exists():
-        memes_root.mkdir(parents=True, exist_ok=True)
-    for category in os.listdir(memes_root):
-        category_path = _get_category_path(category, memes_root)
-        if not category_path.is_dir():
+    """Return virtual tag buckets backed by the single flat catalog."""
+    store = _store_for(memes_dir)
+    result: dict[str, list[str]] = {}
+    for item in _catalog_items(store):
+        filename = _image_name(item.get("filename"))
+        if not filename or not (store.memes_dir / filename).is_file():
             continue
-
-        emoji_data[category] = [
-            path.name for path in _iter_category_image_paths(category_path)
-        ]
-    return emoji_data
+        for tag in item.get("tags", []):
+            result.setdefault(tag, []).append(filename)
+    return {tag: sorted(set(names)) for tag, names in sorted(result.items())}
 
 
 def get_emoji_by_category(category, memes_dir: str | Path | None = None):
-    """获取指定类别下的所有表情包"""
-    category_path = _get_category_path(category, memes_dir)
-    if not category_path.is_dir():
+    """Read a virtual tag bucket; the old category name remains an alias."""
+    tag = _tag(category)
+    if not tag:
         return []
-    return [path.name for path in _iter_category_image_paths(category_path)]
+    store = _store_for(memes_dir)
+    return sorted(
+        item["filename"]
+        for item in _catalog_items(store)
+        if tag in item.get("tags", [])
+        and _image_name(item.get("filename"))
+        and (store.memes_dir / item["filename"]).is_file()
+    )
 
 
-def add_emoji_to_category(
-    category,
-    image_file,
-    memes_dir: str | Path | None = None,
-):
-    """
-    添加表情包到指定类别
-
-    Args:
-        category: 类别名
-        image_file: 上传的文件对象
-
-    Returns:
-        dict[str, str]: 保存后的文件路径和最终文件名
-    """
-    if not image_file:
-        logger.error("没有接收到文件")
-        raise ValueError("没有接收到文件")
-
-    if not image_file.filename:
-        logger.error("文件名为空")
-        raise ValueError("文件名为空")
-
-    # 计算目标目录，但在验证上传内容前不创建它。
-    category_path = _get_category_path(category, memes_dir)
-
-    # 保存文件
-    filename = image_file.filename
-    # 生成安全的文件名
-    safe_filename = secure_filename(filename)
-
-    if not safe_filename or not _is_supported_image(safe_filename):
-        raise ValueError("仅支持 png、jpg、jpeg、gif、webp 图片文件")
-
-    # 如果文件名被修改了，记录日志
-    if safe_filename != filename:
-        logger.info(f"文件名已从 {filename} 修改为安全的文件名 {safe_filename}")
-        filename = safe_filename
-
-    file_path = category_path / filename
-
+def add_emoji_to_category(category, image_file, memes_dir: str | Path | None = None):
+    """Validate an upload and add its canonical tag to a flat meme entry."""
+    if not image_file or not getattr(image_file, "filename", ""):
+        raise ValueError("upload file is required")
+    tag = _tag(category)
+    if not tag:
+        raise ValueError("invalid meme tag")
+    filename = secure_filename(str(image_file.filename))
+    if not filename or Path(filename).suffix.lower() not in IMAGE_EXTENSIONS:
+        raise ValueError("unsupported image extension")
+    stream = getattr(image_file, "stream", image_file)
     try:
-        image_file.stream.seek(0)
-        content = image_file.stream.read(MAX_UPLOAD_IMAGE_BYTES + 1)
-        if not content:
-            logger.error("文件内容为空")
-            raise ValueError("上传文件内容为空")
-        if len(content) > MAX_UPLOAD_IMAGE_BYTES:
-            raise ValueError("上传图片超过 10 MB 限制")
-
-        detected_extension = detect_image_extension(content)
-        allowed_extensions = {
-            ".jpg": {".jpg", ".jpeg"},
-            ".jpeg": {".jpg", ".jpeg"},
-        }
-        expected_extensions = allowed_extensions.get(
-            Path(filename).suffix.lower(), {Path(filename).suffix.lower()}
-        )
-        if detected_extension is None or detected_extension not in expected_extensions:
-            raise ValueError("上传文件不是有效图片或扩展名与内容不匹配")
-
-        category_path.mkdir(parents=True, exist_ok=True)
-        # 检查目录是否可写
-        if not os.access(category_path, os.W_OK):
-            logger.error(f"没有权限写入目录: {category_path}")
-            raise OSError(f"没有权限写入目录: {category_path}")
-
-        # 检查磁盘空间是否足够
-        _, _, free = shutil.disk_usage(category_path)
-        # 假设文件不会超过10MB，保险起见检查是否至少有10MB
-        if free < 10 * 1024 * 1024:
-            logger.error(f"磁盘空间不足: 只有 {free / 1024 / 1024:.2f}MB")
-            raise OSError("磁盘空间不足")
-
-        content_hash = _calculate_file_hash(content)
-        duplicate_path = _find_duplicate_image(category_path, content_hash)
-        if duplicate_path is not None:
-            logger.info(
-                "跳过重复文件上传: 类别=%s, 上传名=%s, 已存在文件=%s",
-                category,
-                filename,
-                duplicate_path.name,
-            )
-            raise DuplicateEmojiError(duplicate_path.name)
-
-        file_path = _build_available_file_path(category_path, filename)
-
-        # 记录日志，包括绝对路径
-        logger.info(f"准备保存文件到: {file_path.absolute()}")
-
-        atomic_write_bytes(file_path, content)
-
-        # 验证文件是否成功保存
-        if not file_path.exists():
-            logger.error(f"文件保存失败，{file_path} 不存在")
-            raise OSError(f"文件保存失败，{file_path} 不存在")
-
-        file_size = file_path.stat().st_size
-        if file_size == 0:
-            logger.error(f"文件保存失败，{file_path} 大小为0")
-            raise OSError(f"文件保存失败，{file_path} 大小为0")
-
-        logger.info(f"文件成功保存到 {file_path}, 大小: {file_size} 字节")
-        _reconcile_catalogs(memes_dir)
-        return {"path": str(file_path), "filename": file_path.name}
-
-    except Exception as e:
-        if isinstance(e, (DuplicateEmojiError, ValueError)):
-            raise
-        logger.error(f"保存文件时出错: {str(e)}", exc_info=True)
-        # 如果文件已部分创建，尝试删除
-        if file_path.exists():
-            try:
-                file_path.unlink()  # 删除文件
-                logger.info(f"已删除部分上传的文件: {file_path}")
-            except Exception as del_e:
-                logger.error(f"无法删除部分上传的文件: {del_e}")
-        raise OSError(f"保存文件时出错: {str(e)}")
-
-
-def delete_emoji_from_category(
-    category,
-    image_file,
-    memes_dir: str | Path | None = None,
-):
-    """删除指定类别下的表情包"""
-    result = _repository_for(memes_dir).delete_images(
-        str(category), [str(image_file)]
-    )
-    return len(result.succeeded) > 0
-
-
-def batch_delete_emojis(
-    category: str,
-    image_files: list[str],
-    memes_dir: str | Path | None = None,
-) -> dict[str, object]:
-    """批量删除指定类别下的表情包。"""
-    category_path = _get_category_path(category, memes_dir)
-    if not category_path.is_dir():
-        return {
-            "category_exists": False,
-            "deleted_files": [],
-            "missing_files": [],
-        }
-
-    outcome = _repository_for(memes_dir).delete_images(category, image_files)
-    result = {
-        "category_exists": True,
-        "deleted_files": list(outcome.succeeded),
-        "missing_files": list(outcome.missing),
-    }
-    return result
-
-
-def move_emoji_to_category(
-    source_category: str,
-    image_file: str,
-    target_category: str,
-    memes_dir: str | Path | None = None,
-) -> dict[str, object]:
-    """将单个表情包移动到另一个类别。"""
-    source_category_path = _get_category_path(source_category, memes_dir)
-    if not source_category_path.is_dir():
-        return {
-            "source_category_exists": False,
-            "target_category": target_category,
-            "filename": Path(image_file).name,
-            "moved": False,
-            "conflict": False,
-            "missing": True,
-        }
-
-    image_name = Path(image_file).name
-    outcome = _repository_for(memes_dir).move_images(
-        source_category, target_category, [image_name]
-    )
-    base = {
-        "source_category_exists": True,
-        "source_category": source_category,
-        "target_category": target_category,
-        "filename": image_name,
-    }
-    if image_name in outcome.succeeded:
-        return {**base, "moved": True, "conflict": False, "missing": False}
-    if image_name in outcome.conflicting:
-        return {**base, "moved": False, "conflict": True, "missing": False}
-    return {**base, "moved": False, "conflict": False, "missing": True}
-
-
-def batch_move_emojis(
-    source_category: str,
-    image_files: list[str],
-    target_category: str,
-    memes_dir: str | Path | None = None,
-) -> dict[str, object]:
-    """批量将表情包移动到另一个类别。"""
-    source_category_path = _get_category_path(source_category, memes_dir)
-    if not source_category_path.is_dir():
-        return {
-            "source_category_exists": False,
-            "moved_files": [],
-            "missing_files": [],
-            "conflicting_files": [],
-        }
-
-    outcome = _repository_for(memes_dir).move_images(
-        source_category, target_category, image_files
-    )
-    result = {
-        "source_category_exists": True,
-        "source_category": source_category,
-        "target_category": target_category,
-        "moved_files": list(outcome.succeeded),
-        "missing_files": list(outcome.missing),
-        "conflicting_files": list(outcome.conflicting),
-    }
-    return result
-
-
-def copy_emoji_to_category(
-    source_category: str,
-    image_file: str,
-    target_category: str,
-    memes_dir: str | Path | None = None,
-) -> dict[str, object]:
-    """将单个表情包复制到另一个类别。"""
-    source_category_path = _get_category_path(source_category, memes_dir)
-    if not source_category_path.is_dir():
-        return {
-            "source_category_exists": False,
-            "target_category": target_category,
-            "filename": Path(image_file).name,
-            "copied": False,
-            "conflict": False,
-            "missing": True,
-        }
-
-    image_name = Path(image_file).name
-    outcome = _repository_for(memes_dir).copy_images(
-        source_category, target_category, [image_name]
-    )
-    base = {
-        "source_category_exists": True,
-        "source_category": source_category,
-        "target_category": target_category,
-        "filename": image_name,
-    }
-    if image_name in outcome.succeeded:
-        return {**base, "copied": True, "conflict": False, "missing": False}
-    if image_name in outcome.conflicting:
-        return {**base, "copied": False, "conflict": True, "missing": False}
-    return {**base, "copied": False, "conflict": False, "missing": True}
-
-
-def batch_copy_emojis(
-    source_category: str,
-    image_files: list[str],
-    target_category: str,
-    memes_dir: str | Path | None = None,
-) -> dict[str, object]:
-    """批量将表情包复制到另一个类别。"""
-    source_category_path = _get_category_path(source_category, memes_dir)
-    if not source_category_path.is_dir():
-        return {
-            "source_category_exists": False,
-            "copied_files": [],
-            "missing_files": [],
-            "conflicting_files": [],
-        }
-
-    outcome = _repository_for(memes_dir).copy_images(
-        source_category, target_category, image_files
-    )
-    result = {
-        "source_category_exists": True,
-        "source_category": source_category,
-        "target_category": target_category,
-        "copied_files": list(outcome.succeeded),
-        "missing_files": list(outcome.missing),
-        "conflicting_files": list(outcome.conflicting),
-    }
-    return result
-
-
-def clear_category_emojis(
-    category: str,
-    memes_dir: str | Path | None = None,
-) -> dict[str, object]:
-    """清空指定类别下的所有表情包，但保留类别目录和配置。"""
-    category_path = _get_category_path(category, memes_dir)
-    if not category_path.is_dir():
-        return {
-            "category_exists": False,
-            "deleted_files": [],
-        }
-
-    filenames = [path.name for path in _iter_category_image_paths(category_path)]
-    outcome = _repository_for(memes_dir).delete_images(category, filenames)
-    result = {
-        "category_exists": True,
-        "deleted_files": list(outcome.succeeded),
-    }
-    return result
-
-
-def clear_all_emojis(memes_dir: str | Path | None = None) -> dict[str, object]:
-    """清空所有类别中的表情包，但保留目录和配置。"""
-    deleted_by_category = {}
-    memes_root = Path(memes_dir or _default_memes_dir()).resolve()
-    if not memes_root.exists():
-        return {"deleted_by_category": deleted_by_category}
-
-    repository = _repository_for(memes_root)
-    for category_path in memes_root.iterdir():
-        if not category_path.is_dir():
-            continue
-        filenames = [path.name for path in _iter_category_image_paths(category_path)]
-        if not filenames:
-            continue
-        outcome = repository.delete_images(category_path.name, filenames)
-        if outcome.succeeded:
-            deleted_by_category[category_path.name] = len(outcome.succeeded)
-    return {"deleted_by_category": deleted_by_category}
-
-
-def update_emoji_in_category(
-    category,
-    old_image_file,
-    new_image_file,
-    memes_dir: str | Path | None = None,
-):
-    """更新（替换）表情包文件"""
-    category_path = _get_category_path(category, memes_dir)
-
-    if not os.path.isdir(category_path):
-        return False
-    old_name = Path(str(old_image_file)).name
-    filename = str(getattr(new_image_file, "filename", "") or "")
-    if not filename:
-        return False
-    try:
-        content = new_image_file.read()
-    except Exception:
-        return False
+        stream.seek(0)
+    except (AttributeError, OSError):
+        pass
+    content = stream.read(MAX_UPLOAD_IMAGE_BYTES + 1)
     if not content:
+        raise ValueError("uploaded image is empty")
+    if len(content) > MAX_UPLOAD_IMAGE_BYTES:
+        raise ValueError("uploaded image exceeds 10 MB")
+    detected = detect_image_extension(content)
+    suffix = Path(filename).suffix.lower()
+    expected = {suffix}
+    if suffix in {".jpg", ".jpeg"}:
+        expected = {".jpg", ".jpeg"}
+    if detected is None or detected not in expected:
+        raise ValueError("image content does not match its extension")
+
+    store = _store_for(memes_dir)
+    result = store.save_image(content, [tag], Path(filename).suffix.lower())
+    return {
+        "path": str(result.path),
+        "filename": result.path.name,
+        "tags": _find_item(store, result.path.name).get("tags", [tag]),
+        "duplicate": result.status == "duplicate",
+    }
+
+
+def delete_emoji_from_category(category, image_file, memes_dir: str | Path | None = None):
+    """Delete one flat meme file, regardless of the selected virtual tag."""
+    store = _store_for(memes_dir)
+    name = _image_name(image_file)
+    path = store.memes_dir / name
+    if not name or not path.is_file():
         return False
-    try:
-        _repository_for(memes_dir).replace_image(
-            category, old_name, filename, content
-        )
-        return True
-    except Exception as exc:
-        logger.error("替换表情失败: %s", exc, exc_info=True)
+    path.unlink()
+    _write_items(store, [item for item in _catalog_items(store) if item.get("filename") != name])
+    return True
+
+
+def batch_delete_emojis(category, image_files, memes_dir: str | Path | None = None):
+    store = _store_for(memes_dir)
+    names = [_image_name(value) for value in image_files]
+    deleted = [name for name in names if name and delete_emoji_from_category(category, name, memes_dir)]
+    return {
+        "category_exists": bool(_tag(category) and get_emoji_by_category(category, memes_dir)),
+        "deleted_files": deleted,
+        "missing_files": [name for name in names if name and name not in deleted],
+    }
+
+
+def move_emoji_to_category(source_category, image_file, target_category, memes_dir=None):
+    source = _tag(source_category)
+    target = _tag(target_category)
+    name = _image_name(image_file)
+    exists = bool(source and get_emoji_by_category(source, memes_dir))
+    base = {
+        "source_category_exists": exists,
+        "source_category": source_category,
+        "target_category": target_category,
+        "filename": name,
+    }
+    if not source or not target or name not in get_emoji_by_category(source, memes_dir):
+        return {**base, "moved": False, "conflict": False, "missing": True}
+    return {**base, "moved": _mutate_tags(name, memes_dir, add=target, remove=source), "conflict": False, "missing": False}
+
+
+def batch_move_emojis(source_category, image_files, target_category, memes_dir=None):
+    moved, missing = [], []
+    for name in image_files:
+        result = move_emoji_to_category(source_category, name, target_category, memes_dir)
+        (moved if result["moved"] else missing).append(Path(str(name)).name)
+    return {
+        "source_category_exists": bool(_tag(source_category) and get_emoji_by_category(source_category, memes_dir)),
+        "source_category": source_category,
+        "target_category": target_category,
+        "moved_files": moved,
+        "missing_files": missing,
+        "conflicting_files": [],
+    }
+
+
+def copy_emoji_to_category(source_category, image_file, target_category, memes_dir=None):
+    source = _tag(source_category)
+    target = _tag(target_category)
+    name = _image_name(image_file)
+    source_names = get_emoji_by_category(source, memes_dir) if source else []
+    base = {
+        "source_category_exists": bool(source_names),
+        "source_category": source_category,
+        "target_category": target_category,
+        "filename": name,
+    }
+    if name not in source_names or not target:
+        return {**base, "copied": False, "conflict": False, "missing": True}
+    return {**base, "copied": _mutate_tags(name, memes_dir, add=target), "conflict": False, "missing": False}
+
+
+def batch_copy_emojis(source_category, image_files, target_category, memes_dir=None):
+    copied, missing = [], []
+    for name in image_files:
+        result = copy_emoji_to_category(source_category, name, target_category, memes_dir)
+        (copied if result["copied"] else missing).append(Path(str(name)).name)
+    return {
+        "source_category_exists": bool(_tag(source_category) and get_emoji_by_category(source_category, memes_dir)),
+        "source_category": source_category,
+        "target_category": target_category,
+        "copied_files": copied,
+        "missing_files": missing,
+        "conflicting_files": [],
+    }
+
+
+def clear_category_emojis(category, memes_dir=None):
+    """Remove a tag from matching entries while retaining the image files."""
+    tag = _tag(category)
+    store = _store_for(memes_dir)
+    items = _catalog_items(store)
+    affected = []
+    for item in items:
+        if tag and tag in item.get("tags", []):
+            tags = [value for value in item["tags"] if value != tag]
+            item["tags"] = normalize_tags(tags)
+            affected.append(item["filename"])
+    if affected:
+        _write_items(store, items)
+    return {"category_exists": bool(affected), "deleted_files": affected, "untagged_files": affected}
+
+
+def clear_all_emojis(memes_dir=None):
+    store = _store_for(memes_dir)
+    items = _catalog_items(store)
+    deleted = []
+    for path in store.image_paths():
+        try:
+            path.unlink()
+            deleted.append(path.name)
+        except OSError:
+            logger.warning("unable to delete meme: %s", path)
+    _write_items(store, [])
+    return {"deleted_by_category": {"全部": len(deleted)} if deleted else {}, "deleted_files": deleted}
+
+
+def update_emoji_in_category(category, old_image_file, new_image_file, memes_dir=None):
+    """Replace one image while preserving its current tag set."""
+    old_name = _image_name(old_image_file)
+    if not old_name:
         return False
+    result = add_emoji_to_category(category, new_image_file, memes_dir)
+    if result["filename"] != old_name:
+        delete_emoji_from_category(category, old_name, memes_dir)
+    return True

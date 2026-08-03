@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from pathlib import Path
 
 from ..config import (
@@ -12,6 +11,7 @@ from ..config import (
 )
 from ..utils import ensure_dir_exists, load_json, save_json
 from ..storage import MemeStore, is_safe_category_segment
+from .tagging import canonical_tag
 from .pack_repository import PackRepository
 from .semantic_storage import invalidate_semantic_metadata
 
@@ -121,19 +121,19 @@ class CategoryManager:
             logger.error(f"分类变更后刷新语义元数据失败: {exc}", exc_info=True)
 
     def get_local_categories(self) -> set[str]:
-        """获取本地文件夹中的类别"""
         try:
-            memes_dir = self._active_paths()["memes_dir"]
-            ensure_dir_exists(memes_dir)
+            store = MemeStore(Path(self._active_paths()["memes_dir"]).resolve().parent)
+            store.reindex_flat_catalog()
             return {
-                d
-                for d in os.listdir(memes_dir)
-                if os.path.isdir(os.path.join(memes_dir, d))
+                tag
+                for item in store.load_catalog().get("items", [])
+                if isinstance(item, dict)
+                for tag in item.get("tags", [])
+                if canonical_tag(tag)
             }
-        except Exception as e:
-            logger.error(f"获取本地类别失败: {e}")
+        except Exception as exc:
+            logger.error("unable to read virtual meme tags: %s", exc)
             return set()
-
     def get_sync_status(self) -> tuple[list[str], list[str]]:
         """获取同步状态
         返回: (missing_in_config, deleted_categories)
@@ -171,46 +171,13 @@ class CategoryManager:
             return False
 
     def create_category(self, category: str, description: str = "请添加描述") -> bool:
-        """创建类别目录并写入描述。"""
-        try:
-            category = category.strip()
-            description = description.strip() or "请添加描述"
-            if not is_safe_category_name(category):
-                return False
-
-            memes_dir = self._active_paths()["memes_dir"]
-            os.makedirs(os.path.join(memes_dir, category), exist_ok=True)
-            saved = self.update_description(category, description)
-            if saved:
-                _reconcile_active_catalogs()
-            return saved
-        except Exception as e:
-            logger.error(f"创建类别失败: {e}")
-            return False
+        raise RuntimeError("category_directories_retired")
 
     def rename_category(self, old_name: str, new_name: str) -> bool:
-        """重命名类别（经仓储事务执行，保存失败时回滚目录）。"""
-        try:
-            if self._repository().rename_category(old_name, new_name):
-                self.reload_descriptions()
-                sync_active_pack_metadata(self.descriptions)
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"重命名类别失败: {e}")
-            return False
+        raise RuntimeError("category_directories_retired")
 
     def delete_category(self, category: str) -> bool:
-        """删除类别（先移入 .trash，元数据保存失败时恢复原目录）。"""
-        try:
-            if self._repository().delete_category(category):
-                self.reload_descriptions()
-                sync_active_pack_metadata(self.descriptions)
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"删除类别失败: {e}")
-            return False
+        raise RuntimeError("category_directories_retired")
 
     def remove_from_config(self, category: str) -> bool:
         """Remove a category from the description config only (keep directory on disk)."""
@@ -237,7 +204,10 @@ class CategoryManager:
     def get_descriptions(self) -> dict[str, str]:
         """获取所有类别描述"""
         self.reload_descriptions()
-        return self.descriptions.copy()  # 返回字典的副本
+        return {
+            canonical_tag(key) or key: value
+            for key, value in self.descriptions.items()
+        }
 
     def sync_with_filesystem(self) -> bool:
         """同步文件系统和配置：将配置强制对齐为实际文件夹结构"""
