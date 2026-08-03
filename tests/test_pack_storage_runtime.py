@@ -28,11 +28,11 @@ class PackStorageRuntimeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemeStore(Path(temp_dir) / "packs" / "cats")
-            saved = store.save_image(b"unicode-category", "猫猫表情", ".png", None)
+            saved = store.save_image(b"unicode-category", ["其他"], ".png", None)
             self.assertTrue(saved.path.is_file())
-            self.assertEqual(store.pick_image("猫猫表情"), saved.path)
+            self.assertEqual(store.pick_image("其他"), saved.path)
             self.assertEqual(
-                store.load_catalog("猫猫表情")["items"][0]["filename"],
+                store.load_catalog()["items"][0]["filename"],
                 saved.path.name,
             )
 
@@ -41,16 +41,16 @@ class PackStorageRuntimeTests(unittest.TestCase):
             pack_dir = Path(temp_dir) / "packs" / "cats"
             store = MemeStore(pack_dir)
 
-            first = store.save_image(b"not-a-real-image", "happy", ".png", None)
-            duplicate = store.save_image(b"not-a-real-image", "happy", ".png", None)
+            first = store.save_image(b"not-a-real-image", ["开心"], ".png", None)
+            duplicate = store.save_image(b"not-a-real-image", ["开心"], ".png", None)
 
             self.assertEqual(first.status, "saved")
             self.assertEqual(duplicate.status, "duplicate")
             self.assertTrue(first.path.is_relative_to(pack_dir))
-            self.assertEqual(store.directory_categories(), {"happy"})
-            self.assertTrue(first.path.parent.joinpath("index.json").is_file())
-            self.assertTrue(first.path.parent.joinpath("README.md").is_file())
-            catalog = store.load_catalog("happy")
+            self.assertEqual(store.directory_categories(), set())
+            self.assertTrue(store.memes_dir.joinpath("index.json").is_file())
+            self.assertTrue(store.memes_dir.joinpath("README.md").is_file())
+            catalog = store.load_catalog()
             self.assertEqual(
                 [item["filename"] for item in catalog["items"]],
                 [first.path.name],
@@ -73,43 +73,41 @@ class PackStorageRuntimeTests(unittest.TestCase):
             store = MemeStore(pack_dir)
             self.assertEqual(store.reconcile_catalogs(), 1)
             self.assertEqual(store.reconcile_catalogs(), 0)
-            catalog = store.load_catalog("happy")
+            catalog = store.load_catalog()
             self.assertEqual(catalog["items"][0]["description"], "保留描述")
-            self.assertTrue(category_dir.joinpath("README.md").is_file())
+            self.assertTrue(store.memes_dir.joinpath("README.md").is_file())
 
     def test_duplicate_repairs_readme_without_replacing_existing_entry(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pack_dir = Path(temp_dir) / "packs" / "cats"
             store = MemeStore(pack_dir)
-            saved = store.save_image(b"duplicate-content", "happy", ".png", None)
+            saved = store.save_image(b"duplicate-content", ["开心"], ".png", None)
             saved.path.parent.joinpath("README.md").unlink()
             store.write_catalog(
-                "happy",
                 [{"filename": saved.path.name, "description": "详细描述", "tags": ["标签"]}],
             )
             saved.path.parent.joinpath("README.md").unlink()
 
-            duplicate = store.save_image(b"duplicate-content", "happy", ".png", None)
+            duplicate = store.save_image(b"duplicate-content", ["开心"], ".png", None)
 
             self.assertEqual(duplicate.status, "duplicate")
             self.assertEqual(
-                store.load_catalog("happy")["items"][0]["description"],
+                store.load_catalog()["items"][0]["description"],
                 "详细描述",
             )
-            self.assertTrue(saved.path.parent.joinpath("README.md").is_file())
+            self.assertTrue(store.memes_dir.joinpath("README.md").is_file())
 
     def test_reconcile_removes_catalog_entries_for_deleted_images(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemeStore(Path(temp_dir) / "packs" / "cats")
-            saved = store.save_image(b"catalog-content", "happy", ".png", None)
+            saved = store.save_image(b"catalog-content", ["开心"], ".png", None)
             store.upsert_catalog_entry(
-                "happy",
                 {"filename": saved.path.name, "description": "保留"},
             )
             saved.path.unlink()
 
             self.assertEqual(store.reconcile_catalogs(), 1)
-            self.assertEqual(store.load_catalog("happy")["items"], [])
+            self.assertEqual(store.load_catalog()["items"], [])
 
     def test_reindex_category_fills_gaps_and_preserves_index_metadata(self):
         with tempfile.TemporaryDirectory() as temp_dir:
