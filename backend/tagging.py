@@ -123,6 +123,8 @@ def _tag_values(value: Any) -> list[str]:
 def normalize_tags(value: Any, *, fallback: str = "其他") -> list[str]:
     """Normalize arbitrary model/user values to at most five known tags."""
     found = {tag for item in _tag_values(value) if (tag := canonical_tag(item))}
+    if len(found) > 1:
+        found.discard("其他")
     ordered = [tag for tag in CANONICAL_TAGS if tag in found]
     if not ordered:
         fallback_tag = canonical_tag(fallback) or "其他"

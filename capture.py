@@ -54,6 +54,7 @@ from .indexing import catalog_needs_write, normalize_library_results
 from .response_policy import success_reply_text
 from .runtime_config import PluginConfig, consume_migration_used
 from .storage import MemeStore, detect_image_extension
+from .backend.tagging import normalize_tags
 
 
 VISION_SYSTEM_PROMPT = """
@@ -66,8 +67,9 @@ JSON 格式：
 
 def _library_batch_system_prompt(category: str) -> str:
     return f"""
-你是表情包素材库批量整理器。当前收到多张图片，它们都已经位于 meme_manager_master 的 {category} 分类目录。
-目录名是权威分类，不要移动或重新分类图片。请为每张图片输出一条结果，并严格保留输入的 id。
+你是表情包素材库批量整理器。当前收到多张图片，请根据画面含义为每张图片选择固定标签。
+可选标签必须来自：开心、愤怒、悲伤、震惊、疑惑、尴尬、害怕、期待、无语、赞同、拒绝、嘲讽、嫌弃、感谢、道歉、安慰、催促、围观、吃瓜、摸鱼、庆祝、工作、加班、睡觉、早安、求助、发钱、其他。每张最多选择5个标签。
+不要创建新标签，也不要移动图片。请为每张图片输出一条结果，并严格保留输入的 id。
 只输出 JSON，不要 Markdown。
 格式：{{"items":[{{"id":"image_0", "description":"不超过40字", "emotion":"主要情绪", "text":"图片文字，没有则为空", "tags":["关键词1"]}}]}}
 """.strip()
@@ -75,8 +77,8 @@ def _library_batch_system_prompt(category: str) -> str:
 
 def _library_single_system_prompt(category: str) -> str:
     return f"""
-你是表情包素材库单图整理器。当前图片已经位于 meme_manager_master 的 {category} 分类目录。
-目录名是权威分类，不要移动或重新分类图片。请识别图片并只输出一个 JSON 对象。
+你是表情包素材库单图整理器。请根据画面含义从固定标签中选择最多5个标签，不要创建新标签，也不要移动图片。
+固定标签：开心、愤怒、悲伤、震惊、疑惑、尴尬、害怕、期待、无语、赞同、拒绝、嘲讽、嫌弃、感谢、道歉、安慰、催促、围观、吃瓜、摸鱼、庆祝、工作、加班、睡觉、早安、求助、发钱、其他。
 不要输出 Markdown、解释或 JSON 数组；没有文字或标签时使用空字符串或空数组。
 格式：{{"description":"不超过40字", "emotion":"主要情绪", "text":"图片文字", "tags":["关键词1"]}}
 """.strip()
@@ -615,6 +617,14 @@ class CaptureMixin:
 
     def _library_source_signature(self) -> tuple:
         """Return a cheap signature for image files that need indexing."""
+        self.store.reindex_flat_catalog()
+        signature = []
+        for path in self.store.image_paths():
+            try:
+                signature.append((path.name, self.store.image_digest(path)))
+            except OSError:
+                continue
+        return tuple(signature)
         signature = []
         for category in sorted(self.store.directory_categories()):
             for path in self.store.image_paths(category):
@@ -635,6 +645,23 @@ class CaptureMixin:
         source_signature: tuple,
     ) -> bool:
         """Avoid starting a background model task for an already indexed pack."""
+        catalog = self.store.load_catalog()
+        if not source_signature or not catalog.get("classification_index_complete"):
+            return False
+        expected = self._library_index_metadata(provider_id)
+        if not index_metadata_matches(catalog, expected):
+            return False
+        if catalog.get("classification_index_file_total") != len(source_signature):
+            return False
+        by_digest = {
+            str(item.get("sha256")): item
+            for item in catalog.get("items", [])
+            if isinstance(item, dict) and item.get("sha256")
+        }
+        return all(
+            self._catalog_entry_is_current(by_digest.get(digest), provider_id)
+            for _filename, digest in source_signature
+        )
         categories = sorted(self.store.directory_categories())
         if not categories or not source_signature:
             return False
@@ -1116,7 +1143,158 @@ class CaptureMixin:
             event, sources, message_text, message_outline
         )
 
+    async def _ensure_flat_library_index(self) -> None:
+        """Classify pending flat memes and rebuild the unified tag index."""
+        if self._library_lock.locked():
+            return
+        async with self._library_lock:
+            self.store.reindex_flat_catalog()
+            catalog = self.store.load_catalog()
+            items = [item for item in catalog.get("items", []) if isinstance(item, dict)]
+            paths = {
+                item["filename"]: self.store.memes_dir / item["filename"]
+                for item in items
+                if isinstance(item.get("filename"), str)
+                and (self.store.memes_dir / item["filename"]).is_file()
+            }
+            total = len(paths)
+            self._library_index_state.update(
+                status="running",
+                processed=0,
+                total=total,
+                classified=0,
+                errors=0,
+                message="正在检查标签索引……",
+            )
+            if not total:
+                self._library_index_state.update(status="idle", message="没有待索引图片")
+                return
+            provider_id = configured_provider_id(
+                self.runtime_config,
+                "library_index_provider_id",
+                "vision_provider_id",
+            )
+            if not provider_id:
+                self._library_index_state.update(
+                    status="blocked", message="未配置标签索引视觉模型"
+                )
+                return
+
+            run_signature = self._library_source_signature()
+            by_filename = {item["filename"]: item for item in items if item.get("filename")}
+            index_metadata = self._library_index_metadata(provider_id)
+            records: dict[str, dict] = {}
+            pending: list[tuple[Path, str]] = []
+            catalog_is_current = index_metadata_matches(catalog, index_metadata)
+            for filename, path in paths.items():
+                digest = self.store.image_digest(path)
+                old_entry = by_filename.get(filename)
+                if (
+                    catalog_is_current
+                    and old_entry
+                    and old_entry.get("sha256") == digest
+                    and self._catalog_entry_is_current(old_entry, provider_id)
+                ):
+                    records[filename] = dict(old_entry)
+                else:
+                    pending.append((path, digest))
+
+            processed = len(records)
+            classified = 0
+            errors = 0
+            batch_size = self.runtime_config.library_index_batch_size
+            for start in range(0, len(pending), batch_size):
+                batch = pending[start : start + batch_size]
+                batch_paths = [path for path, _digest in batch]
+                classified += len(batch)
+                try:
+                    batch_results = await self._describe_library_batch(
+                        None, batch_paths, "固定标签", provider_id
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "标签索引批次失败，改用逐图识别 count=%s: %s",
+                        len(batch),
+                        exc,
+                    )
+                    batch_results = {}
+                    for path in batch_paths:
+                        try:
+                            batch_results.update(
+                                await self._describe_library_single(
+                                    None, path, "固定标签", provider_id
+                                )
+                            )
+                        except Exception as single_exc:
+                            logger.debug("single-image tag index failed path=%s: %s", path, single_exc)
+                    if not batch_results:
+                        self._schedule_library_retry(provider_id)
+                        self._library_index_state.update(
+                            status="completed_with_errors",
+                            processed=processed,
+                            classified=classified,
+                            errors=errors + len(batch),
+                            message="标签索引失败，稍后可重试",
+                        )
+                        return
+                for path, digest in batch:
+                    metadata = dict(batch_results.get(path) or {})
+                    if not metadata:
+                        errors += 1
+                        metadata = {"description": "待重新识别", "emotion": "未知", "text": "", "tags": [], "indexed": False}
+                    previous = by_filename.get(path.name)
+                    if isinstance(previous, dict):
+                        for key in ("send_count", "last_sent_at"):
+                            if key in previous:
+                                metadata[key] = previous[key]
+                        metadata["tags"] = [*(previous.get("tags") or []), *(metadata.get("tags") or [])]
+                    metadata.update({
+                        "id": path.stem,
+                        "filename": path.name,
+                        "sha256": digest,
+                        "tags": normalize_tags(metadata.get("tags")),
+                        "perceptual_hash": self.store.image_perceptual_hash(path),
+                        **index_metadata,
+                    })
+                    records[path.name] = metadata
+                    processed += 1
+
+            async with self._save_lock:
+                if self._library_source_signature() != run_signature:
+                    self._schedule_library_retry(provider_id)
+                    self._library_index_state.update(status="completed_with_errors", errors=errors + 1)
+                    return
+                entries = [records[name] for name in sorted(paths) if name in records]
+                complete = len(entries) == total and all(bool(item.get("indexed")) for item in entries)
+                index_metadata = {
+                    **index_metadata,
+                    "classification_index_complete": complete,
+                    "classification_indexed_at": int(time.time()),
+                    "classification_index_file_total": len(entries),
+                }
+                if catalog_needs_write(catalog, entries, index_metadata):
+                    self.store.write_catalog(entries, index_metadata)
+                for tag in {tag for item in entries for tag in item.get("tags", [])}:
+                    mark_capture_events_indexed(
+                        self.store.root,
+                        category=tag,
+                        digests={str(item.get("sha256")) for item in entries if tag in item.get("tags", [])},
+                    )
+            self._library_index_state.update(
+                status="completed" if not errors else "completed_with_errors",
+                processed=processed,
+                classified=classified,
+                errors=errors,
+                message="标签索引完成" if not errors else "标签索引完成，但有图片待重试",
+            )
+            self._library_completed_key = (provider_id, run_signature)
+            self._library_retry_key = None
+            self._library_retry_at = 0.0
+
     async def _ensure_library_index(self) -> None:
+        return await self._ensure_flat_library_index()
+
+    async def _ensure_legacy_library_index(self) -> None:
         """Index missing or stale images without changing their category folders."""
         if self._library_lock.locked():
             return
