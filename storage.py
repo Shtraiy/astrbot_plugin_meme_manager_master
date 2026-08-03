@@ -593,6 +593,45 @@ class MemeStore:
             temporary.rename(target)
         return mapping
 
+    def reindex_category(self, category: str) -> dict[Path, Path]:
+        """Renumber one category and update catalog filename references."""
+        images = self.image_paths(category)
+        if not _is_safe_segment(category) or not images:
+            return {}
+
+        catalog = self.load_catalog(category)
+        by_filename = {
+            str(item.get("filename")): item
+            for item in catalog.get("items", [])
+            if isinstance(item, dict) and item.get("filename")
+        }
+        mapping = self.renumber_category(category)
+        entries: list[dict] = []
+        for old_path in images:
+            new_path = mapping.get(old_path, old_path)
+            entry = dict(by_filename.get(old_path.name) or {})
+            if not entry:
+                entry = self._minimal_catalog_entry(new_path)
+            entry["id"] = new_path.stem
+            entry["filename"] = new_path.name
+            entries.append(entry)
+
+        metadata = {
+            key: value
+            for key, value in catalog.items()
+            if key not in {"version", "category", "updated_at", "items"}
+        }
+        self.write_catalog(category, entries, metadata)
+        return mapping
+
+    def reindex_all_categories(self) -> dict[str, dict[Path, Path]]:
+        """Renumber every category without re-running image recognition."""
+        return {
+            category: mapping
+            for category in sorted(self.directory_categories())
+            if (mapping := self.reindex_category(category))
+        }
+
     def make_temp_file(self, content: bytes, extension: str = ".png") -> Path:
         path = self.temp_dir / f"incoming_{time.time_ns()}{_safe_extension(extension)}"
         self._atomic_write(path, content)

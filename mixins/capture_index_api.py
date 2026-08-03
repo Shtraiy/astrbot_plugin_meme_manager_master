@@ -52,7 +52,10 @@ class CaptureIndexAPIMixin:
                 return value
         return fallback
 
-    def _capture_workspace_for_pack(self, pack_id: str) -> dict:
+    def _capture_workspace_for_pack(self, pack_id: str, category: str = "") -> dict:
+        selected_category = str(category or "").strip()
+        if selected_category and not is_safe_category_segment(selected_category):
+            raise ValueError("category 无效")
         pack_dir = (PACKS_DIR / pack_id).resolve()
         store = MemeStore(pack_dir)
         activity = load_capture_activity(pack_dir)
@@ -111,6 +114,8 @@ class CaptureIndexAPIMixin:
                     "index_provider_id": catalog.get("index_provider_id", ""),
                 }
             )
+            if selected_category and category != selected_category:
+                continue
             indexed_items.extend(category_indexed)
             pending_items.extend(category_pending)
 
@@ -120,6 +125,8 @@ class CaptureIndexAPIMixin:
             if not isinstance(event, dict) or event.get("status") != "duplicate":
                 continue
             category = str(event.get("category") or "")
+            if selected_category and category != selected_category:
+                continue
             filename = str(event.get("filename") or "")
             if not is_safe_category_segment(category) or not self._safe_image_filename(filename):
                 continue
@@ -151,7 +158,12 @@ class CaptureIndexAPIMixin:
             active_store is not None
             and Path(getattr(active_store, "root", "")).resolve() == pack_dir
         )
-        complete_folder_count = sum(1 for folder in folders if folder["complete"])
+        visible_folders = [
+            folder
+            for folder in folders
+            if not selected_category or folder["category"] == selected_category
+        ]
+        complete_folder_count = sum(1 for folder in visible_folders if folder["complete"])
         return {
             "pack_id": pack_id,
             "library_index": state,
@@ -160,17 +172,34 @@ class CaptureIndexAPIMixin:
                 "pending": len(pending_items) - duplicate_count,
                 "duplicate": duplicate_count,
                 "complete_folders": complete_folder_count,
-                "folder_total": len(folders),
+                "folder_total": len(visible_folders),
             },
             "folders": folders,
-            "indexed_items": indexed_items[:48],
-            "pending_items": pending_items[:48],
+            "indexed_items": indexed_items if selected_category else indexed_items[:48],
+            "pending_items": pending_items if selected_category else pending_items[:48],
+        }
+
+    def _reindex_pack_catalog(self, pack_id: str) -> dict[str, int | str]:
+        """Renumber local files and update catalog references without models."""
+        pack_dir = (PACKS_DIR / str(pack_id)).resolve()
+        if not pack_dir.is_dir():
+            raise FileNotFoundError(f"表情包 {pack_id} 不存在")
+        store = MemeStore(pack_dir)
+        mappings = store.reindex_all_categories()
+        changed_file_count = sum(
+            1 for mapping in mappings.values() for old, new in mapping.items() if old != new
+        )
+        return {
+            "pack_id": str(pack_id),
+            "category_count": len(mappings),
+            "changed_file_count": changed_file_count,
         }
 
     async def _api_capture_workspace(self):
         try:
             pack_id = self._capture_pack_id()
-            return jsonify(self._capture_workspace_for_pack(pack_id))
+            category = str(request.args.get("category") or "").strip()
+            return jsonify(self._capture_workspace_for_pack(pack_id, category))
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"message": str(exc)}), 400
         except Exception as exc:
@@ -203,3 +232,31 @@ class CaptureIndexAPIMixin:
         except Exception as exc:
             logger.error("启动偷取表情包索引失败: %s", exc, exc_info=True)
             return jsonify({"message": "启动偷取表情包索引失败"}), 500
+
+    async def _api_capture_reindex(self):
+        try:
+            data = await request.get_json() or {}
+            pack_id = self._capture_pack_id(data)
+            task = getattr(self, "_library_task", None)
+            if task is not None and not task.done():
+                return jsonify({"message": "分类索引正在处理中，请稍后再重索引", "status": "running"}), 409
+            result = await self.catalog_index_service.run_locked_pack_mutation(
+                pack_id,
+                "重索引表情文件",
+                lambda: self._reindex_pack_catalog(pack_id),
+            )
+            return jsonify({
+                "message": (
+                    f"重索引完成：整理 {result['category_count']} 个分类，"
+                    f"更新 {result['changed_file_count']} 个文件名"
+                ),
+                "status": "completed",
+                **result,
+            })
+        except (FileNotFoundError, ValueError) as exc:
+            return jsonify({"message": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"message": str(exc)}), 409
+        except Exception as exc:
+            logger.error("重索引表情包失败: %s", exc, exc_info=True)
+            return jsonify({"message": "重索引表情包失败"}), 500

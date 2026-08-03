@@ -143,8 +143,17 @@ class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
         chain = [CompPlain("表情包已经发给你啦～"), CompPlain("其他正文")]
         mixin = self._make_mixin()
         mixin._rewrite_unverified_meme_claim(event, chain)
-        self.assertEqual(chain[0].text, "我还没有成功发送表情包。")
+        self.assertEqual(chain[0].text, "")
         self.assertEqual(chain[1].text, "其他正文")
+
+    def test_unverified_send_claim_does_not_replace_the_rest_of_the_reply(self):
+        event = FakeEvent()
+        chain = [CompPlain("这个表情有点像你，表情包已经发给你啦～")]
+        mixin = self._make_mixin()
+
+        mixin._rewrite_unverified_meme_claim(event, chain)
+
+        self.assertEqual(chain[0].text, "这个表情有点像你")
 
     def test_send_claim_is_preserved_when_receipt_exists(self):
         event = FakeEvent(message_id="msg-with-receipt")

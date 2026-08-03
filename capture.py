@@ -503,7 +503,7 @@ class CaptureMixin:
         event: AstrMessageEvent,
         chain: list,
     ) -> None:
-        """Prevent a generated reply from claiming a meme was sent without a receipt."""
+        """Remove only an unverified send claim while preserving the reply body."""
         if self._send_receipt_for_event(event) is not None:
             return
         changed = False
@@ -513,7 +513,23 @@ class CaptureMixin:
             text = str(getattr(component, "text", "") or "")
             if not contains_meme_send_claim(text):
                 continue
-            component.text = "我还没有成功发送表情包。"
+            parts = re.split(r"([，,。！？!?；;\n])", text)
+            segments: list[str] = []
+            current = ""
+            for part in parts:
+                current += part
+                if re.fullmatch(r"[，,。！？!?；;\n]", part):
+                    segments.append(current)
+                    current = ""
+            if current:
+                segments.append(current)
+            cleaned = "".join(
+                segment
+                for segment in segments
+                if not contains_meme_send_claim(segment)
+            ).strip()
+            cleaned = re.sub(r"^[，,；;：:]|[，,；;：:]$", "", cleaned).strip()
+            component.text = cleaned
             changed = True
         if changed:
             logger.warning(

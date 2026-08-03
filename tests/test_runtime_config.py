@@ -18,7 +18,7 @@ class PluginConfigDefaultsTests(unittest.TestCase):
         self.assertEqual(config.group_whitelist, ())
         self.assertEqual(config.vision_provider_id, "")
         self.assertEqual(config.scene_provider_id, "")
-        self.assertEqual(config.reply_scene_provider_id, "")
+        self.assertFalse(hasattr(config, "reply_scene_provider_id"))
         self.assertTrue(config.only_capture_memes)
         self.assertEqual(config.meme_rejection_confidence, 0.7)
         self.assertEqual(config.max_images_per_message, 2)
@@ -126,7 +126,6 @@ class PluginConfigSchemaTests(unittest.TestCase):
                 "group_whitelist",
                 "vision_provider_id",
                 "scene_provider_id",
-                "reply_scene_provider_id",
                 "only_capture_memes",
                 "meme_rejection_confidence",
                 "max_images_per_message",

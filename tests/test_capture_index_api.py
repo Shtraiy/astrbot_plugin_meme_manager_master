@@ -106,6 +106,63 @@ class CaptureIndexApiTests(unittest.TestCase):
         self.assertNotIn(str(pack_dir), serialized)
         self.assertIn(f"memes/happy/{image.name}", serialized)
 
+    def test_workspace_can_filter_items_by_category(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            happy = store.save_image(b"happy-image", "happy", ".png").path
+            sad = store.save_image(b"sad-image", "sad", ".png").path
+            catalog = store.load_catalog("happy")
+            catalog["items"][0]["indexed"] = True
+            store.write_catalog("happy", catalog["items"])
+
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance._library_index_state = {}
+            instance._safe_image_filename = lambda value: True
+            with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent):
+                workspace = instance._capture_workspace_for_pack("pack", "happy")
+
+        self.assertEqual({item["category"] for item in workspace["indexed_items"]}, {"happy"})
+        self.assertEqual({item["category"] for item in workspace["pending_items"]}, set())
+        self.assertEqual({folder["category"] for folder in workspace["folders"]}, {"happy", "sad"})
+        self.assertEqual(workspace["summary"]["indexed"], 1)
+        self.assertEqual(workspace["summary"]["pending"], 0)
+        self.assertEqual(workspace["summary"]["folder_total"], 1)
+
+    def test_reindex_pack_updates_filenames_without_model_work(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            category_dir = store.memes_dir / "happy"
+            category_dir.mkdir(parents=True)
+            (category_dir / "happy_0001.png").write_bytes(b"first")
+            (category_dir / "happy_0003.png").write_bytes(b"third")
+            store.write_catalog(
+                "happy",
+                [
+                    {"filename": "happy_0001.png", "indexed": True},
+                    {
+                        "filename": "happy_0003.png",
+                        "indexed": True,
+                        "description": "保留",
+                    },
+                ],
+            )
+
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent):
+                result = instance._reindex_pack_catalog("pack")
+
+                self.assertEqual(result["category_count"], 1)
+                self.assertEqual(result["changed_file_count"], 1)
+                catalog = MemeStore(pack_dir).load_catalog("happy")
+                filenames = {item["filename"] for item in catalog["items"]}
+                self.assertEqual(filenames, {"happy_0001.png", "happy_0002.png"})
+                self.assertEqual(
+                    next(item for item in catalog["items"] if item["filename"] == "happy_0002.png")["description"],
+                    "保留",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

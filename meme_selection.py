@@ -110,7 +110,6 @@ class MemeSelectionService:
                 image_urls=[],
                 provider_id=configured_provider_id(
                     self.config,
-                    "reply_scene_provider_id",
                     "scene_provider_id",
                 ),
                 system_prompt=OUTGOING_CATEGORY_PROMPT,
@@ -265,7 +264,6 @@ class MemeSelectionService:
                 image_urls=[],
                 provider_id=configured_provider_id(
                     self.config,
-                    "reply_scene_provider_id",
                     "scene_provider_id",
                 ),
                 system_prompt=OUTGOING_DECISION_COMPACT_PROMPT,

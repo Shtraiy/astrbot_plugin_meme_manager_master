@@ -11,7 +11,6 @@
 | `group_whitelist` | list[string] | `[]` | 群组白名单 |
 | `vision_provider_id` | string | `""` | 图片识别模型 |
 | `scene_provider_id` | string | `""` | 分类/情景判断模型 |
-| `reply_scene_provider_id` | string | `""` | 回复情景判断模型 |
 | `only_capture_memes` | bool | `true` | 仅采集表情包 |
 | `meme_rejection_confidence` | float | `0.7` | 识别拒绝阈值 |
 | `max_images_per_message` | int | `2` | 单次最多处理图片数 |

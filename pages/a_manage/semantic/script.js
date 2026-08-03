@@ -9,9 +9,12 @@ async function initCaptureIndexPage() {
   const indexedCount = document.querySelector("#capture-indexed-count");
   const pendingCount = document.querySelector("#capture-pending-count");
   const refreshButton = document.querySelector("#capture-refresh-button");
+  const reindexButton = document.querySelector("#capture-reindex-button");
   const indexButton = document.querySelector("#capture-index-button");
+  const categoryFilters = document.querySelector("#capture-category-filters");
   const previewMask = document.querySelector("#preview-mask");
   const previewImage = document.querySelector("#preview-image");
+  let selectedCategory = "";
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -38,16 +41,20 @@ async function initCaptureIndexPage() {
     target.append(empty);
   }
 
-  async function showPreview(item) {
+  function getImageLocation(item) {
     const relative = String(item.relative_path || "").split("/");
     const filename = relative.pop() || "";
     const category = relative[relative.length - 1] || "";
-    if (!category || !filename || !packSelect.value) return;
+    if (!category || !filename || !packSelect.value) return null;
+    return { managed_pack_id: packSelect.value, category, filename };
+  }
+
+  async function showPreview(item) {
+    const location = getImageLocation(item);
+    if (!location) return;
     try {
       const data = await apiGet("meme_image_data", {
-        managed_pack_id: packSelect.value,
-        category,
-        filename,
+        ...location,
         size: "original",
       });
       previewImage.src = data.data_url || "";
@@ -58,11 +65,48 @@ async function initCaptureIndexPage() {
     }
   }
 
+  function markThumbnailError(image, card) {
+    image.removeAttribute("src");
+    card.classList.remove("thumbnail-loading", "thumbnail-loaded");
+    card.classList.add("thumbnail-error");
+  }
+
+  async function loadThumbnail(item, image, card) {
+    const location = getImageLocation(item);
+    if (!location) return;
+    card.classList.remove("thumbnail-error", "thumbnail-loaded");
+    card.classList.add("thumbnail-loading");
+    try {
+      const data = await apiGet("meme_image_data", { ...location, size: "preview" });
+      if (!data.data_url) throw new Error("缩略图数据为空");
+      image.src = data.data_url;
+      card.classList.remove("thumbnail-loading");
+      card.classList.add("thumbnail-loaded");
+    } catch (error) {
+      markThumbnailError(image, card);
+    }
+  }
+
   function renderCard(item, target) {
     const card = document.createElement("button");
     card.type = "button";
-    card.className = `card${item.duplicate ? " duplicate" : ""}`;
-    card.addEventListener("click", () => void showPreview(item));
+    card.className = `card thumbnail-loading${item.duplicate ? " duplicate" : ""}`;
+    card.title = item.filename || "未命名图片";
+    const thumbnail = document.createElement("span");
+    thumbnail.className = "card-thumbnail";
+    thumbnail.setAttribute("aria-hidden", "true");
+    const image = document.createElement("img");
+    image.className = "thumbnail-image";
+    image.loading = "lazy";
+    image.alt = "";
+    image.addEventListener("error", () => markThumbnailError(image, card));
+    const placeholder = document.createElement("span");
+    placeholder.className = "thumbnail-placeholder";
+    placeholder.textContent = "加载缩略图";
+    const errorText = document.createElement("span");
+    errorText.className = "thumbnail-error-text";
+    errorText.textContent = "缩略图加载失败，点击重试";
+    thumbnail.append(image, placeholder, errorText);
     const title = document.createElement("strong");
     title.textContent = item.filename || "未命名图片";
     const meta = document.createElement("span");
@@ -71,8 +115,17 @@ async function initCaptureIndexPage() {
     }`;
     const description = document.createElement("small");
     description.textContent = item.description || "点击查看图片";
-    card.append(title, meta, description);
+    card.setAttribute("aria-label", `${title.textContent}，${meta.textContent}`);
+    card.append(thumbnail, title, meta, description);
     target.append(card);
+    card.addEventListener("click", () => {
+      if (card.classList.contains("thumbnail-error")) {
+        void loadThumbnail(item, image, card);
+        return;
+      }
+      void showPreview(item);
+    });
+    void loadThumbnail(item, image, card);
   }
 
   function renderWorkspace(data) {
@@ -98,6 +151,28 @@ async function initCaptureIndexPage() {
       folders.append(chip);
     }
 
+    categoryFilters.replaceChildren();
+    const allCategories = document.createElement("button");
+    allCategories.type = "button";
+    allCategories.className = `category-filter${selectedCategory ? "" : " active"}`;
+    allCategories.textContent = "全部分类";
+    allCategories.addEventListener("click", () => {
+      selectedCategory = "";
+      void loadWorkspace();
+    });
+    categoryFilters.append(allCategories);
+    for (const folder of data.folders || []) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `category-filter${selectedCategory === folder.category ? " active" : ""}`;
+      button.textContent = folder.category;
+      button.addEventListener("click", () => {
+        selectedCategory = folder.category;
+        void loadWorkspace();
+      });
+      categoryFilters.append(button);
+    }
+
     indexedItems.replaceChildren();
     pendingItems.replaceChildren();
     const indexed = data.indexed_items || [];
@@ -112,6 +187,7 @@ async function initCaptureIndexPage() {
     const state = data.library_index || {};
     indexButton.disabled =
       state.status === "running" || !state.active_pack || !(stats.pending || stats.duplicate);
+    reindexButton.disabled = state.status === "running";
     notice.textContent = state.message || "目录索引已加载";
     notice.classList.remove("error");
   }
@@ -119,7 +195,9 @@ async function initCaptureIndexPage() {
   async function loadWorkspace() {
     if (!packSelect.value) return;
     try {
-      renderWorkspace(await apiGet("capture/workspace", { pack_id: packSelect.value }));
+      const params = { pack_id: packSelect.value };
+      if (selectedCategory) params.category = selectedCategory;
+      renderWorkspace(await apiGet("capture/workspace", params));
     } catch (error) {
       showError(error);
     }
@@ -136,7 +214,10 @@ async function initCaptureIndexPage() {
     }
   }
 
-  packSelect.addEventListener("change", () => void loadWorkspace());
+  packSelect.addEventListener("change", () => {
+    selectedCategory = "";
+    void loadWorkspace();
+  });
   refreshButton.addEventListener("click", () => void loadWorkspace());
   indexButton.addEventListener("click", async () => {
     indexButton.disabled = true;
@@ -146,6 +227,19 @@ async function initCaptureIndexPage() {
       await loadWorkspace();
     } catch (error) {
       showError(error);
+    }
+  });
+  reindexButton.addEventListener("click", async () => {
+    if (!packSelect.value || !window.confirm("只重新编号并同步索引中的文件名，不会重新识别表情。继续吗？")) return;
+    reindexButton.disabled = true;
+    try {
+      const result = await apiPost("capture/reindex", { pack_id: packSelect.value });
+      notice.textContent = result.message || "重索引完成";
+      await loadWorkspace();
+    } catch (error) {
+      showError(error);
+    } finally {
+      reindexButton.disabled = false;
     }
   });
   document.querySelector("#preview-close").addEventListener("click", () => {

@@ -11,7 +11,7 @@
       <div>
         <p class="eyebrow">Capture &amp; Catalog Workspace</p>
         <h1>表情索引</h1>
-        <p class="subtitle">查看最近偷取、待分类和重复的表情包。</p>
+        <p class="subtitle">按分类查看表情缩略图；重索引只整理文件编号，不重复识别。</p>
       </div>
       <nav class="nav-actions" aria-label="页面导航">
         <a href="/#/plugin-page/meme_manager_master/a_manage" data-nav-page="a_manage" target="_top">返回表情管理</a>
@@ -25,6 +25,7 @@
         <label for="pack">资源包</label>
         <select id="pack" aria-label="选择资源包"></select>
         <button id="capture-refresh-button" type="button">刷新记录</button>
+        <button id="capture-reindex-button" type="button">重索引</button>
         <button id="capture-index-button" type="button" class="primary">
           分类索引待处理项
         </button>
@@ -33,8 +34,9 @@
       <p id="notice" class="notice" aria-live="polite"></p>
       <section id="capture-summary" class="summary" aria-live="polite"></section>
       <section id="capture-folders" class="folders" aria-live="polite"></section>
+      <section id="capture-category-filters" class="category-filters" aria-label="按分类查看"></section>
 
-      <section class="columns">
+      <section class="sections-stack">
         <article class="panel column">
           <div class="column-heading">
             <div>

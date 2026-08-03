@@ -81,7 +81,6 @@ def consume_migration_used() -> bool:
 _LEGACY_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
     "vision_provider_id": (("semantic", "vision_provider_id"),),
     "scene_provider_id": (("semantic", "scene_provider_id"),),
-    "reply_scene_provider_id": (("semantic", "reply_scene_provider_id"),),
     "library_index_provider_id": (("semantic", "library_index_provider_id"),),
 }
 
@@ -92,7 +91,6 @@ class PluginConfig:
     group_whitelist: tuple[str, ...] = ()
     vision_provider_id: str = ""
     scene_provider_id: str = ""
-    reply_scene_provider_id: str = ""
     only_capture_memes: bool = True
     meme_rejection_confidence: float = 0.7
     max_images_per_message: int = 2
@@ -159,9 +157,6 @@ class PluginConfig:
             ),
             scene_provider_id=string_value(
                 lookup("scene_provider_id", legacy_paths("scene_provider_id")), ""
-            ),
-            reply_scene_provider_id=string_value(
-                lookup("reply_scene_provider_id", legacy_paths("reply_scene_provider_id")), ""
             ),
             only_capture_memes=bool_value(lookup("only_capture_memes"), True),
             meme_rejection_confidence=float_value(
@@ -245,13 +240,6 @@ class PluginConfig:
                 "type": "string",
                 "description": "情景识别模型",
                 "hint": "用于偷取分类和自动发送选图；留空使用当前会话模型。",
-                "_special": "select_provider",
-                "default": "",
-            },
-            "reply_scene_provider_id": {
-                "type": "string",
-                "description": "回复情景识别模型",
-                "hint": "用于自动发送时判断回复情景；留空使用情景识别模型。",
                 "_special": "select_provider",
                 "default": "",
             },

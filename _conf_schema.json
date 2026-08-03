@@ -28,13 +28,6 @@
     "_special": "select_provider",
     "default": ""
   },
-  "reply_scene_provider_id": {
-    "type": "string",
-    "description": "回复情景识别模型",
-    "hint": "用于自动发送时判断回复情景；留空使用情景识别模型。",
-    "_special": "select_provider",
-    "default": ""
-  },
   "only_capture_memes": {
     "type": "bool",
     "description": "只保存表情包",

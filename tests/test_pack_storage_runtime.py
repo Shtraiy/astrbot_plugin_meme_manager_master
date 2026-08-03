@@ -111,6 +111,53 @@ class PackStorageRuntimeTests(unittest.TestCase):
             self.assertEqual(store.reconcile_catalogs(), 1)
             self.assertEqual(store.load_catalog("happy")["items"], [])
 
+    def test_reindex_category_fills_gaps_and_preserves_index_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "packs" / "cats")
+            category_dir = store.memes_dir / "happy"
+            category_dir.mkdir(parents=True)
+            (category_dir / "happy_0001.png").write_bytes(b"first")
+            (category_dir / "happy_0003.gif").write_bytes(b"third")
+            store.write_catalog(
+                "happy",
+                [
+                    {
+                        "id": "happy_0001",
+                        "filename": "happy_0001.png",
+                        "description": "第一张",
+                        "indexed": True,
+                        "send_count": 4,
+                    },
+                    {
+                        "id": "happy_0003",
+                        "filename": "happy_0003.gif",
+                        "description": "第三张",
+                        "emotion": "开心",
+                        "tags": ["庆祝"],
+                        "indexed": True,
+                        "send_count": 2,
+                    },
+                ],
+                {"classification_index_complete": True},
+            )
+
+            mapping = store.reindex_category("happy")
+
+            self.assertEqual(
+                mapping[category_dir / "happy_0003.gif"].name,
+                "happy_0002.gif",
+            )
+            self.assertTrue((category_dir / "happy_0002.gif").is_file())
+            catalog = store.load_catalog("happy")
+            entries = {item["filename"]: item for item in catalog["items"]}
+            self.assertEqual(entries["happy_0002.gif"]["id"], "happy_0002")
+            self.assertEqual(entries["happy_0002.gif"]["description"], "第三张")
+            self.assertEqual(entries["happy_0002.gif"]["emotion"], "开心")
+            self.assertEqual(entries["happy_0002.gif"]["tags"], ["庆祝"])
+            self.assertTrue(entries["happy_0002.gif"]["indexed"])
+            self.assertEqual(entries["happy_0002.gif"]["send_count"], 2)
+            self.assertTrue(catalog["classification_index_complete"])
+
     def test_load_catalog_accepts_bom_and_legacy_mapping_shape(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             category_dir = Path(temp_dir) / "packs" / "cats" / "memes" / "happy"

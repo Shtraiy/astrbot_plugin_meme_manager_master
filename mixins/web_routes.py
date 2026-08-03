@@ -80,6 +80,13 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         capability="catalog_index",
     ),
     WebRouteSpec(
+        "capture/reindex",
+        "_api_capture_reindex",
+        ("POST",),
+        "只重新编号并同步表情包索引",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
         "category/delete", "_api_delete_category", ("POST",), "删除分类及其文件"
     ),
     WebRouteSpec(

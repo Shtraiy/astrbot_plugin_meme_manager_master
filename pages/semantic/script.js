@@ -9,9 +9,12 @@ async function initCaptureIndexPage() {
   const indexedCount = document.querySelector("#capture-indexed-count");
   const pendingCount = document.querySelector("#capture-pending-count");
   const refreshButton = document.querySelector("#capture-refresh-button");
+  const reindexButton = document.querySelector("#capture-reindex-button");
   const indexButton = document.querySelector("#capture-index-button");
+  const categoryFilters = document.querySelector("#capture-category-filters");
   const previewMask = document.querySelector("#preview-mask");
   const previewImage = document.querySelector("#preview-image");
+  let selectedCategory = "";
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -180,6 +183,28 @@ async function initCaptureIndexPage() {
       folders.append(chip);
     }
 
+    categoryFilters.replaceChildren();
+    const allCategories = document.createElement("button");
+    allCategories.type = "button";
+    allCategories.className = `category-filter${selectedCategory ? "" : " active"}`;
+    allCategories.textContent = "全部分类";
+    allCategories.addEventListener("click", () => {
+      selectedCategory = "";
+      void loadWorkspace();
+    });
+    categoryFilters.append(allCategories);
+    for (const folder of data.folders || []) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `category-filter${selectedCategory === folder.category ? " active" : ""}`;
+      button.textContent = folder.category;
+      button.addEventListener("click", () => {
+        selectedCategory = folder.category;
+        void loadWorkspace();
+      });
+      categoryFilters.append(button);
+    }
+
     indexedItems.replaceChildren();
     pendingItems.replaceChildren();
     const indexed = data.indexed_items || [];
@@ -194,6 +219,7 @@ async function initCaptureIndexPage() {
     const state = data.library_index || {};
     indexButton.disabled =
       state.status === "running" || !state.active_pack || !(stats.pending || stats.duplicate);
+    reindexButton.disabled = state.status === "running";
     notice.textContent = state.message || "目录索引已加载";
     notice.classList.remove("error");
   }
@@ -201,7 +227,9 @@ async function initCaptureIndexPage() {
   async function loadWorkspace() {
     if (!packSelect.value) return;
     try {
-      renderWorkspace(await apiGet("capture/workspace", { pack_id: packSelect.value }));
+      const params = { pack_id: packSelect.value };
+      if (selectedCategory) params.category = selectedCategory;
+      renderWorkspace(await apiGet("capture/workspace", params));
     } catch (error) {
       showError(error);
     }
@@ -218,7 +246,10 @@ async function initCaptureIndexPage() {
     }
   }
 
-  packSelect.addEventListener("change", () => void loadWorkspace());
+  packSelect.addEventListener("change", () => {
+    selectedCategory = "";
+    void loadWorkspace();
+  });
   refreshButton.addEventListener("click", () => void loadWorkspace());
   indexButton.addEventListener("click", async () => {
     indexButton.disabled = true;
@@ -228,6 +259,19 @@ async function initCaptureIndexPage() {
       await loadWorkspace();
     } catch (error) {
       showError(error);
+    }
+  });
+  reindexButton.addEventListener("click", async () => {
+    if (!packSelect.value || !window.confirm("只重新编号并同步索引中的文件名，不会重新识别表情。继续吗？")) return;
+    reindexButton.disabled = true;
+    try {
+      const result = await apiPost("capture/reindex", { pack_id: packSelect.value });
+      notice.textContent = result.message || "重索引完成";
+      await loadWorkspace();
+    } catch (error) {
+      showError(error);
+    } finally {
+      reindexButton.disabled = false;
     }
   });
   document.querySelector("#preview-close").addEventListener("click", () => {
