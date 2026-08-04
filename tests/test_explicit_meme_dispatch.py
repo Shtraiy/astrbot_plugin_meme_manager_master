@@ -21,17 +21,62 @@ from astrbot.api.message_components import Image as CompImage  # noqa: E402
 from astrbot.api.message_components import Plain as CompPlain  # noqa: E402
 from meme_manager_master.capture import CaptureMixin  # noqa: E402
 from meme_manager_master.collector import event_identity  # noqa: E402
+from meme_manager_master.storage import MemeStore  # noqa: E402
 
 
 ROOT = Path(__file__).parents[1]
 
 
 class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
-    def _make_mixin(self, config=None) -> CaptureMixin:
+    def _make_mixin(self, config=None, context=None) -> CaptureMixin:
         async def create():
-            return CaptureMixin(FakeContext(), config or {})
+            active_context = context or FakeContext()
+            mixin = CaptureMixin(active_context, config or {})
+            mixin.context = active_context
+            return mixin
 
         return asyncio.run(create())
+
+    def test_auto_send_records_only_after_context_send_succeeds(self):
+        class RecordingContext(FakeContext):
+            async def send_message(self, umo, chain):
+                self.sent = (umo, chain)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "pack")
+            saved = store.save_image(b"image", ["happy"], ".png", None)
+            context = RecordingContext()
+            mixin = self._make_mixin(context=context)
+            mixin.store = store
+            event = FakeEvent()
+            event.set_extra("meme_manager_master_auto_send_path", str(saved.path))
+            event.set_extra("meme_manager_master_auto_send_details", {})
+
+            asyncio.run(mixin.after_message_sent(event))
+
+            item = store.load_catalog()["items"][0]
+            self.assertEqual(item["send_count"], 1)
+            self.assertTrue(hasattr(context, "sent"))
+
+    def test_auto_send_failure_does_not_record_weight(self):
+        class FailingContext(FakeContext):
+            async def send_message(self, umo, chain):
+                raise RuntimeError("send failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "pack")
+            saved = store.save_image(b"image", ["happy"], ".png", None)
+            mixin = self._make_mixin(context=FailingContext())
+            mixin.store = store
+            event = FakeEvent()
+            event.set_extra("meme_manager_master_auto_send_path", str(saved.path))
+            event.set_extra("meme_manager_master_auto_send_details", {})
+
+            asyncio.run(mixin.after_message_sent(event))
+
+            item = store.load_catalog()["items"][0]
+            self.assertEqual(item["send_count"], 0)
+            self.assertEqual(item["last_sent_at"], 0)
 
     def test_explicit_success_chain_emits_only_image(self):
         with tempfile.TemporaryDirectory() as temp_dir:

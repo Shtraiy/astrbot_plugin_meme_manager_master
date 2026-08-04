@@ -26,6 +26,10 @@ except ImportError:  # Pillow is optional at import time for AstrBot startup.
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 DEFAULT_SEND_REPEAT_WINDOW = 300.0
+SEND_COUNT_PENALTY = 0.35
+SEND_WEIGHT_MIN = 0.1
+SEND_RECOVERY_BASE = 0.35
+SEND_RECOVERY_RANGE = 0.65
 _IMAGE_FORMAT_EXTENSIONS = {
     "PNG": ".png",
     "JPEG": ".jpg",
@@ -294,7 +298,7 @@ class MemeStore:
 
     @staticmethod
     def _send_weight(item: dict, now: float, repeat_window: float) -> float:
-        """Return a decaying selection weight for one catalog entry."""
+        """Return a persistent count- and recency-aware selection weight."""
         if repeat_window <= 0:
             return 1.0
         try:
@@ -303,14 +307,15 @@ class MemeStore:
             last_sent_at = 0.0
         if last_sent_at <= 0:
             return 1.0
-        age = max(0.0, now - last_sent_at)
-        recency = max(0.0, min(1.0, 1.0 - age / repeat_window))
         try:
             send_count = max(0, int(item.get("send_count") or 0))
         except (TypeError, ValueError):
             send_count = 0
-        penalty = min(0.9, 0.45 + 0.1 * min(send_count, 4))
-        return max(0.1, 1.0 - recency * penalty)
+        age = max(0.0, now - last_sent_at)
+        recovery = min(age / repeat_window, 1.0)
+        count_factor = 1.0 / (1.0 + SEND_COUNT_PENALTY * send_count)
+        recovery_factor = SEND_RECOVERY_BASE + SEND_RECOVERY_RANGE * recovery
+        return max(SEND_WEIGHT_MIN, count_factor * recovery_factor)
 
     def mark_image_sent(
         self,
