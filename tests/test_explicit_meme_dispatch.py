@@ -78,24 +78,6 @@ class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
             self.assertEqual(item["send_count"], 0)
             self.assertEqual(item["last_sent_at"], 0)
 
-    def test_explicit_success_chain_emits_only_image(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "meme.png"
-            path.write_bytes(b"placeholder")
-            chain = CaptureMixin._explicit_success_chain(path)
-            self.assertEqual(len(chain), 1)
-            self.assertIsInstance(chain[0], CompImage)
-
-    def test_auto_send_chain_preserves_agent_reply_text(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "meme.png"
-            path.write_bytes(b"placeholder")
-            chain = CaptureMixin._explicit_success_chain(path, "这也太离谱了哈哈。")
-            self.assertEqual(len(chain), 2)
-            self.assertIsInstance(chain[0], CompPlain)
-            self.assertEqual(chain[0].text, "这也太离谱了哈哈。")
-            self.assertIsInstance(chain[1], CompImage)
-
     def test_marker_only_reply_embeds_selected_meme_in_current_result(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "meme.png"
@@ -106,7 +88,8 @@ class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
                 {"auto_send_probability": 100, "auto_send_cooldown": 0}
             )
             mixin._manager_ready = AsyncMock(return_value=True)
-            mixin._choose_outgoing_meme_from_index = AsyncMock(return_value=path)
+            choose = AsyncMock(return_value=path)
+            mixin._choose_outgoing_meme_from_index = choose
             mixin._image_details = lambda _path: {
                 "category": "sad",
                 "filename": path.name,
@@ -124,6 +107,8 @@ class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
                 event.get_extra("meme_manager_master_send_mark_path"),
                 str(path),
             )
+            self.assertFalse(choose.await_args.kwargs["force_send"])
+            self.assertEqual(choose.await_args.kwargs["preferred_categories"], ["sad"])
 
     def test_text_reply_without_filter_hook_embeds_selected_meme_in_current_result(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -182,6 +167,76 @@ class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
                 event.get_extra("meme_manager_master_auto_send_path"),
                 str(path),
             )
+
+    def test_explicit_request_does_not_leak_into_a_later_generation_event(self):
+        first_event = FakeEvent(
+            message_text="再发一个可爱猫猫标签",
+            umo="group-shared",
+            message_id="meme-request",
+        )
+        generation_event = FakeEvent(
+            message_text="生成自拍，写实摄影风格，高中校园走廊",
+            umo="group-shared",
+            message_id="image-generation",
+        )
+        generation_event.set_result(FakeResult([CompPlain("图片已生成。")]))
+        mixin = self._make_mixin(
+            {"auto_send_probability": 100, "auto_send_cooldown": 0}
+        )
+        mixin._manager_ready = AsyncMock(return_value=True)
+        choose = AsyncMock(return_value=None)
+        mixin._choose_outgoing_meme_from_index = choose
+
+        asyncio.run(mixin.on_message(first_event))
+        asyncio.run(mixin.on_decorating_result(generation_event))
+
+        choose.assert_awaited_once()
+        self.assertFalse(choose.await_args.kwargs["force_send"])
+        self.assertFalse(generation_event.stopped)
+
+    def test_external_image_reply_skips_local_meme_selection(self):
+        event = FakeEvent(message_text="生成自拍，写实摄影风格")
+        event.set_result(
+            FakeResult(
+                [
+                    CompPlain("已生成图片。"),
+                    CompImage.fromFileSystem("generated.png"),
+                ]
+            )
+        )
+        mixin = self._make_mixin(
+            {"auto_send_probability": 100, "auto_send_cooldown": 0}
+        )
+        mixin._manager_ready = AsyncMock(return_value=True)
+        choose = AsyncMock(return_value=None)
+        mixin._choose_outgoing_meme_from_index = choose
+
+        asyncio.run(mixin.on_decorating_result(event))
+
+        choose.assert_not_awaited()
+        self.assertFalse(event.stopped)
+
+    def test_natural_language_meme_request_does_not_block_image_tool_without_guard(self):
+        event = FakeEvent(message_text="再发一个可爱猫猫标签")
+        mixin = self._make_mixin()
+
+        asyncio.run(
+            mixin.on_using_llm_tool(
+                event,
+                "astrbot_execute_python",
+                None,
+            )
+        )
+
+        self.assertFalse(event.stopped)
+
+    def test_llm_request_does_not_stop_natural_language_event(self):
+        event = FakeEvent(message_text="再发一个可爱猫猫标签")
+        mixin = self._make_mixin()
+
+        asyncio.run(mixin.on_llm_request(event, object()))
+
+        self.assertFalse(event.stopped)
 
     def test_unverified_send_claim_is_rewritten_without_receipt(self):
         event = FakeEvent()

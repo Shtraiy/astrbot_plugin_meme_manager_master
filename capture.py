@@ -23,16 +23,16 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.star import Context
 
 from .collector import (
+    SCENE_CONTEXT_EXTRA,
     contains_meme_send_claim,
+    collect_recent_scene_context,
     configured_provider_id,
     drop_empty_text_components,
     event_identity,
-    explicit_meme_request,
     extract_meme_markers,
     extract_image_sources,
     filter_reply_hook_available,
     group_id_from_event,
-    is_meme_follow_up_request,
     is_safe_remote_image_url,
     parse_model_json,
     should_block_agent_tool_for_meme_request,
@@ -51,7 +51,6 @@ from .capture_activity import (
 )
 from .health import MemeManagerHealth, check_meme_manager_master_health
 from .indexing import catalog_needs_write, normalize_library_results
-from .response_policy import success_reply_text
 from .runtime_config import PluginConfig, consume_migration_used
 from .storage import MemeStore, detect_image_extension
 from .backend.tagging import normalize_tags
@@ -168,8 +167,6 @@ class CaptureMixin:
         self._stolen_image_by_event: dict[str, Path] = {}
         self._recent_meme_context: dict[str, tuple[float, Path, dict]] = {}
         self._meme_send_receipts: dict[str, tuple[float, Path, dict]] = {}
-        self._explicit_meme_requests: dict[str, tuple[float, str]] = {}
-        self._forced_meme_results: dict[str, tuple[float, Path, dict]] = {}
 
     async def initialize(self) -> None:
         """Check the required plugin before accepting any image."""
@@ -217,86 +214,6 @@ class CaptureMixin:
         if store_changed or time.monotonic() - self._last_health_check >= interval:
             await self._refresh_health(force=store_changed)
         return self._health.ready
-
-    def _recent_meme_sent(self, event: AstrMessageEvent) -> bool:
-        """Return whether this chat recently received a meme from this plugin."""
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
-        sent_at = self._last_auto_send.get(umo, 0.0)
-        if not umo or not sent_at:
-            return False
-        window = self.runtime_config.meme_follow_up_window
-        return time.monotonic() - sent_at <= window
-
-    def _remember_explicit_request(self, event: AstrMessageEvent) -> None:
-        """Keep direct meme intent available across Agent continuation events."""
-        message_text = self._event_text(event)
-        if not explicit_meme_request(message_text):
-            return
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
-        if not umo:
-            return
-        self._explicit_meme_requests[umo] = (time.monotonic(), message_text)
-
-    def _explicit_request_active(self, event: AstrMessageEvent) -> bool:
-        """Return whether this event belongs to a recent direct meme request."""
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
-        if not umo:
-            return False
-        entry = self._explicit_meme_requests.get(umo)
-        if entry is None:
-            return False
-        requested_at, _message_text = entry
-        window = self.runtime_config.meme_follow_up_window
-        if time.monotonic() - requested_at > window:
-            self._explicit_meme_requests.pop(umo, None)
-            return False
-        return True
-
-    def _clear_explicit_request(self, event: AstrMessageEvent) -> None:
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
-        if umo:
-            self._explicit_meme_requests.pop(umo, None)
-
-    def _remember_forced_meme_result(
-        self,
-        event: AstrMessageEvent,
-        image_path: Path,
-        details: dict,
-    ) -> None:
-        """Keep an explicit-send result until the final response stage."""
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
-        if not umo or not image_path.is_file():
-            return
-        self._forced_meme_results[umo] = (time.monotonic(), image_path, dict(details))
-
-    @staticmethod
-    def _explicit_success_chain(image_path: Path, existing_text: str = "") -> list:
-        chain = []
-        visible_text = success_reply_text(existing_text)
-        if visible_text:
-            chain.append(Comp.Plain(visible_text))
-        chain.append(Comp.Image.fromFileSystem(str(image_path)))
-        return chain
-
-    def _restore_forced_meme_result(self, event: AstrMessageEvent) -> bool:
-        """Restore a local meme if an Agent continuation overwrote event.result."""
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
-        entry = self._forced_meme_results.get(umo)
-        result = event.get_result()
-        if not umo or entry is None or result is None:
-            return False
-        sent_at, image_path, _details = entry
-        window = self.runtime_config.meme_follow_up_window
-        if time.monotonic() - sent_at > window or not image_path.is_file():
-            self._forced_meme_results.pop(umo, None)
-            return False
-        result.chain = self._explicit_success_chain(image_path)
-        self._forced_meme_results.pop(umo, None)
-        logger.info(
-            "[meme_manager_master] restored explicit meme result before final send file=%s",
-            image_path,
-        )
-        return True
 
     def _remember_sent_meme(
         self,
@@ -439,10 +356,7 @@ class CaptureMixin:
         async with self._auto_send_claim_lock:
             now = time.monotonic()
             if key in self._auto_send_claims:
-                explicit_handled = bool(
-                    getattr(event, "_meme_manager_master_explicit_handled", False)
-                )
-                if not force or explicit_handled:
+                if not force:
                     logger.debug(
                         "[meme_manager_master] 跳过同一事件的重复表情包发送 event=%s",
                         key,
@@ -546,47 +460,16 @@ class CaptureMixin:
             should_call_llm(False)
         event.stop_event()
 
-    async def _handle_explicit_meme_request(
-        self,
-        event: AstrMessageEvent,
-        message_text: str,
-    ) -> None:
-        """Handle a direct meme request before the default Agent can use tools."""
-        self._clear_explicit_request(event)
-        if not await self._manager_ready():
-            setattr(event, "_meme_manager_master_explicit_handled", True)
-            event.set_result(
-                event.plain_result("本地表情包管理器当前不可用，暂时无法发送表情包。")
-            )
-            self._disable_default_llm(event)
-            return
-        if not await self._claim_auto_send(event, force=True):
-            self._disable_default_llm(event)
-            return
-        setattr(event, "_meme_manager_master_explicit_handled", True)
-
-        image_path = await self._choose_outgoing_meme_from_index(
-            event,
-            message_text,
-            force_send=True,
-        )
-        if image_path is None:
-            event.set_result(
-                event.plain_result("本地表情包库暂时没有找到合适的表情包。")
-            )
-            self._disable_default_llm(event)
-            logger.info("[meme_manager_master] explicit meme request handled without a local match")
-            return
-
-        details = self._image_details(image_path)
-        self._remember_forced_meme_result(event, image_path, details)
-        self._queue_send_weight_mark(event, image_path)
-        event.set_result(event.chain_result(self._explicit_success_chain(image_path)))
-        self._disable_default_llm(event)
-        logger.info(
-            "[meme_manager_master] explicit meme request handled before default Agent file=%s",
-            image_path,
-        )
+    @staticmethod
+    def _contains_external_media(chain: list) -> bool:
+        """Return whether another handler already placed media in the reply."""
+        media_tokens = ("image", "file", "video", "audio", "record", "voice")
+        for component in chain:
+            class_name = type(component).__name__.casefold()
+            component_type = str(getattr(component, "type", "") or "").casefold()
+            if any(token in class_name or token in component_type for token in media_tokens):
+                return True
+        return False
 
     def _schedule_library_index(self) -> None:
         """Schedule an idempotent scan when meme_manager_master is healthy."""
@@ -733,10 +616,6 @@ class CaptureMixin:
         only needs the event, so accept and ignore those compatibility args.
         """
         message_text = self._event_text(event)
-        if explicit_meme_request(message_text):
-            # A follow-up request may reuse the same AstrBot event object.
-            setattr(event, "_meme_manager_master_explicit_handled", False)
-        self._remember_explicit_request(event)
         if getattr(event, "_meme_manager_master_manual", False):
             return
         if not self.runtime_config.enabled:
@@ -921,12 +800,8 @@ class CaptureMixin:
         yield event.plain_result(health.summary())
 
     async def on_decorating_result(self, event: AstrMessageEvent) -> None:
-        """Replace meme_manager_master's marker sender with this plugin's sender."""
+        """Choose a local meme only after the current reply is complete."""
         result = event.get_result()
-        if result and self._restore_forced_meme_result(event):
-            return
-        if getattr(event, "_meme_manager_master_explicit_handled", False):
-            return
         chain = getattr(result, "chain", None) if result else None
         if not chain:
             return
@@ -947,25 +822,18 @@ class CaptureMixin:
                 component.text = cleaned
             if cleaned:
                 plain_texts.append(cleaned)
-        event_text = self._event_text(event)
-        explicit_request_fallback = self._explicit_request_active(event)
-        if explicit_request_fallback:
-            # Consume the bridge here so an unrelated later reply in this chat
-            # cannot inherit the previous direct-send intent.
-            self._clear_explicit_request(event)
-        force_send = (
-            explicit_meme_request(event_text)
-            or explicit_request_fallback
-            or is_meme_follow_up_request(
-                event_text,
-                recent_meme=self._recent_meme_sent(event),
+
+        if self._contains_external_media(chain):
+            self._rewrite_unverified_meme_claim(event, chain)
+            logger.debug(
+                "[meme_manager_master] 跳过本地表情包追加：当前回复已包含外部媒体"
             )
-        )
+            return
 
         # Marker cleanup always happens, even if our own sender is disabled.
         if (
             not self.runtime_config.auto_send_enabled
-            or (not plain_texts and not marked_categories and not force_send)
+            or (not plain_texts and not marked_categories)
             or self._is_control_command(event)
             or not await self._manager_ready()
         ):
@@ -975,8 +843,9 @@ class CaptureMixin:
         image_path = await self._choose_outgoing_meme_from_index(
             event,
             "\n".join(plain_texts),
-            force_send=force_send,
+            force_send=False,
             preferred_categories=marked_categories,
+            context_text=str(event.get_extra(SCENE_CONTEXT_EXTRA, "") or ""),
         )
         if image_path is None:
             self._rewrite_unverified_meme_claim(event, chain)
@@ -986,17 +855,16 @@ class CaptureMixin:
         cooldown = self.runtime_config.auto_send_cooldown
         if (
             cooldown
-            and not force_send
             and time.monotonic() - self._last_auto_send.get(umo, 0) < cooldown
         ):
             self._rewrite_unverified_meme_claim(event, chain)
             return
 
         probability = self.runtime_config.auto_send_probability
-        if not force_send and (probability <= 0 or random.random() * 100 >= probability):
+        if probability <= 0 or random.random() * 100 >= probability:
             self._rewrite_unverified_meme_claim(event, chain)
             return
-        if not await self._claim_auto_send(event, force=force_send):
+        if not await self._claim_auto_send(event, force=False):
             self._rewrite_unverified_meme_claim(event, chain)
             return
 
@@ -1019,9 +887,7 @@ class CaptureMixin:
         logger.info(
             "[meme_manager_master] 已锁定表情包，等待正文发送完成 source=%s category=%s file=%s "
             "description=%s emotion=%s tags=%s",
-            "explicit_request" if force_send else (
-                "scene_with_category_hint" if marked_categories else "scene"
-            ),
+            "scene_with_category_hint" if marked_categories else "scene",
             details["category"],
             details["filename"],
             details["description"],
@@ -1059,14 +925,10 @@ class CaptureMixin:
             ]
 
     async def on_llm_request(self, event: AstrMessageEvent, req) -> None:
-        """Inject recent meme context and remove image-producing Agent tools."""
-        self._remember_explicit_request(event)
-        message_text = self._event_text(event)
+        """Inject context and protect only an event that already sent a meme."""
         self._remove_retired_agent_tools(req)
-        if explicit_meme_request(message_text):
-            await self._handle_explicit_meme_request(event, message_text)
-            return
         self._append_recent_meme_context(event, req)
+        event.set_extra(SCENE_CONTEXT_EXTRA, collect_recent_scene_context(req))
         if not should_block_agent_tool_for_meme_request(
             "astrbot_execute_python",
             self._event_text(event),
@@ -1572,12 +1434,14 @@ class CaptureMixin:
         response_text: str,
         force_send: bool = False,
         preferred_categories: list[str] | None = None,
+        context_text: str = "",
     ) -> Path | None:
         return await self.meme_selection.choose(
             event,
             response_text,
             force_send=force_send,
             preferred_categories=preferred_categories,
+            context_text=context_text,
         )
 
     async def _choose_outgoing_meme_legacy(
@@ -1586,12 +1450,14 @@ class CaptureMixin:
         response_text: str,
         force_send: bool = False,
         preferred_categories: list[str] | None = None,
+        context_text: str = "",
     ) -> Path | None:
         return await self.meme_selection.choose_legacy(
             event,
             response_text,
             force_send=force_send,
             preferred_categories=preferred_categories,
+            context_text=context_text,
         )
 
     def _image_details(self, path: Path) -> dict[str, object]:
@@ -1720,7 +1586,7 @@ class CaptureMixin:
             )
             return parse_model_json(response_text)
         except Exception as exc:
-            logger.warning("[meme_manager_master] 情景模型失败，将使用 fallback_category: %s", exc)
+            logger.warning("[meme_manager_master] 情景模型失败，保留原回复并跳过本地表情包: %s", exc)
             return {}
 
     @staticmethod

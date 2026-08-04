@@ -84,6 +84,17 @@ _LEGACY_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
     "library_index_provider_id": (("semantic", "library_index_provider_id"),),
 }
 
+PUBLIC_CONFIG_KEYS = (
+    "enabled",
+    "group_whitelist",
+    "vision_provider_id",
+    "scene_provider_id",
+    "only_capture_memes",
+    "auto_send_enabled",
+    "auto_send_probability",
+    "auto_send_cooldown",
+)
+
 
 @_frozen_dataclass(slots=True)
 class PluginConfig:
@@ -215,7 +226,7 @@ class PluginConfig:
     @classmethod
     def to_schema(cls) -> dict[str, Any]:
         """Return the AstrBot config schema, generated from this definition."""
-        return {
+        schema = {
             "enabled": {
                 "type": "bool",
                 "description": "启用表情包偷取",
@@ -298,7 +309,7 @@ class PluginConfig:
             "auto_send_probability": {
                 "type": "float",
                 "description": "自动发送概率",
-                "hint": "普通对话中的自动发送概率；明确要求表情包时会强制尝试发送。",
+                "hint": "普通对话中的自动发送概率；最终由情景模型判断是否追加本地表情包。",
                 "default": 50,
                 "min": 0,
                 "max": 100,
@@ -412,3 +423,4 @@ class PluginConfig:
                 "default": [],
             },
         }
+        return {key: schema[key] for key in PUBLIC_CONFIG_KEYS}

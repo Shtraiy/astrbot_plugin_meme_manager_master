@@ -117,7 +117,7 @@ class PluginConfigHelpersTests(unittest.TestCase):
 
 
 class PluginConfigSchemaTests(unittest.TestCase):
-    def test_schema_covers_every_runtime_field(self):
+    def test_schema_exposes_only_daily_runtime_fields(self):
         schema = PluginConfig.to_schema()
         self.assertEqual(
             set(schema),
@@ -127,30 +127,27 @@ class PluginConfigSchemaTests(unittest.TestCase):
                 "vision_provider_id",
                 "scene_provider_id",
                 "only_capture_memes",
-                "meme_rejection_confidence",
-                "max_images_per_message",
-                "max_concurrent",
-                "max_image_size_mb",
-                "download_timeout",
                 "auto_send_enabled",
                 "auto_send_probability",
                 "auto_send_cooldown",
-                "auto_send_candidate_limit",
-                "meme_repeat_window",
-                "meme_follow_up_window",
-                "proactive_send_after_steal",
-                "perceptual_dedupe_enabled",
-                "perceptual_duplicate_threshold",
-                "library_index_enabled",
-                "library_index_provider_id",
-                "library_index_batch_size",
-                "library_index_progress_step",
-                "library_index_rename_files",
-                "health_check_interval",
-                "fallback_category",
-                "local_image_roots",
             },
         )
+
+    def test_hidden_settings_and_deprecated_fallback_remain_compatible(self):
+        config = PluginConfig.from_mapping(
+            {
+                "max_concurrent": 7,
+                "library_index_enabled": True,
+                "fallback_category": "happy",
+            }
+        )
+
+        self.assertEqual(config.max_concurrent, 7)
+        self.assertTrue(config.library_index_enabled)
+        self.assertEqual(config.fallback_category, "happy")
+        self.assertNotIn("max_concurrent", PluginConfig.to_schema())
+        self.assertNotIn("library_index_enabled", PluginConfig.to_schema())
+        self.assertNotIn("fallback_category", PluginConfig.to_schema())
 
     def test_generated_schema_matches_checked_in_file(self):
         result = subprocess.run(

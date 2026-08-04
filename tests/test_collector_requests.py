@@ -2,35 +2,29 @@ import unittest
 
 from collector import (
     contains_meme_send_claim,
-    explicit_meme_request,
-    is_meme_follow_up_request,
     is_safe_remote_image_url,
+    should_block_agent_tool_for_meme_request,
     is_supported_image_source,
 )
 
 
 class CollectorRequestTests(unittest.TestCase):
-    def test_descriptive_cat_meme_request_is_explicit(self):
-        self.assertTrue(explicit_meme_request("再发一个可爱猫猫标签"))
-
-    def test_later_positive_request_overrides_an_earlier_negative_target(self):
-        self.assertTrue(explicit_meme_request("别发猫的表情了，发个笨蛋表情"))
-
-    def test_negative_meme_request_is_not_explicit(self):
-        self.assertFalse(explicit_meme_request("别发猫的表情了"))
-
-    def test_descriptive_follow_up_is_explicit_with_recent_meme(self):
-        self.assertTrue(
-            is_meme_follow_up_request(
+    def test_natural_language_does_not_activate_image_tool_guard(self):
+        self.assertFalse(
+            should_block_agent_tool_for_meme_request(
+                "astrbot_execute_python",
                 "再发一个可爱猫猫标签",
-                recent_meme=True,
+                guard_active=False,
             )
         )
 
-    def test_non_meme_follow_up_targets_are_not_meme_requests(self):
-        self.assertFalse(is_meme_follow_up_request("再发一个文件", recent_meme=True))
-        self.assertFalse(
-            is_meme_follow_up_request("别再发一个猫猫表情", recent_meme=True)
+    def test_real_meme_send_guard_still_blocks_image_tool(self):
+        self.assertTrue(
+            should_block_agent_tool_for_meme_request(
+                "astrbot_execute_python",
+                "生成自拍",
+                guard_active=True,
+            )
         )
 
     def test_meme_send_claim_is_detected(self):

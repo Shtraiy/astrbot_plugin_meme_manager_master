@@ -17,7 +17,7 @@ from .storage import MemeStore
     "meme_manager_master",
     "Shtraiy",
     "表情包管理大师：WebUI 管理、智能选图与群聊表情包自动收集。",
-    "2.0.0",
+    "2.1.0",
 )
 class MemeManager(CaptureMixin, MemeSender):
     """独立于原版 meme_manager 的管理运行时，并整合自动收集流程。"""

@@ -1,42 +1,36 @@
 # 配置说明
 
-运行时配置统一由 `runtime_config.PluginConfig` 定义，并由
-`scripts/generate_conf_schema.py` 生成 `_conf_schema.json`。
+运行时配置统一由 `runtime_config.PluginConfig` 定义，AstrBot Web 设置 schema 由
+`scripts/generate_conf_schema.py` 从同一份定义生成。
 
-## 公开配置
+## Web 中的日常设置
 
 | 配置项 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | 启用插件 |
-| `group_whitelist` | list[string] | `[]` | 群组白名单 |
-| `vision_provider_id` | string | `""` | 图片识别模型 |
-| `scene_provider_id` | string | `""` | 分类/情景判断模型 |
-| `only_capture_memes` | bool | `true` | 仅采集表情包 |
-| `meme_rejection_confidence` | float | `0.7` | 识别拒绝阈值 |
-| `max_images_per_message` | int | `2` | 单次最多处理图片数 |
-| `max_concurrent` | int | `2` | 并发模型请求数 |
-| `max_image_size_mb` | int | `10` | 图片大小上限 |
-| `download_timeout` | float | `20` | 下载超时秒数 |
-| `auto_send_enabled` | bool | `true` | 启用情景判断后的自动发送 |
-| `auto_send_probability` | float | `50` | 普通自动发送概率 |
-| `auto_send_cooldown` | float | `30` | 自动发送冷却秒数 |
-| `auto_send_candidate_limit` | int | `8` | 候选图片数量 |
-| `meme_repeat_window` | float | `300` | 图片重复抑制窗口 |
-| `meme_follow_up_window` | float | `300` | 后续消息关联窗口 |
-| `proactive_send_after_steal` | bool | `false` | 采集后主动选择并发送 |
-| `perceptual_dedupe_enabled` | bool | `true` | 启用感知去重 |
-| `perceptual_duplicate_threshold` | int | `6` | 感知重复阈值 |
-| `library_index_enabled` | bool | `false` | 启用后台目录索引 |
-| `library_index_provider_id` | string | `""` | 目录索引模型 |
-| `library_index_batch_size` | int | `6` | 索引批次大小 |
-| `library_index_progress_step` | int | `5` | 索引进度步长 |
-| `library_index_rename_files` | bool | `true` | 允许目录索引整理文件名 |
-| `health_check_interval` | float | `300` | 健康检查间隔 |
-| `fallback_category` | string | `"confused"` | 无法判断时使用的分类 |
-| `local_image_roots` | list[string] | `[]` | 可选的本地图片根目录 |
+| `group_whitelist` | list[string] | `[]` | 群聊白名单；留空表示允许所有群 |
+| `vision_provider_id` | string | `""` | 图片识别模型；留空使用当前会话模型 |
+| `scene_provider_id` | string | `""` | 情景判断模型；留空使用当前会话模型 |
+| `only_capture_memes` | bool | `true` | 只保存被识别为表情包的图片 |
+| `auto_send_enabled` | bool | `true` | 启用最终回复阶段的情景判断和自动追加 |
+| `auto_send_probability` | float | `50` | 情景模型决定发送后的概率控制 |
+| `auto_send_cooldown` | float | `30` | 自动发送之间的冷却秒数 |
 
-图片选择使用情景判断和分类规则，不依赖 FAISS、Embedding 或图片语义化任务。
-旧版本中的语义配置仍可能被兼容读取，但不会启动旧任务；启动时只清理
-`semantic_metadata.json` 和 `semantic_indexes`，不会删除图片、分类、目录索引或选择规则。
+情景模型会参考当前用户消息、机器人回复和最近 3 轮文本上下文。生图、自拍、插画、
+视频等外部视觉请求不会被当成本地表情包请求；当前回复已经包含外部媒体时也不会追加
+本地表情包。
 
-迁移表情包时，分类目录中的 `index.json` 和 `README.md` 会一并复制。
+## 高级运行配置
+
+图片大小、下载超时、并发数、候选数量、重复抑制、感知去重、后台目录索引、采集后主动
+发送、本地图片目录和健康检查间隔等参数仍由 `PluginConfig` 读取，以兼容已有配置文件，
+但不再暴露在 AstrBot Web 日常设置中。
+
+旧版本的 `fallback_category` 也会继续兼容读取，但它不再作为实际回退分类使用；模型
+失败时插件保留原回复并跳过本地表情包发送。
+
+运行 schema 同步检查：
+
+```powershell
+python scripts\generate_conf_schema.py --check
+```

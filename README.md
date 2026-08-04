@@ -2,7 +2,7 @@
 
 # 表情包管理大师
 
-[![version](https://img.shields.io/badge/version-v2.0.0-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
+[![version](https://img.shields.io/badge/version-v2.1.0-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.5.7-orange.svg)](https://github.com/Soulter/AstrBot)
 
 **让表情包管理、收集与选图更简单**
@@ -20,6 +20,7 @@
 - 使用 pack 运行时保存表情包，支持默认包、导入导出和会话/人格选包规则。
 - 参考原版 `meme_manager` 的分类标记、语义候选和精确 ID 选图逻辑。
 - 自动识别群聊图片，使用视觉模型判断是否为表情包，再按场景分类保存。
+- 机器人回复完成后由情景模型统一判断是否追加本地表情包；其他插件生成的图片、文件、视频或音频不会被本插件抢占或再次追加表情包。
 - 支持 `/偷取`、`/表情管理` 命令组和 `/表情偷取状态` 状态检查。
 
 ## 🖥️ WebUI
@@ -50,7 +51,7 @@ AstrBot/data/plugin_data/meme_manager_master/
 
 ## ⚙️ 配置
 
-基础配置包括识图模型、分类模型、自动收集开关、群组白名单、去重、后台索引和自动发送概率。配置定义见 `CONFIGURATION.md`；`_conf_schema.json` 由 `scripts/generate_conf_schema.py` 从 `runtime_config.PluginConfig` 生成，schema 检查通过 `python scripts/generate_conf_schema.py --check` 完成。
+Web 设置只保留识图模型、情景判断模型、自动收集开关、群组白名单和自动发送控制等日常选项。高级运行参数仍由 `runtime_config.PluginConfig` 兼容读取，但不再全部暴露在 AstrBot Web 界面；详细说明见 `CONFIGURATION.md`。`_conf_schema.json` 由 `scripts/generate_conf_schema.py` 生成，可用 `python scripts/generate_conf_schema.py --check` 检查同步状态。
 
 ## 🧰 可选依赖
 
