@@ -4,6 +4,11 @@
 
 ## [Unreleased] - 2026-08-05
 
+### Refactor delivery note
+
+- Stage commit `352b86b` on branch `codex/storage-boundary-complete` adds storage/pack boundary modules, application service forwarding, lazy semantic capability boundaries, capture image validation helpers, and 272 regression tests (1 skipped).
+- The legacy `storage.py` and `backend/pack_storage.py` implementations remain as compatibility facades during the migration window; full physical extraction of the remaining legacy bodies and a live AstrBot upload smoke test are follow-up acceptance items.
+
 ### 新增
 
 - 增加 `domain`、`ports`、`application`、`capabilities` 和 `infrastructure` 边界，提供 pack、catalog、图片仓储、选择状态和可选语义能力的稳定接口。
