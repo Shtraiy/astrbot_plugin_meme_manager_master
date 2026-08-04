@@ -591,13 +591,6 @@ window.MemeManagerUI.pack.renderSyncStatus = function (statusDiv, differences) {
             actions.className = "action-buttons";
             actions.appendChild(
               window.MemeManagerUI.emoji.createButton({
-                className: "restore-btn",
-                text: "恢复类别",
-                onClick: () => window.MemeManagerUI.pack.restoreCategory(category),
-              }),
-            );
-            actions.appendChild(
-              window.MemeManagerUI.emoji.createButton({
                 className: "remove-btn",
                 text: "从配置中删除",
                 onClick: () => window.MemeManagerUI.pack.removeFromConfig(category),
@@ -682,21 +675,6 @@ window.MemeManagerUI.pack.syncConfig = async function () {
     } catch (error) {
       console.error("同步配置失败:", error);
       window.MemeManagerUI.dialogs.showToast(error.message, "error", "同步失败");
-    }
-  }
-window.MemeManagerUI.pack.restoreCategory = async function (category) {
-    try {
-      const data = await window.MemeManagerUI.api.apiPost("category/restore", { category });
-
-      await window.MemeManagerUI.emoji.refreshUi({ emojis: true, syncStatus: true });
-      window.MemeManagerUI.dialogs.showToast(
-        `类别「${category}」已恢复。\n描述：${data.description || "请补充描述"}`,
-        "success",
-        "恢复成功",
-      );
-    } catch (error) {
-      console.error("恢复类别失败:", error);
-      window.MemeManagerUI.dialogs.showToast(error.message, "error", "恢复失败");
     }
   }
 window.MemeManagerUI.pack.removeFromConfig = async function (category) {

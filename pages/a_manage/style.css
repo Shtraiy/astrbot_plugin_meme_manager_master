@@ -564,14 +564,6 @@ input[type="file"] {
   max-width: 300px;
 }
 
-#add-category-form {
-  margin: 10px 0;
-}
-
-#add-category-form input {
-  margin-right: 10px;
-}
-
 .delete-category-btn {
   display: inline-flex;
   align-items: center;
@@ -2091,9 +2083,7 @@ body.panel-console-hidden.panel-directory-hidden .container {
 
 .sync-buttons button,
 .sync-status button,
-.selection-toolbar-actions button,
-#add-category-btn,
-#save-category-btn {
+.selection-toolbar-actions button {
   margin: 0;
 }
 
@@ -2416,9 +2406,7 @@ body.drag-session-active {
   .confirm-modal-actions button,
   .danger-modal-actions button,
   .sync-buttons button,
-  .sync-status button,
-  #add-category-btn,
-  #save-category-btn {
+  .sync-status button {
     width: 100%;
     justify-content: center;
   }
@@ -2660,7 +2648,6 @@ body.app-page {
 
 .manage-pack-switch-row select,
 .category-edit-form-panel input,
-#add-category-form input,
 input[type="text"],
 input[type="file"],
 select {
@@ -2670,7 +2657,6 @@ select {
 
 .manage-pack-switch-row select:focus,
 .category-edit-form-panel input:focus,
-#add-category-form input:focus,
 input[type="text"]:focus,
 input[type="file"]:focus,
 select:focus {
@@ -2681,8 +2667,6 @@ select:focus {
 
 button,
 .selection-toolbar-actions button,
-#add-category-btn,
-#save-category-btn,
 .category-actions button,
 .sync-buttons button {
   background: linear-gradient(135deg, var(--ui-brand), var(--ui-brand-strong));
@@ -2693,8 +2677,6 @@ button,
 
 button:hover:not(:disabled),
 .selection-toolbar-actions button:hover:not(:disabled),
-#add-category-btn:hover:not(:disabled),
-#save-category-btn:hover:not(:disabled),
 .category-actions button:hover:not(:disabled),
 .sync-buttons button:hover:not(:disabled) {
   transform: translateY(-1px);

@@ -1906,10 +1906,9 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
       hint.className = "empty-pack-hint";
       hint.innerHTML = `
         <p class="empty-pack-hint-title">当前还没有表情包内容</p>
-        <p class="empty-pack-hint-meta">你可以先新建分类上传表情，或前往资源广场下载官方包；也可直接一键安装官方包。</p>
+        <p class="empty-pack-hint-meta">你可以直接上传图片并选择固定标签，或前往资源广场下载官方包。</p>
         <div class="empty-pack-hint-actions">
           <button id="empty-hint-install-official" type="button">一键安装官方包</button>
-          <button id="empty-hint-create-category" type="button">新建分类</button>
           <a id="empty-hint-open-catalog" href="#">前往资源广场下载</a>
         </div>
       `;
@@ -1929,13 +1928,6 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
       );
       installOfficialBtn?.addEventListener("click", async () => {
         await window.MemeManagerUI.pack.installOfficialFirstPackFromHint(installOfficialBtn);
-      });
-
-      const createCategoryBtn = document.getElementById(
-        "empty-hint-create-category",
-      );
-      createCategoryBtn?.addEventListener("click", () => {
-        document.getElementById("add-category-btn")?.click();
       });
 
       const openCatalogLink = document.getElementById(
@@ -2004,22 +1996,11 @@ window.MemeManagerUI.emoji.displayCategories = function (emojiData, tagDescripti
         text: "清空本类",
         onClick: () => window.MemeManagerUI.emoji.clearCategory(category),
       });
-      const deleteCategoryButton = window.MemeManagerUI.emoji.createIconButton({
-        className: "delete-category-btn icon-only-btn danger",
-        iconClass: "fas fa-trash",
-        title: `删除类别 ${category}`,
-        ariaLabel: `删除类别 ${category}`,
-        onClick: () => window.MemeManagerUI.emoji.deleteCategory(category),
-      });
-
-      // Tags are fixed vocabulary entries; there are no category-directory controls.
-      editButton.hidden = true;
-      clearCategoryButton.hidden = true;
-      deleteCategoryButton.hidden = true;
+      editButton.hidden = false;
+      clearCategoryButton.hidden = false;
       actionsDiv.appendChild(editButton);
       actionsDiv.appendChild(toggleCategoryButton);
       actionsDiv.appendChild(clearCategoryButton);
-      actionsDiv.appendChild(deleteCategoryButton);
 
       headerDiv.appendChild(titleMain);
       headerDiv.appendChild(actionsDiv);
@@ -2312,8 +2293,12 @@ window.MemeManagerUI.emoji.copyItemsToClipboard = function (items) {
     return true;
   }
 window.MemeManagerUI.emoji.uploadEmoji = async function (category, file) {
+    const managedPackId = window.MemeManagerUI.api.getSelectedPackId();
+    const query = managedPackId
+      ? `?managed_pack_id=${encodeURIComponent(managedPackId)}`
+      : "";
     return await window.AstrBotPluginPage.upload(
-      "emoji/add/" + encodeURIComponent(category),
+      "emoji/add/" + encodeURIComponent(category) + query,
       file,
     );
   }
@@ -2421,32 +2406,6 @@ window.MemeManagerUI.emoji.deleteEmojiItems = async function (
 window.MemeManagerUI.emoji.batchDeleteSelected = async function () {
     await window.MemeManagerUI.emoji.deleteEmojiItems(Array.from(window.MemeManagerUI.state.selectionState.items.values()));
   }
-window.MemeManagerUI.emoji.deleteCategory = async function (category) {
-    const emojiCount = Array.isArray(window.MemeManagerUI.state.latestEmojiData[category])
-      ? window.MemeManagerUI.state.latestEmojiData[category].length
-      : 0;
-
-    const confirmed = await window.MemeManagerUI.dialogs.showDangerConfirm({
-      title: `删除分类「${category}」`,
-      description: `该操作会删除分类「${category}」本身，并移除其描述配置${
-        emojiCount > 0 ? `，同时删除其中的 ${emojiCount} 个表情包` : ""
-      }。`,
-      actionLabel: "确认删除当前分类",
-      countdown: 5,
-    });
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      await window.MemeManagerUI.api.apiPost("category/delete", { category });
-      await window.MemeManagerUI.emoji.refreshUi({ emojis: true, syncStatus: true });
-      window.MemeManagerUI.dialogs.showToast(`已删除分类 ${category}`, "success", "删除成功");
-    } catch (error) {
-      console.error("删除分类失败:", error);
-      window.MemeManagerUI.dialogs.showToast(`删除分类失败：${error.message}`, "error", "删除失败", 4500);
-    }
-  }
 window.MemeManagerUI.emoji.clearCategory = async function (category) {
     const emojiCount = Array.isArray(window.MemeManagerUI.state.latestEmojiData[category])
       ? window.MemeManagerUI.state.latestEmojiData[category].length
@@ -2462,7 +2421,7 @@ window.MemeManagerUI.emoji.clearCategory = async function (category) {
 
     const confirmed = await window.MemeManagerUI.dialogs.showDangerConfirm({
       title: `清空分类「${category}」`,
-      description: `该操作会删除分类「${category}」下的 ${emojiCount} 个表情包，但会保留分类名称和描述配置。`,
+      description: `该操作会移除分类「${category}」下 ${emojiCount} 个表情包的标签关联，但会保留图片文件。`,
       actionLabel: "确认清空当前分类",
       countdown: 5,
     });
@@ -2475,7 +2434,7 @@ window.MemeManagerUI.emoji.clearCategory = async function (category) {
       window.MemeManagerUI.emoji.clearSelections();
       await window.MemeManagerUI.emoji.refreshUi({ emojis: true });
       window.MemeManagerUI.dialogs.showToast(
-        `已清空分类 ${category}，删除 ${data.deleted_count} 个表情包。`,
+        `已清空标签 ${category}，移除 ${data.untagged_count || 0} 个标签关联，图片文件保留。`,
         "success",
         "清空成功",
       );
@@ -2552,7 +2511,7 @@ window.MemeManagerUI.emoji.editCategory = function (category) {
     }
     if (window.MemeManagerUI.state.categoryEditModalDescription) {
       window.MemeManagerUI.state.categoryEditModalDescription.textContent =
-        "修改类别名称和描述，保存后立即生效。";
+        "仅可修改标签描述，标签名称保持固定。";
     }
     if (window.MemeManagerUI.state.categoryEditNameInput) {
       window.MemeManagerUI.state.categoryEditNameInput.value = category;
@@ -2568,21 +2527,14 @@ window.MemeManagerUI.emoji.editCategory = function (category) {
       window.MemeManagerUI.state.categoryEditModalRoot.setAttribute("aria-hidden", "false");
     }
     window.setTimeout(() => {
-      window.MemeManagerUI.state.categoryEditNameInput?.focus();
-      window.MemeManagerUI.state.categoryEditNameInput?.select();
+      window.MemeManagerUI.state.categoryEditDescInput?.focus();
     }, 0);
   }
 window.MemeManagerUI.emoji.cancelEdit = function () {
     window.MemeManagerUI.emoji.closeCategoryEditModal();
   }
 window.MemeManagerUI.emoji.saveCategory = async function (oldName = window.MemeManagerUI.state.activeCategoryEdit) {
-    const newName = window.MemeManagerUI.state.categoryEditNameInput?.value.trim() || "";
     const newDesc = window.MemeManagerUI.state.categoryEditDescInput?.value.trim() || "";
-
-    if (!newName) {
-      window.MemeManagerUI.dialogs.showToast("类别名称不能为空。", "warning", "保存失败");
-      return;
-    }
 
     if (!oldName) {
       window.MemeManagerUI.dialogs.showToast("未找到当前正在编辑的类别。", "error", "保存失败");
@@ -2592,21 +2544,14 @@ window.MemeManagerUI.emoji.saveCategory = async function (oldName = window.MemeM
     window.MemeManagerUI.emoji.setButtonBusy(window.MemeManagerUI.state.categoryEditSaveBtn, "保存中...");
 
     try {
-      if (oldName !== newName) {
-        await window.MemeManagerUI.api.apiPost("category/rename", {
-          old_name: oldName,
-          new_name: newName,
-        });
-      }
-
       await window.MemeManagerUI.api.apiPost("category/update_description", {
-        tag: newName,
+        tag: oldName,
         description: newDesc,
       });
 
       await window.MemeManagerUI.emoji.refreshUi({ emojis: true, syncStatus: true });
       window.MemeManagerUI.emoji.closeCategoryEditModal();
-      window.MemeManagerUI.dialogs.showToast(`类别「${newName}」已保存。`, "success", "保存成功");
+      window.MemeManagerUI.dialogs.showToast(`标签「${oldName}」的描述已保存。`, "success", "保存成功");
     } catch (error) {
       console.error("保存类别修改失败:", error);
       window.MemeManagerUI.dialogs.showToast(error.message, "error", "保存失败");

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 from pathlib import Path
@@ -6,7 +8,7 @@ from ..config import (
     ACTIVE_PACK_MANIFEST_PATH,
     MEMES_DATA_PATH,
     MEMES_DIR,
-    sync_active_pack_metadata,
+    sync_pack_metadata,
     get_active_pack_paths,
 )
 from ..utils import ensure_dir_exists, load_json, save_json
@@ -18,10 +20,10 @@ from .semantic_storage import invalidate_semantic_metadata
 logger = logging.getLogger(__name__)
 
 
-def _reconcile_active_catalogs() -> None:
-    """Keep the active pack's per-category JSON/README indexes in sync."""
+def _reconcile_pack_catalogs(pack_dir: Path) -> None:
+    """Keep one pack's compatibility indexes in sync."""
     try:
-        MemeStore(Path(get_active_pack_paths()["pack_dir"]).resolve()).reconcile_catalogs()
+        MemeStore(Path(pack_dir).resolve()).reconcile_catalogs()
     except Exception as exc:
         logger.warning("同步分类索引失败: %s", exc, exc_info=True)
 
@@ -32,8 +34,15 @@ def is_safe_category_name(category: str) -> bool:
 
 
 class CategoryManager:
-    @staticmethod
-    def _active_paths() -> dict[str, Path | str]:
+    def _active_paths(self) -> dict[str, Path | str]:
+        if self.pack_dir is not None:
+            return {
+                "pack_id": self.pack_dir.name,
+                "pack_dir": self.pack_dir,
+                "memes_dir": self.pack_dir / "memes",
+                "metadata_path": self.pack_dir / "memes_data.json",
+                "manifest_path": self.pack_dir / "manifest.json",
+            }
         try:
             return get_active_pack_paths()
         except Exception:
@@ -43,7 +52,8 @@ class CategoryManager:
                 "manifest_path": Path(ACTIVE_PACK_MANIFEST_PATH),
             }
 
-    def __init__(self):
+    def __init__(self, pack_dir: Path | str | None = None):
+        self.pack_dir = Path(pack_dir).resolve() if pack_dir is not None else None
         """初始化类别管理器"""
         ensure_dir_exists(self._active_paths()["memes_dir"])
         self._ensure_data_file()
@@ -63,7 +73,7 @@ class CategoryManager:
             initial_descriptions = self._build_initial_descriptions()
             save_json(initial_descriptions, str(paths["metadata_path"]))
             logger.info(f"初始化类别描述文件: {paths['metadata_path']}")
-            sync_active_pack_metadata(initial_descriptions)
+            sync_pack_metadata(paths["pack_dir"], initial_descriptions)
 
     def _build_initial_descriptions(self) -> dict[str, str]:
         """在缺失 memes_data.json 时，从目录与 manifest 构建初始描述。"""
@@ -159,8 +169,9 @@ class CategoryManager:
             metadata_path = self._active_paths()["metadata_path"]
             saved = save_json(self.descriptions, str(metadata_path))
             if saved:
-                sync_active_pack_metadata(self.descriptions)
-                _reconcile_active_catalogs()
+                pack_dir = Path(self._active_paths()["pack_dir"])
+                sync_pack_metadata(pack_dir, self.descriptions)
+                _reconcile_pack_catalogs(pack_dir)
                 if " ".join(old_description.split()) != " ".join(
                     str(description).split()
                 ):
@@ -169,15 +180,6 @@ class CategoryManager:
         except Exception as e:
             logger.error(f"更新类别描述失败: {e}")
             return False
-
-    def create_category(self, category: str, description: str = "请添加描述") -> bool:
-        raise RuntimeError("category_directories_retired")
-
-    def rename_category(self, old_name: str, new_name: str) -> bool:
-        raise RuntimeError("category_directories_retired")
-
-    def delete_category(self, category: str) -> bool:
-        raise RuntimeError("category_directories_retired")
 
     def remove_from_config(self, category: str) -> bool:
         """Remove a category from the description config only (keep directory on disk)."""
@@ -193,8 +195,9 @@ class CategoryManager:
                 self.descriptions, str(self._active_paths()["metadata_path"])
             )
             if saved:
-                sync_active_pack_metadata(self.descriptions)
-                _reconcile_active_catalogs()
+                pack_dir = Path(self._active_paths()["pack_dir"])
+                sync_pack_metadata(pack_dir, self.descriptions)
+                _reconcile_pack_catalogs(pack_dir)
                 self._invalidate_semantic_if_present()
             return saved
         except Exception as e:
@@ -233,12 +236,14 @@ class CategoryManager:
                     self.descriptions, str(self._active_paths()["metadata_path"])
                 )
                 if saved:
-                    sync_active_pack_metadata(self.descriptions)
-                    _reconcile_active_catalogs()
+                    pack_dir = Path(self._active_paths()["pack_dir"])
+                    sync_pack_metadata(pack_dir, self.descriptions)
+                    _reconcile_pack_catalogs(pack_dir)
                     self._invalidate_semantic_if_present()
                 return saved
-            sync_active_pack_metadata(self.descriptions)
-            _reconcile_active_catalogs()
+            pack_dir = Path(self._active_paths()["pack_dir"])
+            sync_pack_metadata(pack_dir, self.descriptions)
+            _reconcile_pack_catalogs(pack_dir)
             return True
         except Exception as e:
             logger.error(f"同步文件系统失败: {e}")

@@ -270,29 +270,91 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
         """Compatibility no-op after semanticization was removed."""
         return None
 
-    def _resolve_webui_pack_view_context(self) -> dict | None:
-        managed_pack_id = str(request.args.get("managed_pack_id") or "").strip()
+    @staticmethod
+    def _normalize_pack_context(context: dict) -> dict:
+        pack_dir = Path(context["pack_dir"]).resolve()
+        return {
+            **context,
+            "pack_id": str(context.get("pack_id") or pack_dir.name).strip(),
+            "pack_dir": pack_dir,
+            "memes_dir": pack_dir / "memes",
+            "memes_data_path": pack_dir / "memes_data.json",
+            "metadata_path": pack_dir / "memes_data.json",
+            "manifest_path": pack_dir / "manifest.json",
+        }
+
+    def _requested_webui_pack_id(self, payload: dict | None = None) -> str | None:
+        args = request.args
+        if "managed_pack_id" in args:
+            raw_pack_id = args.get("managed_pack_id")
+        elif isinstance(payload, dict) and "managed_pack_id" in payload:
+            raw_pack_id = payload.get("managed_pack_id")
+        else:
+            return None
+
+        managed_pack_id = str(raw_pack_id or "").strip()
         if not managed_pack_id:
+            raise ValueError("managed_pack_id is required when provided")
+        return managed_pack_id
+
+    def _resolve_webui_pack_view_context(self, payload: dict | None = None) -> dict | None:
+        managed_pack_id = self._requested_webui_pack_id(payload)
+        if managed_pack_id is None:
             return None
         if not re.fullmatch(r"[A-Za-z0-9._-]{2,64}", managed_pack_id):
-            return None
+            raise ValueError("managed_pack_id is invalid")
 
         pack_dir = (PACKS_DIR / managed_pack_id).resolve()
         packs_root = PACKS_DIR.resolve()
         try:
             pack_dir.relative_to(packs_root)
         except ValueError:
-            return None
+            raise ValueError("managed_pack_id is invalid")
         if not pack_dir.is_dir():
-            return None
+            raise FileNotFoundError("managed pack not found")
 
-        return {
+        return self._normalize_pack_context({
             "pack_id": managed_pack_id,
             "pack_dir": pack_dir,
-            "memes_dir": pack_dir / "memes",
-            "memes_data_path": pack_dir / "memes_data.json",
-            "manifest_path": pack_dir / "manifest.json",
-        }
+        })
+
+    def _resolve_webui_pack_mutation_context(self, payload: dict | None = None) -> dict:
+        view_context = self._resolve_webui_pack_view_context(payload)
+        if view_context is not None:
+            return view_context
+        return self._normalize_pack_context(self._default_pack_context())
+
+    def _pack_context_error_response(self, exc: Exception):
+        if isinstance(exc, FileNotFoundError):
+            return jsonify({"message": str(exc), "code": "managed_pack_not_found"}), 404
+        return jsonify({"message": str(exc), "code": "managed_pack_invalid"}), 400
+
+    def _category_manager_for_pack(self, context: dict):
+        from ..backend.category_manager import CategoryManager
+
+        return CategoryManager(Path(context["pack_dir"]))
+
+    def _sync_webui_pack_metadata(self, context: dict) -> None:
+        self._category_manager_for_pack(context).sync_with_filesystem()
+
+    async def _run_webui_pack_mutation(self, payload, operation: str, mutation):
+        try:
+            context = self._resolve_webui_pack_mutation_context(payload)
+        except (FileNotFoundError, ValueError) as exc:
+            return None, self._pack_context_error_response(exc)
+
+        requested_pack_id = self._requested_webui_pack_id(payload)
+
+        def bound_mutation():
+            return mutation(context)
+
+        if requested_pack_id:
+            result = await self.catalog_index_service.run_locked_pack_mutation(
+                context["pack_id"], operation, bound_mutation
+            )
+        else:
+            result = await self._run_default_pack_mutation(operation, bound_mutation)
+        return result, None
 
     def _scan_pack_emojis(self, memes_dir: Path) -> dict:
         return scan_pack_emojis(memes_dir)

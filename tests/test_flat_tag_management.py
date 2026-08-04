@@ -81,6 +81,39 @@ class FlatTagManagementTests(unittest.TestCase):
             self.assertEqual(scanned["震惊"], [uploaded["filename"]])
             self.assertEqual(models.get_emoji_by_category("surprised", memes_dir), [uploaded["filename"]])
 
+    def test_batch_delete_reports_existing_source_after_deleting_last_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memes_dir = Path(temp_dir) / "memes"
+            uploaded = models.add_emoji_to_category(
+                "happy", Upload("original.png", png_bytes()), memes_dir
+            )
+
+            result = models.batch_delete_emojis(
+                "happy", [uploaded["filename"]], memes_dir
+            )
+
+            self.assertTrue(result["category_exists"])
+            self.assertEqual(result["deleted_files"], [uploaded["filename"]])
+            self.assertFalse((memes_dir / uploaded["filename"]).exists())
+
+    def test_batch_move_reports_existing_source_after_moving_last_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memes_dir = Path(temp_dir) / "memes"
+            uploaded = models.add_emoji_to_category(
+                "happy", Upload("original.png", png_bytes()), memes_dir
+            )
+
+            result = models.batch_move_emojis(
+                "happy", [uploaded["filename"]], "surprised", memes_dir
+            )
+
+            self.assertTrue(result["source_category_exists"])
+            self.assertEqual(result["moved_files"], [uploaded["filename"]])
+            self.assertEqual(
+                models.get_emoji_by_category("surprised", memes_dir),
+                [uploaded["filename"]],
+            )
+
     @staticmethod
     def _run(awaitable):
         import asyncio

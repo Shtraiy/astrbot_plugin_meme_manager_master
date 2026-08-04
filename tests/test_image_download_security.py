@@ -20,6 +20,29 @@ from meme_manager_master.backend.image_download import (  # noqa: E402
 
 
 class ImageDownloadSecurityTests(unittest.TestCase):
+    def test_public_resolver_pins_checked_addresses(self):
+        from meme_manager_master.backend import image_download
+
+        with patch.object(
+            image_download.socket,
+            "getaddrinfo",
+            return_value=[
+                (2, 1, 6, "", ("93.184.216.34", 443)),
+                (2, 1, 6, "", ("93.184.216.35", 443)),
+            ],
+        ):
+            addresses = asyncio.run(
+                image_download._resolve_public_addresses("https://example.com/image.png")
+            )
+
+        self.assertTrue(addresses)
+        resolver = image_download._PinnedPublicResolver("example.com", 443, addresses)
+        resolved = asyncio.run(resolver.resolve("example.com", 443))
+        self.assertEqual(
+            {item["host"] for item in resolved},
+            set(addresses),
+        )
+
     def test_message_upload_path_uses_shared_safe_downloader(self):
         source = (Path(__file__).resolve().parents[1] / "mixins" / "event_handlers.py").read_text(
             encoding="utf-8"
@@ -74,7 +97,11 @@ class ImageDownloadSecurityTests(unittest.TestCase):
                 return Response()
 
         async def run():
-            with patch.object(image_download, "_remote_target_is_public", return_value=True):
+            with patch.object(
+                image_download,
+                "_resolve_public_addresses",
+                return_value=("93.184.216.34",),
+            ):
                 with patch.object(image_download.aiohttp, "ClientSession", Session):
                     return await image_download.download_image(
                         "https://example.com/image.png", 1024, timeout_seconds=5

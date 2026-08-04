@@ -184,10 +184,11 @@ def delete_emoji_from_category(category, image_file, memes_dir: str | Path | Non
 
 def batch_delete_emojis(category, image_files, memes_dir: str | Path | None = None):
     store = _store_for(memes_dir)
+    category_exists = bool(_tag(category) and get_emoji_by_category(category, memes_dir))
     names = [_image_name(value) for value in image_files]
     deleted = [name for name in names if name and delete_emoji_from_category(category, name, memes_dir)]
     return {
-        "category_exists": bool(_tag(category) and get_emoji_by_category(category, memes_dir)),
+        "category_exists": category_exists,
         "deleted_files": deleted,
         "missing_files": [name for name in names if name and name not in deleted],
     }
@@ -210,12 +211,15 @@ def move_emoji_to_category(source_category, image_file, target_category, memes_d
 
 
 def batch_move_emojis(source_category, image_files, target_category, memes_dir=None):
+    source_category_exists = bool(
+        _tag(source_category) and get_emoji_by_category(source_category, memes_dir)
+    )
     moved, missing = [], []
     for name in image_files:
         result = move_emoji_to_category(source_category, name, target_category, memes_dir)
         (moved if result["moved"] else missing).append(Path(str(name)).name)
     return {
-        "source_category_exists": bool(_tag(source_category) and get_emoji_by_category(source_category, memes_dir)),
+        "source_category_exists": source_category_exists,
         "source_category": source_category,
         "target_category": target_category,
         "moved_files": moved,

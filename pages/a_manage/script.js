@@ -380,50 +380,6 @@ async function initApp() {
       }
     }
   });
-  document
-    .getElementById("add-category-btn")
-    .addEventListener("click", function () {
-      document.getElementById("add-category-form").style.display = "block";
-      this.style.display = "none";
-    });
-  document
-    .getElementById("save-category-btn")
-    .addEventListener("click", async function () {
-      const categoryName = document
-        .getElementById("new-category-name")
-        .value.trim();
-      const categoryDesc =
-        document.getElementById("new-category-description").value.trim() ||
-        "请添加描述";
-
-      if (!categoryName) {
-        window.MemeManagerUI.dialogs.showToast("请输入类别名称后再保存。", "warning", "缺少类别名称");
-        return;
-      }
-
-      const saveButton = this;
-      window.MemeManagerUI.emoji.setButtonBusy(saveButton, "保存中...");
-
-      try {
-        await window.MemeManagerUI.api.apiPost("category/restore", {
-          category: categoryName,
-          description: categoryDesc,
-        });
-
-        document.getElementById("new-category-name").value = "";
-        document.getElementById("new-category-description").value = "";
-        document.getElementById("add-category-form").style.display = "none";
-        document.getElementById("add-category-btn").style.display = "block";
-        await window.MemeManagerUI.emoji.refreshUi({ emojis: true, syncStatus: true });
-        window.MemeManagerUI.dialogs.showToast(`类别「${categoryName}」已添加。`, "success", "添加成功");
-      } catch (error) {
-        console.error("添加类别失败:", error);
-        window.MemeManagerUI.dialogs.showToast(error.message, "error", "添加失败");
-      } finally {
-        window.MemeManagerUI.emoji.restoreButton(saveButton);
-      }
-    });
-  window.restoreCategory = window.MemeManagerUI.pack.restoreCategory;
   window.removeFromConfig = window.MemeManagerUI.pack.removeFromConfig;
   window.syncConfig = window.MemeManagerUI.pack.syncConfig;
   window.editCategory = window.MemeManagerUI.emoji.editCategory;

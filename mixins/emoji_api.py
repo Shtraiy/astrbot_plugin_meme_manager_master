@@ -120,7 +120,10 @@ class EmojiAPIMixin:
         )
 
     async def _api_get_emojis(self):
-        view_context = self._resolve_webui_pack_view_context()
+        try:
+            view_context = self._resolve_webui_pack_view_context()
+        except (FileNotFoundError, ValueError) as exc:
+            return self._pack_context_error_response(exc)
         if view_context:
             emoji_data = self._scan_pack_emojis(view_context["memes_dir"])
         else:
@@ -131,29 +134,13 @@ class EmojiAPIMixin:
         return jsonify(emoji_data)
 
     async def _api_get_emoji_by_category(self, category):
-        view_context = self._resolve_webui_pack_view_context()
+        try:
+            view_context = self._resolve_webui_pack_view_context()
+        except (FileNotFoundError, ValueError) as exc:
+            return self._pack_context_error_response(exc)
         if view_context:
             emojis = get_emoji_by_category(category, view_context["memes_dir"])
             return jsonify(emojis), 200
-            if not is_safe_category_segment(category):
-                return jsonify({"message": "分类名无效"}), 400
-            category_path = view_context["memes_dir"] / category
-            if not category_path.is_dir():
-                emojis = []
-            else:
-                emojis = [
-                    file_path.name
-                    for file_path in category_path.iterdir()
-                    if file_path.is_file()
-                    and file_path.suffix.lower()
-                    in {
-                        ".png",
-                        ".jpg",
-                        ".jpeg",
-                        ".gif",
-                        ".webp",
-                    }
-                ]
         else:
             emojis = get_emoji_by_category(category)
         if emojis is None:
@@ -171,13 +158,19 @@ class EmojiAPIMixin:
             logger.info(f"收到上传请求: 类别={category}, 文件名={image_file.filename}")
             try:
 
-                def mutate():
-                    add_result = add_emoji_to_category(category, image_file)
-                    self.category_manager.sync_with_filesystem()
+                def mutate(context):
+                    add_result = add_emoji_to_category(
+                        category, image_file, context["memes_dir"]
+                    )
+                    self._sync_webui_pack_metadata(context)
                     self._invalidate_default_pack_semantics()
                     return add_result
 
-                result = await self._run_default_pack_mutation("上传表情图片", mutate)
+                result, error = await self._run_webui_pack_mutation(
+                    None, "上传表情图片", mutate
+                )
+                if error:
+                    return error
                 logger.info(f"表情添加成功: {result['path']}")
                 return (
                     jsonify(
@@ -218,14 +211,21 @@ class EmojiAPIMixin:
         if not category or not image_file:
             return jsonify({"message": "分类和文件名不能为空"}), 400
 
-        def mutate():
-            deleted = delete_emoji_from_category(category, image_file)
+        def mutate(context):
+            deleted = delete_emoji_from_category(
+                category, image_file, context["memes_dir"]
+            )
+            self._sync_webui_pack_metadata(context)
             if deleted:
                 self._invalidate_default_pack_semantics()
             return deleted
 
         try:
-            deleted = await self._run_default_pack_mutation("删除表情图片", mutate)
+            deleted, error = await self._run_webui_pack_mutation(
+                data, "删除表情图片", mutate
+            )
+            if error:
+                return error
         except RuntimeError as exc:
             return jsonify({"message": str(exc)}), 409
         if deleted:
@@ -248,14 +248,21 @@ class EmojiAPIMixin:
         if not category or not isinstance(image_files, list) or not image_files:
             return jsonify({"message": "分类和文件名列表不能为空"}), 400
 
-        def mutate():
-            delete_result = batch_delete_emojis(category, image_files)
+        def mutate(context):
+            delete_result = batch_delete_emojis(
+                category, image_files, context["memes_dir"]
+            )
+            self._sync_webui_pack_metadata(context)
             if delete_result.get("deleted_files"):
                 self._invalidate_default_pack_semantics()
             return delete_result
 
         try:
-            result = await self._run_default_pack_mutation("批量删除表情图片", mutate)
+            result, error = await self._run_webui_pack_mutation(
+                data, "批量删除表情图片", mutate
+            )
+            if error:
+                return error
         except RuntimeError as exc:
             return jsonify({"message": str(exc)}), 409
         if not result["category_exists"]:
@@ -284,16 +291,21 @@ class EmojiAPIMixin:
         if source_category == target_category:
             return jsonify({"message": "源分类和目标分类不能相同"}), 400
 
-        def mutate():
+        def mutate(context):
             move_result = move_emoji_to_category(
-                source_category, image_file, target_category
+                source_category, image_file, target_category, context["memes_dir"]
             )
+            self._sync_webui_pack_metadata(context)
             if move_result.get("moved"):
                 self._invalidate_default_pack_semantics()
             return move_result
 
         try:
-            result = await self._run_default_pack_mutation("移动表情图片", mutate)
+            result, error = await self._run_webui_pack_mutation(
+                data, "移动表情图片", mutate
+            )
+            if error:
+                return error
         except RuntimeError as exc:
             return jsonify({"message": str(exc)}), 409
         if not result["source_category_exists"]:
@@ -329,16 +341,21 @@ class EmojiAPIMixin:
         if source_category == target_category:
             return jsonify({"message": "源分类和目标分类不能相同"}), 400
 
-        def mutate():
+        def mutate(context):
             move_result = batch_move_emojis(
-                source_category, image_files, target_category
+                source_category, image_files, target_category, context["memes_dir"]
             )
+            self._sync_webui_pack_metadata(context)
             if move_result.get("moved_files"):
                 self._invalidate_default_pack_semantics()
             return move_result
 
         try:
-            result = await self._run_default_pack_mutation("批量移动表情图片", mutate)
+            result, error = await self._run_webui_pack_mutation(
+                data, "批量移动表情图片", mutate
+            )
+            if error:
+                return error
         except RuntimeError as exc:
             return jsonify({"message": str(exc)}), 409
         if not result["source_category_exists"]:
@@ -373,16 +390,21 @@ class EmojiAPIMixin:
         ):
             return jsonify({"message": "源分类、目标分类和文件名列表不能为空"}), 400
 
-        def mutate():
+        def mutate(context):
             copy_result = batch_copy_emojis(
-                source_category, image_files, target_category
+                source_category, image_files, target_category, context["memes_dir"]
             )
+            self._sync_webui_pack_metadata(context)
             if copy_result.get("copied_files"):
                 self._invalidate_default_pack_semantics()
             return copy_result
 
         try:
-            result = await self._run_default_pack_mutation("批量复制表情图片", mutate)
+            result, error = await self._run_webui_pack_mutation(
+                data, "批量复制表情图片", mutate
+            )
+            if error:
+                return error
         except RuntimeError as exc:
             return jsonify({"message": str(exc)}), 409
         if not result["source_category_exists"]:
@@ -405,14 +427,21 @@ class EmojiAPIMixin:
         )
 
     async def _api_clear_all_emojis(self):
-        def mutate():
-            clear_result = clear_all_emojis()
+        data = await request.get_json()
+
+        def mutate(context):
+            clear_result = clear_all_emojis(context["memes_dir"])
+            self._sync_webui_pack_metadata(context)
             if any(clear_result.get("deleted_by_category", {}).values()):
                 self._invalidate_default_pack_semantics()
             return clear_result
 
         try:
-            result = await self._run_default_pack_mutation("清空全部表情图片", mutate)
+            result, error = await self._run_webui_pack_mutation(
+                data, "清空全部表情图片", mutate
+            )
+            if error:
+                return error
         except RuntimeError as exc:
             return jsonify({"message": str(exc)}), 409
         deleted_count = sum(result["deleted_by_category"].values())
@@ -436,28 +465,14 @@ class EmojiAPIMixin:
             else:
                 descriptions = self.category_manager.get_descriptions()
             return jsonify(descriptions)
+        except (FileNotFoundError, ValueError) as exc:
+            return self._pack_context_error_response(exc)
         except Exception as e:
             logger.error(f"获取标签描述失败: {e}")
             return jsonify({"error": "获取标签描述失败"}), 500
 
     async def _api_delete_category(self):
-        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 409
-        try:
-            data = await request.get_json()
-            category = data.get("category")
-            if not category:
-                return jsonify({"message": "分类不能为空"}), 400
-            deleted = await self._run_default_pack_mutation(
-                "删除表情分类",
-                lambda: self.category_manager.delete_category(category),
-            )
-            if deleted:
-                return jsonify({"message": "分类删除成功"}), 200
-            return jsonify({"message": "分类删除失败"}), 500
-        except RuntimeError as e:
-            return jsonify({"message": str(e)}), 409
-        except Exception as e:
-            return jsonify({"message": f"分类删除失败: {str(e)}"}), 500
+        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 410
 
     async def _api_clear_category(self):
         data = await request.get_json()
@@ -465,14 +480,19 @@ class EmojiAPIMixin:
         if not category:
             return jsonify({"message": "分类不能为空"}), 400
 
-        def mutate():
-            clear_result = clear_category_emojis(category)
+        def mutate(context):
+            clear_result = clear_category_emojis(category, context["memes_dir"])
+            self._sync_webui_pack_metadata(context)
             if clear_result.get("deleted_files"):
                 self._invalidate_default_pack_semantics()
             return clear_result
 
         try:
-            result = await self._run_default_pack_mutation("清空表情分类", mutate)
+            result, error = await self._run_webui_pack_mutation(
+                data, "清空表情分类", mutate
+            )
+            if error:
+                return error
         except RuntimeError as exc:
             return jsonify({"message": str(exc)}), 409
         if not result["category_exists"]:
@@ -492,59 +512,33 @@ class EmojiAPIMixin:
         )
 
     async def _api_restore_category(self):
-        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 409
-        try:
-            data = await request.get_json()
-            category = data.get("category")
-            description = data.get("description", "请添加描述")
-            if not category:
-                return jsonify({"message": "分类不能为空"}), 400
-            created = await self._run_default_pack_mutation(
-                "创建表情分类",
-                lambda: self.category_manager.create_category(category, description),
-            )
-            if created:
-                return (
-                    jsonify({"message": "分类创建成功", "description": description}),
-                    200,
-                )
-            return jsonify({"message": "分类创建失败"}), 500
-        except RuntimeError as e:
-            return jsonify({"message": str(e)}), 409
-        except Exception as e:
-            return jsonify({"message": f"分类创建失败: {str(e)}"}), 500
+        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 410
 
     async def _api_rename_category(self):
-        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 409
-        try:
-            data = await request.get_json()
-            old_name = data.get("old_name")
-            new_name = data.get("new_name")
-            if not old_name or not new_name:
-                return jsonify({"message": "旧分类名和新分类名不能为空"}), 400
-            renamed = await self._run_default_pack_mutation(
-                "重命名表情分类",
-                lambda: self.category_manager.rename_category(old_name, new_name),
-            )
-            if renamed:
-                return jsonify({"message": "分类重命名成功"}), 200
-            return jsonify({"message": "分类重命名失败"}), 500
-        except RuntimeError as e:
-            return jsonify({"message": str(e)}), 409
-        except Exception as e:
-            return jsonify({"message": f"分类重命名失败: {str(e)}"}), 500
+        return jsonify({"message": "category directories are retired", "code": "category_directories_retired"}), 410
 
     async def _api_update_description(self):
         try:
             data = await request.get_json()
             category = data.get("tag")
             description = data.get("description")
-            if not category or not description:
-                return jsonify({"message": "分类和描述不能为空"}), 400
-            updated = await self._run_default_pack_mutation(
+            if not category or not isinstance(description, str):
+                return jsonify({"message": "description is required"}), 400
+            if len(description) > 2000:
+                return jsonify({"message": "description is too long"}), 400
+            description = description.strip()
+            def mutate(context):
+                return self._category_manager_for_pack(context).update_description(
+                    category, description
+                )
+
+            updated, error = await self._run_webui_pack_mutation(
+                data,
                 "更新表情分类描述",
-                lambda: self.category_manager.update_description(category, description),
+                mutate,
             )
+            if error:
+                return error
             if updated:
                 return jsonify({"category": category, "description": description}), 200
             return jsonify({"message": "更新分类描述失败"}), 500
@@ -559,10 +553,13 @@ class EmojiAPIMixin:
             category = data.get("category")
             if not category:
                 return jsonify({"message": "分类不能为空"}), 400
-            removed = await self._run_default_pack_mutation(
+            removed, error = await self._run_webui_pack_mutation(
+                data,
                 "移除表情分类配置",
-                lambda: self.category_manager.remove_from_config(category),
+                lambda context: self._category_manager_for_pack(context).remove_from_config(category),
             )
+            if error:
+                return error
             if removed:
                 return jsonify({"message": "已从配置中移除分类"}), 200
             return jsonify({"message": "从配置中移除分类失败"}), 500
@@ -573,8 +570,14 @@ class EmojiAPIMixin:
 
     async def _api_sync_status(self):
         try:
+            view_context = self._resolve_webui_pack_view_context()
+            category_manager = (
+                self._category_manager_for_pack(view_context)
+                if view_context
+                else self.category_manager
+            )
             missing_in_config, deleted_categories = (
-                self.category_manager.get_sync_status()
+                category_manager.get_sync_status()
             )
             return jsonify(
                 {
@@ -587,6 +590,8 @@ class EmojiAPIMixin:
                     },
                 }
             )
+        except (FileNotFoundError, ValueError) as exc:
+            return self._pack_context_error_response(exc)
         except Exception as e:
             logger.error(f"获取同步状态失败: {e}")
             return jsonify({"error": "获取同步状态失败"}), 500
@@ -594,10 +599,14 @@ class EmojiAPIMixin:
     async def _api_sync_config(self):
         try:
             logger.info("开始同步配置...")
-            synced = await self._run_default_pack_mutation(
+            data = await request.get_json()
+            synced, error = await self._run_webui_pack_mutation(
+                data,
                 "同步表情分类配置",
-                self.category_manager.sync_with_filesystem,
+                lambda context: self._category_manager_for_pack(context).sync_with_filesystem(),
             )
+            if error:
+                return error
             if synced:
                 logger.info("配置同步成功")
                 return jsonify({"message": "配置同步成功"}), 200
@@ -614,7 +623,10 @@ class EmojiAPIMixin:
         filename = str(request.args.get("filename", "") or "").strip()
         if not is_safe_category_segment(category) or not self._safe_image_filename(filename):
             return jsonify({"status": "error", "message": "分类或文件名无效"}), 400
-        view_context = self._resolve_webui_pack_view_context()
+        try:
+            view_context = self._resolve_webui_pack_view_context()
+        except (FileNotFoundError, ValueError) as exc:
+            return self._pack_context_error_response(exc)
         memes_root = (
             view_context["memes_dir"].resolve()
             if view_context
@@ -639,7 +651,10 @@ class EmojiAPIMixin:
         size = request.args.get("size", "preview")
         if not is_safe_category_segment(category) or not self._safe_image_filename(filename):
             return jsonify({"status": "error", "message": "分类或文件名无效"}), 400
-        view_context = self._resolve_webui_pack_view_context()
+        try:
+            view_context = self._resolve_webui_pack_view_context()
+        except (FileNotFoundError, ValueError) as exc:
+            return self._pack_context_error_response(exc)
         memes_root = (
             view_context["memes_dir"].resolve()
             if view_context

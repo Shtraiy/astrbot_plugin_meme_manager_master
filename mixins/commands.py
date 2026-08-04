@@ -1,5 +1,4 @@
 import os
-import re
 import time
 from pathlib import Path
 
@@ -31,7 +30,6 @@ class CommandMixin:
     def meme_manager_master(self):
         """表情包管理命令组:
         查看图库
-        添加分类
         添加表情
         恢复默认表情包
         清空指定类型
@@ -42,51 +40,6 @@ class CommandMixin:
         pass
 
     # ---------- 辅助方法 ----------
-    def _extract_category_description_from_command(
-        self, event: AstrMessageEvent, category: str
-    ) -> str:
-        command_prefix = "表情管理 添加分类"
-        message = re.sub(r"\s+", " ", event.get_message_str().strip())
-        if not message.startswith(command_prefix):
-            return ""
-        remaining = message[len(command_prefix) :].strip()
-        if remaining == category:
-            return ""
-        if not remaining.startswith(f"{category} "):
-            return ""
-        return remaining[len(category) :].strip()
-
-    async def _wait_for_category_description(
-        self, event: AstrMessageEvent, category: str, timeout: int = 60
-    ) -> str:
-        description = ""
-
-        @session_waiter(timeout=timeout, record_history_chains=False)
-        async def description_waiter(
-            controller, description_event: AstrMessageEvent
-        ) -> None:
-            nonlocal description
-            reply = (description_event.message_str or "").strip()
-            if reply == "返回":
-                await description_event.send(
-                    description_event.plain_result("已取消创建分类。")
-                )
-                controller.stop(CategoryCreationCancelled())
-                return
-            if not reply:
-                await description_event.send(
-                    description_event.plain_result(
-                        f"请发送分类「{category}」的描述，或发送“返回”取消创建。"
-                    )
-                )
-                controller.keep(timeout=timeout, reset_timeout=True)
-                return
-            description = reply
-            controller.stop()
-
-        await description_waiter(event, SenderScopedSessionFilter())
-        return description
-
     async def _wait_for_command_confirmation(
         self, event: AstrMessageEvent, timeout: int = 30
     ) -> bool:
@@ -140,41 +93,6 @@ class CommandMixin:
             [f"- {tag}: {desc}" for tag, desc in descriptions.items()]
         )
         yield event.plain_result(f"🖼️ 当前图库：\n{categories}")
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @meme_manager_master.command("添加分类")
-    async def add_category_command(self, event: AstrMessageEvent, category: str = None):
-        yield event.plain_result("表情包分类目录已取消，请直接使用固定标签管理表情包。")
-        return
-        if not category:
-            yield event.plain_result(
-                "📌 若要添加分类，请按照此格式操作：\n"
-                "/表情管理 添加分类 [类别名称] [描述]\n"
-                "也可以只发送类别名称，随后按提示补充描述。"
-            )
-            return
-        category = category.strip()
-        category = canonical_tag(category) or category
-        if category in self._get_manageable_categories():
-            yield event.plain_result(f"ℹ️ 分类「{category}」已存在，无需重复创建。")
-            return
-        description = self._extract_category_description_from_command(event, category)
-        if not description:
-            yield event.plain_result(
-                f"请发送分类「{category}」的描述，或发送“返回”取消创建。"
-            )
-            try:
-                description = await self._wait_for_category_description(event, category)
-            except TimeoutError:
-                yield event.plain_result("⌛ 等待描述超时，已取消创建分类。")
-                return
-            except CategoryCreationCancelled:
-                return
-        if not self.category_manager.create_category(category, description):
-            yield event.plain_result(f"❌ 创建分类「{category}」失败，请稍后重试。")
-            return
-        self._reload_personas()
-        yield event.plain_result(f"✅ 已创建分类「{category}」：{description}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @meme_manager_master.command("添加表情")
@@ -321,54 +239,6 @@ class CommandMixin:
         deleted_total = sum(result["deleted_by_category"].values())
         yield event.plain_result(
             f"✅ 已清空全部表情包，共删除 {deleted_total} 个文件，类型配置已保留。"
-        )
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @meme_manager_master.command("删除类型本身")
-    async def delete_category_command(
-        self, event: AstrMessageEvent, category: str = None
-    ):
-        yield event.plain_result("表情包分类目录已取消，不能删除标签本身；可使用清空标签移除标签关联。")
-        return
-        """删除指定类型本身，同时移除其描述配置和本地文件夹。"""
-        if not category:
-            yield event.plain_result(
-                "📌 若要删除类型本身，请按照此格式操作：\n/表情管理 删除类型本身 [类别名称]"
-            )
-            return
-
-        category = category.strip()
-        available_categories = self._get_manageable_categories()
-        if category not in available_categories:
-            yield event.plain_result(
-                f"⚠️ 未找到类型「{category}」。\n可先使用 /表情管理 查看图库 查看当前类型。"
-            )
-            return
-
-        emoji_count = len(get_emoji_by_category(category))
-        yield event.plain_result(
-            f"⚠️ 即将删除类型「{category}」本身，并移除其描述配置"
-            f"{f'，同时删除其中的 {emoji_count} 个表情包' if emoji_count > 0 else ''}。\n"
-            "该操作不可恢复。\n"
-            "请在 30 秒内回复“确认”继续执行，或回复“取消”终止本次操作。"
-        )
-        if not await self._wait_for_command_confirmation(event):
-            return
-
-        try:
-            self._assert_default_pack_mutation_allowed("删除表情分类")
-        except RuntimeError as exc:
-            yield event.plain_result(f"⚠️ {exc}")
-            return
-
-        if not self.category_manager.delete_category(category):
-            yield event.plain_result(f"❌ 删除类型「{category}」失败，请稍后重试。")
-            return
-
-        self._reload_personas()
-        yield event.plain_result(
-            f"✅ 已删除类型「{category}」"
-            f"{f'，并移除 {emoji_count} 个表情包。' if emoji_count > 0 else '。'}"
         )
 
     @meme_manager_master.command("图库统计")

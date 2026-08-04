@@ -205,26 +205,6 @@
           </div>
         </div>
         <div id="emoji-categories"></div>
-        <button id="add-category-btn" hidden>
-          <i class="fas fa-plus-circle icon"></i>添加分类
-        </button>
-        <div id="add-category-form" hidden style="display: none">
-          <input
-            type="text"
-            id="new-category-name"
-            placeholder="输入类别名称"
-            class="form-control"
-          />
-          <input
-            type="text"
-            id="new-category-description"
-            placeholder="输入类别描述"
-            class="form-control mt-2"
-          />
-          <button id="save-category-btn" class="btn btn-primary mt-2">
-            <i class="fas fa-save icon"></i>保存分类
-          </button>
-        </div>
       </div>
     </div>
 
@@ -314,14 +294,15 @@
         <p class="category-edit-modal-eyebrow">类别编辑</p>
         <h2 id="category-edit-modal-title">编辑类别</h2>
         <p id="category-edit-modal-description">
-          修改类别名称和描述，保存后立即生效。
+          仅可修改标签描述，标签名称保持固定。
         </p>
         <div class="category-edit-form-panel">
-          <label for="category-edit-name-input">类别名称</label>
+          <label for="category-edit-name-input">固定标签</label>
           <input
             id="category-edit-name-input"
             type="text"
-            placeholder="输入类别名称"
+            readonly
+            aria-label="固定标签名称，不可修改"
           />
           <label for="category-edit-desc-input">类别描述</label>
           <input

@@ -38,12 +38,16 @@ def is_safe_image_url(source: str) -> bool:
 
 
 async def _remote_target_is_public(source: str) -> bool:
+    return bool(await _resolve_public_addresses(source))
+
+
+async def _resolve_public_addresses(source: str) -> tuple[str, ...]:
     if not is_safe_image_url(source):
-        return False
+        return ()
     parsed = urlparse(source)
     hostname = parsed.hostname
     if not hostname:
-        return False
+        return ()
     try:
         port = parsed.port or 443
         addresses = await asyncio.to_thread(
@@ -53,18 +57,48 @@ async def _remote_target_is_public(source: str) -> bool:
             type=socket.SOCK_STREAM,
         )
     except (OSError, ValueError):
-        return False
+        return ()
     resolved = {
         str(info[4][0]).split("%", 1)[0]
         for info in addresses
         if info and len(info) > 4 and info[4]
     }
     if not resolved:
-        return False
+        return ()
     try:
-        return all(ip_address(address).is_global for address in resolved)
+        parsed_addresses = {ip_address(address) for address in resolved}
     except ValueError:
-        return False
+        return ()
+    if not parsed_addresses or not all(address.is_global for address in parsed_addresses):
+        return ()
+    return tuple(sorted(str(address) for address in parsed_addresses))
+
+
+class _PinnedPublicResolver:
+    """aiohttp resolver that only returns the IPs checked before connecting."""
+
+    def __init__(self, hostname: str, port: int, addresses: tuple[str, ...]):
+        self.hostname = hostname
+        self.port = port
+        self.addresses = tuple(addresses)
+
+    async def resolve(self, hostname: str, port: int = 443, family: int = 0):
+        if hostname != self.hostname or port != self.port:
+            return []
+        return [
+            {
+                "hostname": hostname,
+                "host": address,
+                "port": port,
+                "family": family,
+                "proto": 0,
+                "flags": 0,
+            }
+            for address in self.addresses
+        ]
+
+    async def close(self) -> None:
+        return None
 
 
 def validate_image_payload(content: bytes, limit: int) -> ImageDownload | None:
@@ -82,11 +116,27 @@ async def download_image(
     *,
     timeout_seconds: int = 20,
 ) -> ImageDownload | None:
-    if limit <= 0 or not await _remote_target_is_public(source):
+    if limit <= 0:
         return None
+    checked_addresses = await _resolve_public_addresses(source)
+    if not checked_addresses:
+        return None
+    parsed = urlparse(source)
+    hostname = parsed.hostname
+    port = parsed.port or 443
+    resolver = _PinnedPublicResolver(hostname, port, checked_addresses)
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        connector_factory = getattr(aiohttp, "TCPConnector", None)
+        connector = (
+            connector_factory(resolver=resolver, ssl=True)
+            if connector_factory is not None
+            else None
+        )
+        session_kwargs = {"timeout": timeout}
+        if connector is not None:
+            session_kwargs["connector"] = connector
+        async with aiohttp.ClientSession(**session_kwargs) as session:
             async with session.get(source, allow_redirects=False) as response:
                 status = int(getattr(response, "status", 0) or 0)
                 if status < 200 or status >= 300:

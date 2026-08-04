@@ -600,18 +600,30 @@ def sync_active_pack_metadata(
 ) -> None:
     """将当前表情包的清单与兼容性元数据文件同步。"""
     active_paths = get_active_pack_paths()
-    active_pack_dir = active_paths["pack_dir"]
-    active_pack_dir.mkdir(parents=True, exist_ok=True)
-    active_paths["memes_dir"].mkdir(parents=True, exist_ok=True)
+    sync_pack_metadata(active_paths["pack_dir"], category_descriptions)
 
-    descriptions = category_descriptions or _collect_category_descriptions(
-        active_paths["metadata_path"],
-        active_paths["memes_dir"],
-        DEFAULT_CATEGORY_DESCRIPTIONS
-        if active_paths["pack_id"] == DEFAULT_PACK_ID
-        else None,
-    )
-    _write_pack_manifest(active_pack_dir, active_paths["pack_id"], descriptions)
+
+def sync_pack_metadata(
+    pack_dir: Path | str,
+    category_descriptions: dict[str, str] | None = None,
+) -> None:
+    """Synchronize one pack's manifest with its local description metadata."""
+    resolved_pack_dir = Path(pack_dir).resolve()
+    pack_id = resolved_pack_dir.name
+    memes_dir = resolved_pack_dir / "memes"
+    metadata_path = resolved_pack_dir / "memes_data.json"
+    resolved_pack_dir.mkdir(parents=True, exist_ok=True)
+    memes_dir.mkdir(parents=True, exist_ok=True)
+
+    if category_descriptions is None:
+        descriptions = _collect_category_descriptions(
+            metadata_path,
+            memes_dir,
+            DEFAULT_CATEGORY_DESCRIPTIONS if pack_id == DEFAULT_PACK_ID else None,
+        )
+    else:
+        descriptions = dict(category_descriptions)
+    _write_pack_manifest(resolved_pack_dir, pack_id, descriptions)
 
 
 def _bootstrap_pack_runtime(plugin_data_dir: Path) -> None:
