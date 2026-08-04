@@ -51,11 +51,13 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .badge { padding: 6px 10px; border-radius: 999px; background: #dff3e8; color: #267052; white-space: nowrap; }
 .badge.warm { background: #fff0d2; color: #a16a22; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-.card { display: grid; gap: 7px; min-height: 220px; padding: 10px; border: 1px solid #c9dfe0; border-radius: 12px; overflow: hidden; text-align: left; background: #f9fdfc; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+.card { display: grid; gap: 7px; min-height: 220px; padding: 10px; position: relative; border: 1px solid #c9dfe0; border-radius: 12px; overflow: hidden; text-align: left; background: #f9fdfc; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
 .card-preview:hover, .card-preview:focus-visible, .card-delete:hover, .card-delete:focus-visible { border-color: #218a73; box-shadow: 0 10px 22px rgba(33, 126, 103, .16); outline: none; transform: translateY(-1px); }
 .card-preview { display: grid; gap: 7px; min-width: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; text-align: left; }
-.card-actions { display: flex; justify-content: flex-end; }
-.card-delete { padding: 6px 10px; color: #a33f3f; border-color: #e4b5b5; background: #fff7f7; }
+.card-actions { position: absolute; top: 16px; right: 16px; z-index: 2; }
+.card-delete { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; color: #a33f3f; border-color: rgba(228, 181, 181, .9); background: rgba(255, 247, 247, .94); }
+.card-delete:disabled { cursor: wait; opacity: .55; }
+.card-delete-icon { width: 16px; height: 16px; fill: currentColor; }
 .card-thumbnail { position: relative; display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 10px; background: #eaf4f2; color: #76918f; font-size: 12px; }
 .thumbnail-image { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
 .thumbnail-placeholder, .thumbnail-error-text { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; }
@@ -72,4 +74,5 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .preview-mask.hidden { display: none; }
 .preview-mask img { max-width: 90vw; max-height: 90vh; border-radius: 12px; box-shadow: 0 18px 60px #0008; }
 .preview-mask button { position: fixed; top: 20px; right: 24px; border: 0; background: #fff; font-size: 28px; line-height: 1; }
-@media (max-width: 760px) { .page-header, .toolbar { align-items: stretch; flex-direction: column; } .summary { grid-template-columns: 1fr; } .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .card { min-height: 190px; padding: 8px; } }
+@media (max-width: 760px) { .page-header, .toolbar { align-items: stretch; flex-direction: column; } .summary { grid-template-columns: 1fr; } .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .card { min-height: 190px; padding: 8px; } .card-actions { top: 12px; right: 12px; } }
+@media (prefers-reduced-motion: reduce) { .card { transform: none; transition: none; } }

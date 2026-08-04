@@ -103,26 +103,35 @@ async function initCaptureIndexPage() {
       if (state.status === "running") {
         reindexing = true;
         reindexButton.disabled = true;
+        reindexButton.setAttribute("aria-busy", "true");
         reindexPollTimer = window.setTimeout(() => void pollReindexStatus(), 500);
         return;
       }
       if (state.status === "error") {
         reindexing = false;
         reindexButton.disabled = false;
+        reindexButton.setAttribute("aria-busy", "false");
         showError(new Error(state.message || "重索引失败"));
         return;
       }
       if (state.status === "completed") {
         reindexing = false;
         reindexButton.disabled = false;
-        await loadWorkspace();
+        reindexButton.setAttribute("aria-busy", "false");
+        const refreshed = await loadWorkspace();
+        if (refreshed) {
+          notice.textContent = state.message || "重索引已完成";
+          notice.classList.remove("error");
+        }
         return;
       }
       reindexing = false;
       reindexButton.disabled = false;
+      reindexButton.setAttribute("aria-busy", "false");
     } catch (error) {
       reindexing = false;
       reindexButton.disabled = false;
+      reindexButton.setAttribute("aria-busy", "false");
       showError(error);
     }
   }
@@ -215,15 +224,24 @@ async function initCaptureIndexPage() {
     if (!location) return;
     if (!window.confirm(`确认永久删除 ${location.filename}？此操作不可恢复。`)) return;
     button.disabled = true;
+    button.setAttribute("aria-busy", "true");
     try {
       await apiPost("emoji/delete", {
         managed_pack_id: location.managed_pack_id,
         category: location.category,
         image_file: location.filename,
       });
-      await loadWorkspace();
+      const refreshed = await loadWorkspace();
+      if (refreshed) {
+        notice.textContent = `已删除 ${location.filename}`;
+        notice.classList.remove("error");
+      } else {
+        button.disabled = false;
+        button.setAttribute("aria-busy", "false");
+      }
     } catch (error) {
       button.disabled = false;
+      button.setAttribute("aria-busy", "false");
       showError(error);
     }
   }
@@ -271,8 +289,12 @@ async function initCaptureIndexPage() {
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "card-delete";
-    deleteButton.textContent = "删除";
+    deleteButton.innerHTML = `
+      <svg class="card-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-.7 10.4A2.8 2.8 0 0 1 14.5 22h-5a2.8 2.8 0 0 1-2.8-2.6L6 9Zm3 2v7h2v-7H9Zm4 0v7h2v-7h-2Z" />
+      </svg>`;
     deleteButton.setAttribute("aria-label", `永久删除 ${item.filename || "图片"}`);
+    deleteButton.title = "永久删除图片";
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
       void deleteIndexedItem(item, card, deleteButton);
@@ -398,6 +420,7 @@ async function initCaptureIndexPage() {
     selectedCategory = "";
     reindexing = false;
     indexing = false;
+    reindexButton.setAttribute("aria-busy", "false");
     reindexProgress.hidden = true;
     progressRow.classList.remove("active");
     void loadWorkspace();
@@ -422,6 +445,7 @@ async function initCaptureIndexPage() {
     if (!packSelect.value || !window.confirm("将旧分类目录迁移到平铺目录，并按 meme_<哈希> 重建标签索引。继续吗？")) return;
     reindexing = true;
     reindexButton.disabled = true;
+    reindexButton.setAttribute("aria-busy", "true");
     notice.classList.remove("error");
     notice.textContent = "正在重索引表情文件，请稍候……";
     try {
@@ -431,6 +455,7 @@ async function initCaptureIndexPage() {
     } catch (error) {
       reindexing = false;
       reindexButton.disabled = false;
+      reindexButton.setAttribute("aria-busy", "false");
       showError(error);
     }
   });
