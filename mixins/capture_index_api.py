@@ -11,7 +11,7 @@ from astrbot.api import logger
 from ..capture_activity import load_capture_activity
 from ..config import PACKS_DIR, get_active_pack_paths
 from ..backend.tagging import canonical_tag
-from ..storage import MemeStore, is_safe_category_segment
+from ..storage import MemeStore
 
 
 class CaptureIndexAPIMixin:
@@ -156,132 +156,6 @@ class CaptureIndexAPIMixin:
             "indexed_items": indexed_items if selected_tag else indexed_items[:48],
             "pending_items": pending_items if selected_tag else pending_items[:48],
         }
-        selected_category = str(category or "").strip()
-        if selected_category and not is_safe_category_segment(selected_category):
-            raise ValueError("category 无效")
-        pack_dir = (PACKS_DIR / pack_id).resolve()
-        store = MemeStore(pack_dir)
-        activity = load_capture_activity(pack_dir)
-        indexed_items: list[dict] = []
-        pending_items: list[dict] = []
-        folders: list[dict] = []
-
-        for category in sorted(store.directory_categories()):
-            paths = store.image_paths(category)
-            catalog = store.load_catalog(category)
-            catalog_items = [
-                item for item in catalog.get("items", []) if isinstance(item, dict)
-            ]
-            by_filename = {
-                str(item.get("filename")): item
-                for item in catalog_items
-                if item.get("filename")
-            }
-            indexed_count = 0
-            category_pending: list[dict] = []
-            category_indexed: list[dict] = []
-            for path in paths:
-                try:
-                    digest = store.image_digest(path)
-                    modified_at = int(path.stat().st_mtime)
-                except OSError:
-                    continue
-                entry = dict(by_filename.get(path.name) or {})
-                is_indexed = bool(entry.get("indexed"))
-                item = {
-                    **entry,
-                    "category": category,
-                    "filename": path.name,
-                    "sha256": str(entry.get("sha256") or digest),
-                    "relative_path": f"memes/{category}/{path.name}",
-                    "indexed": is_indexed,
-                    "captured_at": int(entry.get("captured_at") or modified_at),
-                }
-                if is_indexed:
-                    indexed_count += 1
-                    category_indexed.append(item)
-                else:
-                    item["activity_status"] = "pending"
-                    category_pending.append(item)
-            complete = bool(catalog.get("classification_index_complete")) and (
-                indexed_count == len(paths)
-            )
-            folders.append(
-                {
-                    "category": category,
-                    "total": len(paths),
-                    "indexed": indexed_count,
-                    "pending": len(category_pending),
-                    "complete": complete,
-                    "indexed_at": catalog.get("classification_indexed_at"),
-                    "index_provider_id": catalog.get("index_provider_id", ""),
-                }
-            )
-            if selected_category and category != selected_category:
-                continue
-            indexed_items.extend(category_indexed)
-            pending_items.extend(category_pending)
-
-        duplicate_items: list[dict] = []
-        duplicate_count = 0
-        for event in activity.get("events", []):
-            if not isinstance(event, dict) or event.get("status") != "duplicate":
-                continue
-            category = str(event.get("category") or "")
-            if selected_category and category != selected_category:
-                continue
-            filename = str(event.get("filename") or "")
-            if not is_safe_category_segment(category) or not self._safe_image_filename(filename):
-                continue
-            path = store.memes_dir / category / filename
-            if not path.is_file():
-                continue
-            duplicate_count += 1
-            duplicate_items.append(
-                {
-                    "id": event.get("id", ""),
-                    "category": category,
-                    "filename": filename,
-                    "sha256": event.get("sha256", ""),
-                    "relative_path": f"memes/{category}/{filename}",
-                    "indexed": False,
-                    "duplicate": True,
-                    "activity_status": "duplicate",
-                    "duplicate_of": event.get("duplicate_of", ""),
-                    "captured_at": event.get("captured_at", 0),
-                }
-            )
-        pending_items.extend(duplicate_items)
-        indexed_items.sort(key=self._capture_item_time, reverse=True)
-        pending_items.sort(key=self._capture_item_time, reverse=True)
-
-        state = dict(getattr(self, "_library_index_state", {}) or {})
-        active_store = getattr(self, "store", None)
-        state["active_pack"] = bool(
-            active_store is not None
-            and Path(getattr(active_store, "root", "")).resolve() == pack_dir
-        )
-        visible_folders = [
-            folder
-            for folder in folders
-            if not selected_category or folder["category"] == selected_category
-        ]
-        complete_folder_count = sum(1 for folder in visible_folders if folder["complete"])
-        return {
-            "pack_id": pack_id,
-            "library_index": state,
-            "summary": {
-                "indexed": len(indexed_items),
-                "pending": len(pending_items) - duplicate_count,
-                "duplicate": duplicate_count,
-                "complete_folders": complete_folder_count,
-                "folder_total": len(visible_folders),
-            },
-            "folders": folders,
-            "indexed_items": indexed_items if selected_category else indexed_items[:48],
-            "pending_items": pending_items if selected_category else pending_items[:48],
-        }
-
     def _reindex_pack_catalog(self, pack_id: str) -> dict[str, int | str]:
         """Renumber local files and update catalog references without models."""
         pack_dir = (PACKS_DIR / str(pack_id)).resolve()
@@ -294,14 +168,6 @@ class CaptureIndexAPIMixin:
             "category_count": result["tag_count"],
             "changed_file_count": result["migrated_file_count"],
             **result,
-        }
-        changed_file_count = sum(
-            1 for mapping in mappings.values() for old, new in mapping.items() if old != new
-        )
-        return {
-            "pack_id": str(pack_id),
-            "category_count": len(mappings),
-            "changed_file_count": changed_file_count,
         }
 
     def _new_reindex_state(self, pack_id: str) -> dict[str, int | str]:
@@ -344,28 +210,6 @@ class CaptureIndexAPIMixin:
             "total": result["total"],
             **result,
         }
-        processed = 0
-        changed_file_count = 0
-        for category in sorted(store.directory_categories()):
-            paths = store.image_paths(category)
-            state["current_category"] = category
-            state["message"] = f"正在重索引 {category}……"
-            mapping = await asyncio.to_thread(store.reindex_category, category)
-            processed += len(paths)
-            changed_file_count += sum(
-                1 for old, new in mapping.items() if old != new
-            )
-            state["processed"] = processed
-            state["changed_file_count"] = changed_file_count
-            await asyncio.sleep(0)
-        return {
-            "pack_id": str(pack_id),
-            "category_count": len(store.directory_categories()),
-            "changed_file_count": changed_file_count,
-            "processed": processed,
-            "total": int(state["total"]),
-        }
-
     async def _run_reindex_task(
         self, pack_id: str, state: dict[str, int | str]
     ) -> None:

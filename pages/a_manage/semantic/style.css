@@ -51,8 +51,11 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .badge { padding: 6px 10px; border-radius: 999px; background: #dff3e8; color: #267052; white-space: nowrap; }
 .badge.warm { background: #fff0d2; color: #a16a22; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-.card { display: grid; gap: 7px; min-height: 220px; padding: 10px; overflow: hidden; text-align: left; background: #f9fdfc; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
-.card:hover, .card:focus-visible { border-color: #218a73; box-shadow: 0 10px 22px rgba(33, 126, 103, .16); outline: none; transform: translateY(-1px); }
+.card { display: grid; gap: 7px; min-height: 220px; padding: 10px; border: 1px solid #c9dfe0; border-radius: 12px; overflow: hidden; text-align: left; background: #f9fdfc; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+.card-preview:hover, .card-preview:focus-visible, .card-delete:hover, .card-delete:focus-visible { border-color: #218a73; box-shadow: 0 10px 22px rgba(33, 126, 103, .16); outline: none; transform: translateY(-1px); }
+.card-preview { display: grid; gap: 7px; min-width: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; text-align: left; }
+.card-actions { display: flex; justify-content: flex-end; }
+.card-delete { padding: 6px 10px; color: #a33f3f; border-color: #e4b5b5; background: #fff7f7; }
 .card-thumbnail { position: relative; display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 10px; background: #eaf4f2; color: #76918f; font-size: 12px; }
 .thumbnail-image { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
 .thumbnail-placeholder, .thumbnail-error-text { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; }
@@ -61,7 +64,7 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .card.thumbnail-loaded .thumbnail-placeholder, .card.thumbnail-error .thumbnail-placeholder { display: none; }
 .card.thumbnail-error .thumbnail-error-text { display: grid; }
 .card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card span { color: #20846d; font-size: 12px; }
+.card-preview > span { color: #20846d; font-size: 12px; }
 .card small { color: #6d7d87; }
 .card.duplicate { border-color: #e4b978; background: #fffaf0; }
 .empty { color: #87979d; text-align: center; grid-column: 1 / -1; padding: 24px 0; }

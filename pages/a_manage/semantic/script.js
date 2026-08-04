@@ -85,9 +85,20 @@ async function initCaptureIndexPage() {
         reindexPollTimer = window.setTimeout(() => void pollReindexStatus(), 500);
         return;
       }
+      if (state.status === "error") {
+        reindexing = false;
+        reindexButton.disabled = false;
+        showError(new Error(state.message || "重索引失败"));
+        return;
+      }
+      if (state.status === "completed") {
+        reindexing = false;
+        reindexButton.disabled = false;
+        await loadWorkspace();
+        return;
+      }
       reindexing = false;
       reindexButton.disabled = false;
-      if (state.status !== "idle") await loadWorkspace();
     } catch (error) {
       reindexing = false;
       reindexButton.disabled = false;
@@ -171,11 +182,32 @@ async function initCaptureIndexPage() {
     }
   }
 
+  async function deleteIndexedItem(item, card, button) {
+    const location = getImageLocation(item);
+    if (!location) return;
+    if (!window.confirm(`确认永久删除 ${location.filename}？此操作不可恢复。`)) return;
+    button.disabled = true;
+    try {
+      await apiPost("emoji/delete", {
+        managed_pack_id: location.managed_pack_id,
+        category: location.category,
+        image_file: location.filename,
+      });
+      await loadWorkspace();
+    } catch (error) {
+      button.disabled = false;
+      showError(error);
+    }
+  }
+
   function renderCard(item, target) {
-    const card = document.createElement("button");
-    card.type = "button";
+    const card = document.createElement("article");
     card.className = `card thumbnail-loading${item.duplicate ? " duplicate" : ""}`;
     card.title = item.filename || "未命名图片";
+    const previewButton = document.createElement("button");
+    previewButton.type = "button";
+    previewButton.className = "card-preview";
+    previewButton.setAttribute("aria-label", `预览 ${item.filename || "图片"}`);
     const thumbnail = document.createElement("span");
     thumbnail.className = "card-thumbnail";
     thumbnail.setAttribute("aria-hidden", "true");
@@ -199,10 +231,30 @@ async function initCaptureIndexPage() {
     }`;
     const description = document.createElement("small");
     description.textContent = item.description || "点击查看图片";
-    card.setAttribute("aria-label", `${title.textContent}，${meta.textContent}`);
-    card.append(thumbnail, title, meta, description);
+    previewButton.append(thumbnail, title, meta, description);
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "card-delete";
+    deleteButton.textContent = "删除";
+    deleteButton.setAttribute("aria-label", `永久删除 ${item.filename || "图片"}`);
+    deleteButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void deleteIndexedItem(item, card, deleteButton);
+    });
+    actions.append(deleteButton);
+    card.append(previewButton, actions);
     target.append(card);
-    card.addEventListener("click", () => {
+    card.addEventListener("click", (event) => {
+      if (event.target !== card) return;
+      if (card.classList.contains("thumbnail-error")) {
+        void loadThumbnail(item, image, card);
+      } else {
+        void showPreview(item);
+      }
+    });
+    previewButton.addEventListener("click", () => {
       if (card.classList.contains("thumbnail-error")) {
         void loadThumbnail(item, image, card);
         return;

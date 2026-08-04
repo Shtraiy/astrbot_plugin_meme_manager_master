@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import tempfile
@@ -228,6 +229,92 @@ class ReindexProgressApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["status"], "completed")
         self.assertEqual(finished["processed"], 2)
         self.assertEqual(finished["total"], 2)
+
+    async def test_reindex_task_failure_is_exposed_in_state(self):
+        instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+
+        class FailingCatalogService:
+            async def run_locked_pack_mutation(self, *args, **kwargs):
+                raise RuntimeError("catalog exploded")
+
+        instance.catalog_index_service = FailingCatalogService()
+        state = {
+            "pack_id": "pack",
+            "status": "running",
+            "processed": 0,
+            "total": 0,
+            "changed_file_count": 0,
+            "message": "running",
+        }
+
+        await instance._run_reindex_task("pack", state)
+
+        self.assertEqual(state["status"], "error")
+        self.assertIn("catalog exploded", state["message"])
+
+    async def test_reindex_rejects_duplicate_running_task(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            pack_dir.mkdir(parents=True)
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance._capture_pack_id = lambda data=None: "pack"
+            instance._reindex_states = {
+                "pack": {
+                    "pack_id": "pack",
+                    "status": "running",
+                    "processed": 1,
+                    "total": 2,
+                    "changed_file_count": 0,
+                    "message": "running",
+                }
+            }
+            instance._library_task = None
+            never_finished = asyncio.create_task(asyncio.Event().wait())
+            instance._reindex_tasks = {"pack": never_finished}
+
+            class _Request:
+                args = {}
+
+                async def get_json(self):
+                    return {"pack_id": "pack"}
+
+            try:
+                with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent), patch.object(
+                    capture_index_api, "request", _Request()
+                ), patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload):
+                    response = await instance._api_capture_reindex()
+            finally:
+                never_finished.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await never_finished
+
+        self.assertEqual(response[1], 409)
+        self.assertEqual(response[0]["status"], "running")
+
+    async def test_zero_file_pack_reindex_completes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            pack_dir.mkdir(parents=True)
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance.catalog_index_service = CatalogIndexService(pack_dir.parent)
+            instance._capture_pack_id = lambda data=None: "pack"
+
+            class _Request:
+                args = {}
+
+                async def get_json(self):
+                    return {"pack_id": "pack"}
+
+            with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent), patch.object(
+                capture_index_api, "request", _Request()
+            ), patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload):
+                started = await instance._api_capture_reindex()
+                await instance._reindex_tasks["pack"]
+
+        self.assertEqual(started["status"], "running")
+        self.assertEqual(instance._reindex_states["pack"]["status"], "completed")
+        self.assertEqual(instance._reindex_states["pack"]["processed"], 0)
+        self.assertEqual(instance._reindex_states["pack"]["total"], 0)
 
 
 if __name__ == "__main__":

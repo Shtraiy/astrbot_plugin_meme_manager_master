@@ -57,6 +57,7 @@ from meme_manager_master.backend.category_manager import CategoryManager  # noqa
 from meme_manager_master.backend.catalog_index_service import CatalogIndexService  # noqa: E402
 from meme_manager_master.mixins import web_api  # noqa: E402
 from meme_manager_master.mixins.web_api import WebAPIMixin  # noqa: E402
+from storage import MemeStore  # noqa: E402
 
 
 class Upload:
@@ -149,6 +150,50 @@ class PackLocalManagementTests(unittest.TestCase):
                 _payload, status = asyncio.run(instance._api_delete_emoji())
 
             self.assertEqual(status, 400)
+            self.assertTrue(
+                (root / "packs" / "default-pack" / "memes" / default_filename).exists()
+            )
+
+    def test_unknown_selected_pack_is_rejected_without_default_mutation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _, default_filename = self._seed_pack(root, "default-pack")
+            instance = self._make_instance(root)
+            request.args = {"managed_pack_id": "missing-pack"}
+            self._set_json({
+                "category": "happy",
+                "image_file": default_filename,
+            })
+
+            with patch.object(web_api, "PACKS_DIR", root / "packs"):
+                _payload, status = asyncio.run(instance._api_delete_emoji())
+
+            self.assertEqual(status, 404)
+            self.assertTrue(
+                (root / "packs" / "default-pack" / "memes" / default_filename).exists()
+            )
+
+    def test_delete_last_selected_item_keeps_catalog_manifest_consistent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _, default_filename = self._seed_pack(root, "default-pack")
+            selected_memes, selected_filename = self._seed_pack(root, "selected-pack")
+            instance = self._make_instance(root)
+            request.args = {"managed_pack_id": "selected-pack"}
+            self._set_json({
+                "category": "happy",
+                "image_file": selected_filename,
+            })
+
+            with patch.object(web_api, "PACKS_DIR", root / "packs"):
+                payload, status = asyncio.run(instance._api_delete_emoji())
+
+            selected_store = MemeStore(root / "packs" / "selected-pack")
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["filename"], selected_filename)
+            self.assertFalse((selected_memes / selected_filename).exists())
+            self.assertEqual(selected_store.load_catalog().get("items"), [])
+            self.assertTrue((root / "packs" / "selected-pack" / "manifest.json").is_file())
             self.assertTrue(
                 (root / "packs" / "default-pack" / "memes" / default_filename).exists()
             )

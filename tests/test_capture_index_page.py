@@ -99,6 +99,30 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertNotIn('"semantic/capture-workspace"', source)
         self.assertNotIn('"semantic/capture-index"', source)
 
+    def test_index_cards_have_pack_local_delete_actions_in_both_pages(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn("deleteIndexedItem", script)
+            self.assertIn('apiPost("emoji/delete"', script)
+            self.assertIn("managed_pack_id: packSelect.value", script)
+            self.assertIn('className = "card-preview"', script)
+            self.assertIn('className = "card-delete"', script)
+            self.assertIn('document.createElement("article")', script)
+            self.assertNotIn('const card = document.createElement("button")', script)
+
+    def test_reindex_error_state_stops_polling_without_refreshing_workspace(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn('if (state.status === "error")', script)
+            self.assertIn('showError(new Error(state.message', script)
+            self.assertIn('if (state.status === "completed")', script)
+
 
 if __name__ == "__main__":
     unittest.main()
