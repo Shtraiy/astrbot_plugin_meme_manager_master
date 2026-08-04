@@ -22,7 +22,7 @@ from astrbot.core.message.message_event_result import MessageChain, ResultConten
 
 from ..backend.models import IMAGE_EXTENSIONS
 from ..backend.image_download import download_image
-from ..backend.semantic_models import (
+from ..backend.semantic_compat import (
     REVIEW_CATEGORY,
     compact_semantic_query,
     extract_and_clean_semantic_meme_references,
@@ -30,13 +30,6 @@ from ..backend.semantic_models import (
     parse_semantic_query_result,
     runtime_category_mapping,
 )
-from ..backend.semantic_query import (
-    candidate_records,
-    remember_candidates,
-    search_memes,
-    validate_selected_id,
-)
-from ..backend.semantic_storage import invalidate_semantic_metadata
 from ..config import MEMES_DIR, PLUGIN_DATA_DIR
 from ..storage import resolve_safe_category_dir
 

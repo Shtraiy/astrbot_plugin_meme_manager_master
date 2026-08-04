@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
 import hashlib
 from ipaddress import ip_address
 import random
@@ -44,6 +42,11 @@ from .collector import (
 )
 from .meme_selection import MemeSelectionService
 from .capture_pipeline import CapturePipeline
+from .capture_components.vision_gateway import (
+    decode_base64_image,
+    decode_data_url_image,
+    payload_from_content,
+)
 from .capture_activity import (
     index_metadata_matches,
     mark_capture_events_indexed,
@@ -1762,27 +1765,18 @@ class CaptureMixin:
 
     @staticmethod
     def _decode_data_url(source: str, limit: int) -> ImagePayload | None:
-        match = re.match(r"data:image/([a-zA-Z0-9.+-]+);base64,(.+)", source, re.DOTALL)
-        if not match:
-            return None
-        return CaptureMixin._decode_base64(match.group(2), limit)
+        decoded = decode_data_url_image(source, limit, detect_image_extension)
+        return ImagePayload(decoded.content, decoded.extension) if decoded else None
 
     @staticmethod
     def _decode_base64(value: str, limit: int) -> ImagePayload | None:
-        try:
-            content = base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError):
-            return None
-        return CaptureMixin._payload_from_content(content, limit)
+        decoded = decode_base64_image(value, limit, detect_image_extension)
+        return ImagePayload(decoded.content, decoded.extension) if decoded else None
 
     @staticmethod
     def _payload_from_content(content: bytes, limit: int) -> ImagePayload | None:
-        if not content or len(content) > limit:
-            return None
-        extension = detect_image_extension(content)
-        if extension is None:
-            return None
-        return ImagePayload(content, extension)
+        decoded = payload_from_content(content, limit, detect_image_extension)
+        return ImagePayload(decoded.content, decoded.extension) if decoded else None
 
     def _should_skip(self, vision: dict) -> bool:
         if not self.runtime_config.only_capture_memes:

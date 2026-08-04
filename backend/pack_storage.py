@@ -40,12 +40,13 @@ from .pack_protocol import (
     validate_transfer_manifest,
 )
 from .remote_fetch import bounded_chunks, is_public_https_url
-from .semantic_index import index_is_ready, load_index_manifest
-from .semantic_storage import (
+from .semantic_compat import (
     LEGACY_METADATA_BACKUP_NAME,
     get_pack_semantic_summary,
+    index_is_ready,
     import_metadata_file,
     load_metadata,
+    load_index_manifest,
     reconcile_metadata,
     reset_local_embedding_state,
     save_metadata,
@@ -2088,3 +2089,43 @@ def import_runtime_backup(
             "restored_packs": restored_packs,
             "runtime_dir": str(PLUGIN_DATA_DIR),
         }
+
+
+# New responsibility boundaries are exported from the legacy facade so
+# adapters can migrate incrementally without changing import paths.
+try:
+    from .community_pack_source import CommunityPackSource
+    from .pack_backup import PackBackup
+    from .pack_paths import PackPaths
+    from .pack_runtime import PackRuntime
+    from .pack_transfer import PackTransfer
+except ImportError:  # standalone imports from repository root
+    from backend.community_pack_source import CommunityPackSource
+    from backend.pack_backup import PackBackup
+    from backend.pack_paths import PackPaths
+    from backend.pack_runtime import PackRuntime
+    from backend.pack_transfer import PackTransfer
+
+
+def _resolve_pack_directory(
+    pack_id: str,
+    context: str = "pack",
+    *,
+    require_exists: bool = False,
+) -> tuple[str, Path]:
+    """Compatibility entry point backed by the bounded PackPaths policy."""
+    normalized = validate_pack_id(pack_id, context)
+    paths = PackPaths(PACKS_DIR, BACKUP_DIR)
+    pack_dir = paths.pack(normalized)
+    pack_dir = pack_dir.resolve(strict=False)
+    if require_exists and not pack_dir.is_dir():
+        raise FileNotFoundError(f"pack does not exist: {normalized}")
+    return normalized, pack_dir
+
+
+def _resolve_backup_output_dir(output_dir: str | None = None) -> Path:
+    """Compatibility entry point backed by the bounded backup root policy."""
+    paths = PackPaths(PACKS_DIR, BACKUP_DIR)
+    target = Path(output_dir).expanduser() if output_dir else paths.backup_root
+    paths._bounded(paths.backup_root, target)
+    return target.resolve(strict=False)

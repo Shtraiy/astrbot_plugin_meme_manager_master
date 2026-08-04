@@ -129,6 +129,13 @@ class CaptureBoundaryTests(unittest.TestCase):
 
 
 class ManagerInitStructureTests(unittest.TestCase):
+    def test_manager_composes_stable_application_services(self):
+        source = (ROOT / "manager_base.py").read_text(encoding="utf-8")
+        self.assertIn("self.pack_service = PackService", source)
+        self.assertIn("self.catalog_service = CatalogService", source)
+        self.assertIn("self.pack_runtime_service = PackRuntimeService", source)
+        self.assertIn("self.pack_transfer_service = PackTransferService", source)
+
     def test_manager_init_initializes_runtime_state(self):
         tree = _parse("manager_base.py")
         cls = next(

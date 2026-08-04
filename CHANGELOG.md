@@ -2,6 +2,29 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
+## [Unreleased] - 2026-08-05
+
+### 新增
+
+- 增加 `domain`、`ports`、`application`、`capabilities` 和 `infrastructure` 边界，提供 pack、catalog、图片仓储、选择状态和可选语义能力的稳定接口。
+- 增加 `CatalogLock`、路径安全策略、pack paths/runtime/transfer/backup/community 边界及对应应用服务。
+- 增加架构依赖检查、模块规模指标、存储/pack 契约测试和 WebRouteRegistry 测试。
+
+### 变更
+
+- `MemeStore` 保留旧入口，同时将选择、权重和发送回执迁移到 `SelectionState`；旧 pack facade 继续兼容现有调用方。
+- 语义实现继续懒加载；缺少 FAISS 或 provider 时不阻断核心启动和基础上传流程。
+
+### 验证
+
+- 全量 unittest：269 项通过，1 项既有兼容用例跳过。
+- compileall、配置 schema、架构边界检查和全部页面 JavaScript 语法检查通过。
+- `bandit` 和 `pip-audit` 尚未执行，当前环境未安装。
+
+### 迁移状态
+
+- `storage.py` 与 `backend/pack_storage.py` 的旧实现尚未完全物理拆除，capture/WebUI 全量应用层迁移将在后续独立提交中完成。
+
 ## [v2.1.0] - 2026-08-04
 
 ### 验证

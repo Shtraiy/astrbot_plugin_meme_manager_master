@@ -108,16 +108,28 @@ def _public_export_result(result: dict | None) -> dict:
 
 
 class PackAPIMixin:
+    def _pack_runtime(self):
+        """Return the application runtime service when the composition root provides it.
+
+        The fallback keeps standalone mixin users and older integrations working while
+        allowing normal plugin requests to cross the application boundary.
+        """
+        return getattr(self, "pack_runtime_service", None)
+
     async def _api_list_packs(self):
         try:
-            return jsonify({"packs": list_installed_packs()})
+            service = self._pack_runtime()
+            packs = service.list() if service is not None else list_installed_packs()
+            return jsonify({"packs": packs})
         except Exception as e:
             logger.error(f"获取已安装表情包列表失败: {e}", exc_info=True)
             return jsonify({"message": f"获取已安装表情包列表失败: {str(e)}"}), 500
 
     async def _api_get_pack_detail(self, pack_id: str):
         try:
-            return jsonify(get_pack_detail(pack_id))
+            service = self._pack_runtime()
+            result = service.detail(pack_id) if service is not None else get_pack_detail(pack_id)
+            return jsonify(result)
         except FileNotFoundError as e:
             return jsonify({"message": str(e)}), 404
         except RuntimeError as e:
@@ -134,7 +146,8 @@ class PackAPIMixin:
             pack_id = str((data or {}).get("pack_id") or "").strip()
             if not pack_id:
                 return jsonify({"message": "pack_id 不能为空"}), 400
-            result = set_default_pack(pack_id)
+            service = self._pack_runtime()
+            result = service.set_default(pack_id) if service is not None else set_default_pack(pack_id)
             refresh_store = getattr(self, "_refresh_store_for_active_pack", None)
             if callable(refresh_store):
                 refresh_store()
@@ -155,10 +168,12 @@ class PackAPIMixin:
             pack_id = str(payload.get("pack_id") or "").strip()
             output_dir = payload.get("output_dir")
             export_mode = str(payload.get("export_mode") or "share").strip().lower()
+            transfer = getattr(self, "pack_transfer_service", None)
+            export_operation = transfer.export if transfer is not None else export_pack_archive
             result = await self._run_guarded_pack_file_operation(
                 pack_id,
                 "导出资源包",
-                export_pack_archive,
+                export_operation,
                 pack_id,
                 output_dir=output_dir,
                 include_semantic=False,
@@ -192,10 +207,12 @@ class PackAPIMixin:
         try:
             pack_id = str(request.args.get("pack_id") or "").strip()
             export_mode = str(request.args.get("mode") or "share").strip().lower()
+            transfer = getattr(self, "pack_transfer_service", None)
+            export_operation = transfer.export if transfer is not None else export_pack_archive
             result = await self._run_guarded_pack_file_operation(
                 pack_id,
                 "导出资源包",
-                export_pack_archive,
+                export_operation,
                 pack_id,
                 export_mode=export_mode,
             )
@@ -257,6 +274,8 @@ class PackAPIMixin:
             await self._save_uploaded_file(archive_file, temp_zip_path)
 
             suggested_pack_id = Path(filename).stem
+            transfer = getattr(self, "pack_transfer_service", None)
+            import_operation = transfer.import_pack if transfer is not None else import_pack_archive
             if overwrite:
                 inspection = await asyncio.to_thread(
                     inspect_pack_archive,
@@ -266,7 +285,7 @@ class PackAPIMixin:
                 result = await self._run_guarded_pack_file_operation(
                     str(inspection.get("pack_id") or ""),
                     "覆盖安装资源包",
-                    import_pack_archive,
+                    import_operation,
                     temp_zip_path,
                     overwrite=True,
                     set_as_default=set_as_default,
@@ -276,7 +295,7 @@ class PackAPIMixin:
             else:
                 result = await self._run_guarded_runtime_file_operation(
                     "安装资源包",
-                    import_pack_archive,
+                    import_operation,
                     temp_zip_path,
                     overwrite=False,
                     set_as_default=set_as_default,
@@ -401,18 +420,20 @@ class PackAPIMixin:
                 "suggested_pack_id": str(session_data.get("suggested_pack_id") or ""),
                 "preserve_existing_manual": False,
             }
+            transfer = getattr(self, "pack_transfer_service", None)
+            import_operation = transfer.import_pack if transfer is not None else import_pack_archive
             if overwrite:
                 result = await self._run_guarded_pack_file_operation(
                     str(session_data.get("pack_id") or ""),
                     "覆盖安装资源包",
-                    import_pack_archive,
+                    import_operation,
                     archive_path,
                     **import_kwargs,
                 )
             else:
                 result = await self._run_guarded_runtime_file_operation(
                     "安装资源包",
-                    import_pack_archive,
+                    import_operation,
                     archive_path,
                     **import_kwargs,
                 )
@@ -436,10 +457,12 @@ class PackAPIMixin:
             pack_id = str((data or {}).get("pack_id") or "").strip()
             if not pack_id:
                 return jsonify({"message": "pack_id 不能为空"}), 400
+            transfer = getattr(self, "pack_transfer_service", None)
+            uninstall_operation = transfer.uninstall if transfer is not None else uninstall_pack
             result = await self._run_guarded_pack_file_operation(
                 pack_id,
                 "卸载资源包",
-                uninstall_pack,
+                uninstall_operation,
                 pack_id,
             )
             self._reload_personas()
@@ -616,9 +639,11 @@ class PackAPIMixin:
         try:
             data = await request.get_json()
             output_dir = (data or {}).get("output_dir")
+            backup = getattr(self, "pack_backup_service", None)
+            export_operation = backup.export if backup is not None else export_runtime_backup
             result = await self._run_guarded_runtime_file_operation(
                 "导出全量备份",
-                export_runtime_backup,
+                export_operation,
                 output_dir=output_dir,
             )
             return jsonify(
@@ -745,9 +770,11 @@ class PackAPIMixin:
                     400,
                 )
 
+            backup = getattr(self, "pack_backup_service", None)
+            import_operation = backup.restore if backup is not None else import_runtime_backup
             result = await self._run_guarded_runtime_file_operation(
                 "恢复全量备份",
-                import_runtime_backup,
+                import_operation,
                 temp_zip_path,
                 overwrite=overwrite,
             )

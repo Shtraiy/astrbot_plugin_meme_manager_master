@@ -11,15 +11,27 @@ from astrbot.api.message_components import *
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star
 
+from .application.services import (
+    CatalogService,
+    CommunityPackService,
+    PackBackupService,
+    PackRuntimeService,
+    PackService,
+    PackTransferService,
+)
 from .backend.catalog_index_service import CatalogIndexService
 from .backend.category_manager import CategoryManager
-from .backend.semantic_models import runtime_category_mapping
+from .backend import pack_storage as legacy_pack_storage
+from .domain.category_mapping import runtime_category_mapping
+from .infrastructure.pack_resolver import FilesystemPackResolver
+from .infrastructure.storage_adapters import MemeStoreCatalogRepository
 from .config import (
     DEFAULT_CATEGORY_DESCRIPTIONS,
     get_active_pack_paths,
     MEMES_DATA_PATH,
     MEMES_DIR,
     PLUGIN_DATA_DIR,
+    PACKS_DIR,
 )
 from .init import init_plugin
 from .mixins.commands import CommandMixin
@@ -70,6 +82,12 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
 
         # 初始化类别管理器
         self.category_manager = CategoryManager()
+        self.pack_service = PackService(FilesystemPackResolver(PACKS_DIR))
+        self.catalog_service = CatalogService(MemeStoreCatalogRepository())
+        self.pack_runtime_service = PackRuntimeService(legacy_pack_storage)
+        self.pack_transfer_service = PackTransferService(legacy_pack_storage)
+        self.pack_backup_service = PackBackupService(legacy_pack_storage)
+        self.community_pack_service = CommunityPackService(legacy_pack_storage)
 
         # 上传与待发送状态
         self.upload_states = {}

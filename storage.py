@@ -109,6 +109,20 @@ class MemeStore:
         self.metadata_path = self.root / "memes_data.json"
         self.temp_dir = self.root / "temp"
         self._perceptual_hash_cache: dict[Path, tuple[int, int, str | None]] = {}
+        # Compose the new storage boundaries while retaining the legacy
+        # methods on MemeStore for existing callers.
+        try:
+            from .infrastructure.catalog_repository import CatalogRepository
+            from .infrastructure.image_repository import ImageRepository
+            from .infrastructure.selection_state import SelectionState
+        except ImportError:
+            from infrastructure.catalog_repository import CatalogRepository
+            from infrastructure.image_repository import ImageRepository
+            from infrastructure.selection_state import SelectionState
+
+        self.catalog_repository = CatalogRepository(self.root, store=self)
+        self.image_repository = ImageRepository(self.root, store=self)
+        self.selection_state = SelectionState(self.root, store=self)
 
     @classmethod
     def from_astrbot(cls) -> "MemeStore":
@@ -169,6 +183,15 @@ class MemeStore:
         }
 
     def save_image(
+        self,
+        content: bytes,
+        tags: object = None,
+        extension: str = ".png",
+        perceptual_threshold: int | None = 6,
+    ) -> SaveResult:
+        return self.image_repository.save(content, tags, extension, perceptual_threshold)
+
+    def _save_image_legacy(
         self,
         content: bytes,
         tags: object = None,
@@ -247,119 +270,22 @@ class MemeStore:
         )
 
     def pick_image(self, tags: object = None) -> Path | None:
-        """Pick one image from the flat meme directory."""
-        preferred = set(normalize_tags(tags, fallback="")) if tags else set()
-        candidates = [
-            path
-            for item in self.load_catalog().get("items", [])
-            if isinstance(item, dict)
-            and (not preferred or preferred.intersection(item.get("tags", [])))
-            and (path := self.memes_dir / Path(str(item.get("filename", ""))).name).is_file()
-            and path.suffix.lower() in IMAGE_EXTENSIONS
-        ]
-        return random.choice(candidates) if candidates else None
+        return self.selection_state.pick(tags)
 
-    def pick_indexed_image(
-        self,
-        preferred_tags: object = None,
-        *,
-        now: float | None = None,
-        repeat_window: float = DEFAULT_SEND_REPEAT_WINDOW,
-    ) -> Path | None:
-        """Pick an indexed image, reducing the weight of recently sent ones."""
-        tags = set(normalize_tags(preferred_tags, fallback="")) if preferred_tags else set()
-        current_time = time.time() if now is None else float(now)
-        lookup = self._load_tag_index()
-        lookup_items = lookup.get("items", {})
-        candidate_ids: set[str] = set()
-        if tags:
-            for tag in tags:
-                candidate_ids.update(lookup.get("by_tag", {}).get(tag, []))
-        else:
-            candidate_ids.update(lookup_items)
-        candidates: list[Path] = []
-        weights: list[float] = []
-        for meme_id in sorted(candidate_ids):
-            item = lookup_items.get(meme_id)
-            if not isinstance(item, dict):
-                continue
-            filename = Path(str(item.get("filename", ""))).name
-            path = self.memes_dir / filename
-            if (
-                filename == str(item.get("filename", ""))
-                and path.is_file()
-                and path.suffix.lower() in IMAGE_EXTENSIONS
-            ):
-                candidates.append(path)
-                weights.append(self._send_weight(item, current_time, repeat_window))
-        if not candidates:
-            return None
-        return random.choices(candidates, weights=weights, k=1)[0]
+    def pick_indexed_image(self, preferred_tags: object = None, *, now: float | None = None, repeat_window: float = DEFAULT_SEND_REPEAT_WINDOW) -> Path | None:
+        return self.selection_state.pick_indexed(preferred_tags, now=now, repeat_window=repeat_window)
 
     @staticmethod
     def _send_weight(item: dict, now: float, repeat_window: float) -> float:
-        """Return a persistent count- and recency-aware selection weight."""
-        if repeat_window <= 0:
-            return 1.0
         try:
-            last_sent_at = float(item.get("last_sent_at") or 0.0)
-        except (TypeError, ValueError):
-            last_sent_at = 0.0
-        if last_sent_at <= 0:
-            return 1.0
-        try:
-            send_count = max(0, int(item.get("send_count") or 0))
-        except (TypeError, ValueError):
-            send_count = 0
-        age = max(0.0, now - last_sent_at)
-        recovery = min(age / repeat_window, 1.0)
-        count_factor = 1.0 / (1.0 + SEND_COUNT_PENALTY * send_count)
-        recovery_factor = SEND_RECOVERY_BASE + SEND_RECOVERY_RANGE * recovery
-        return max(SEND_WEIGHT_MIN, count_factor * recovery_factor)
+            from .infrastructure.selection_state import SelectionState
+        except ImportError:
+            from infrastructure.selection_state import SelectionState
 
-    def mark_image_sent(
-        self,
-        path: Path,
-        *,
-        sent_at: float | None = None,
-    ) -> dict | None:
-        """Persist one successful send marker on the image catalog entry."""
-        image_path = Path(path)
-        try:
-            image_path.resolve().relative_to(self.memes_dir.resolve())
-        except ValueError:
-            return None
-        if image_path.parent != self.memes_dir or not image_path.is_file():
-            return None
-        data = self.load_catalog()
-        items = [item for item in data.get("items", []) if isinstance(item, dict)]
-        entry = next(
-            (item for item in items if item.get("filename") == image_path.name),
-            None,
-        )
-        if entry is None:
-            self.ensure_catalog_entry(image_path)
-            data = self.load_catalog()
-            items = [item for item in data.get("items", []) if isinstance(item, dict)]
-            entry = next(
-                (item for item in items if item.get("filename") == image_path.name),
-                None,
-            )
-        if entry is None:
-            return None
-        try:
-            send_count = max(0, int(entry.get("send_count") or 0))
-        except (TypeError, ValueError):
-            send_count = 0
-        entry["send_count"] = send_count + 1
-        entry["last_sent_at"] = float(time.time() if sent_at is None else sent_at)
-        metadata = {
-            key: value
-            for key, value in data.items()
-            if key not in {"version", "updated_at", "items"}
-        }
-        self.write_catalog(items, metadata)
-        return dict(entry)
+        return SelectionState._send_weight(item, now, repeat_window)
+
+    def mark_image_sent(self, path: Path, *, sent_at: float | None = None) -> dict | None:
+        return self.selection_state.mark_sent(path, sent_at=sent_at)
 
     def image_paths(self, category: str | None = None) -> list[Path]:
         """Return flat images; an optional category reads legacy files only."""
@@ -1215,3 +1141,32 @@ def _hamming_distance(first: str, second: str) -> int:
     except (TypeError, ValueError):
         return 64
     return bin(xor).count("1")
+
+
+# Compatibility exports now delegate policy decisions to the infrastructure
+# boundary.  They intentionally remain defined here for legacy imports.
+def is_safe_category_segment(value: str) -> bool:
+    try:
+        from .infrastructure.storage_policy import is_safe_category_segment as policy
+    except ImportError:
+        from infrastructure.storage_policy import is_safe_category_segment as policy
+
+    return policy(value)
+
+
+def resolve_safe_category_dir(root: Path | str, category: str) -> Path:
+    try:
+        from .infrastructure.storage_policy import resolve_safe_category_dir as policy
+    except ImportError:
+        from infrastructure.storage_policy import resolve_safe_category_dir as policy
+
+    return policy(root, category)
+
+
+def _safe_extension(extension: str) -> str:
+    try:
+        from .infrastructure.storage_policy import safe_extension
+    except ImportError:
+        from infrastructure.storage_policy import safe_extension
+
+    return safe_extension(extension)

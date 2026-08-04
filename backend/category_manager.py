@@ -15,7 +15,7 @@ from ..utils import ensure_dir_exists, load_json, save_json
 from ..storage import MemeStore, is_safe_category_segment
 from .tagging import canonical_tag
 from .pack_repository import PackRepository
-from .semantic_storage import invalidate_semantic_metadata
+from .semantic_compat import invalidate_semantic_metadata
 
 logger = logging.getLogger(__name__)
 

@@ -1,35 +1,8 @@
-"""Remove legacy image-semantic data without touching the meme catalog."""
+"""Compatibility import for the legacy cleanup adapter."""
 
-from __future__ import annotations
+try:
+    from ..infrastructure.legacy_cleanup import cleanup_legacy_semantic_data
+except ImportError:  # standalone test imports from repository root
+    from infrastructure.legacy_cleanup import cleanup_legacy_semantic_data
 
-import shutil
-from pathlib import Path
-
-
-def cleanup_legacy_semantic_data(plugin_data_dir: Path | str) -> int:
-    """Delete only legacy semantic metadata and vector indexes.
-
-    The cleanup is intentionally narrow and idempotent: image files, category
-    directories, manifests, registries, and selection rules are never touched.
-    """
-    root = Path(plugin_data_dir).resolve()
-    removed = 0
-    packs_root = root / "packs"
-    if packs_root.is_dir():
-        for metadata_path in packs_root.rglob("semantic_metadata.json"):
-            if not metadata_path.is_file() or metadata_path.is_symlink():
-                continue
-            try:
-                metadata_path.unlink()
-                removed += 1
-            except OSError:
-                continue
-
-    semantic_indexes = root / "semantic_indexes"
-    if semantic_indexes.is_dir() and not semantic_indexes.is_symlink():
-        try:
-            shutil.rmtree(semantic_indexes)
-            removed += 1
-        except OSError:
-            pass
-    return removed
+__all__ = ["cleanup_legacy_semantic_data"]

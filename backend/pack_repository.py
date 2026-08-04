@@ -102,7 +102,7 @@ class PackRepository:
         if not (self.pack_dir / "semantic_metadata.json").is_file():
             return
         try:
-            from .semantic_storage import invalidate_semantic_metadata
+            from .semantic_compat import invalidate_semantic_metadata
 
             invalidate_semantic_metadata(self.pack_dir)
         except Exception:

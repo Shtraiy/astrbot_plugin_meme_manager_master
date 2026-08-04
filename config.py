@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from .backend.semantic_cleanup import cleanup_legacy_semantic_data
+    from .infrastructure.legacy_cleanup import cleanup_legacy_semantic_data
 except ImportError:
-    from backend.semantic_cleanup import cleanup_legacy_semantic_data
+    from infrastructure.legacy_cleanup import cleanup_legacy_semantic_data
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path

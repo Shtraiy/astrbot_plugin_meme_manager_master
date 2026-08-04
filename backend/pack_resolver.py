@@ -11,7 +11,8 @@ from ..config import (
     REGISTRY_PATH,
     SELECTION_RULES_PATH,
 )
-from .semantic_models import runtime_category_mapping
+from ..domain.category_mapping import runtime_category_mapping
+from ..infrastructure.pack_resolver import FilesystemPackResolver
 from .pack_protocol import validate_pack_id
 
 
@@ -40,10 +41,12 @@ def _is_pack_enabled(pack_id: str, registry_data: dict) -> bool:
 
 def _pack_exists(pack_id: str) -> bool:
     try:
-        normalized = validate_pack_id(pack_id, "pack")
+        context = FilesystemPackResolver(PACKS_DIR, require_exists=True).resolve(pack_id)
     except ValueError:
         return False
-    return (PACKS_DIR / normalized).is_dir()
+    except FileNotFoundError:
+        return False
+    return context.root.is_dir()
 
 
 def resolve_pack_id(
@@ -129,8 +132,8 @@ def resolve_pack_id(
 
 
 def get_pack_paths(pack_id: str) -> dict[str, Path]:
-    normalized = validate_pack_id(pack_id, "pack")
-    pack_dir = PACKS_DIR / normalized
+    context = FilesystemPackResolver(PACKS_DIR).resolve(pack_id)
+    pack_dir = context.root
     return {
         "pack_dir": pack_dir,
         "memes_dir": pack_dir / "memes",
