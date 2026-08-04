@@ -19,11 +19,17 @@ async function initCaptureIndexPage() {
   const categoryFilters = document.querySelector("#capture-category-filters");
   const previewMask = document.querySelector("#preview-mask");
   const previewImage = document.querySelector("#preview-image");
+  const confirmMask = document.querySelector("#capture-confirm-mask");
+  const confirmTitle = document.querySelector("#capture-confirm-title");
+  const confirmDescription = document.querySelector("#capture-confirm-description");
+  const confirmCancel = document.querySelector("#capture-confirm-cancel");
+  const confirmConfirm = document.querySelector("#capture-confirm-confirm");
   let selectedCategory = "";
   let reindexing = false;
   let reindexPollTimer = null;
   let indexing = false;
   let indexPollTimer = null;
+  let pendingConfirmation = null;
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -62,6 +68,25 @@ async function initCaptureIndexPage() {
     notice.textContent = String(error?.message || error || "操作失败");
     notice.classList.add("error");
   };
+
+  function closeConfirmation(result) {
+    const resolver = pendingConfirmation;
+    pendingConfirmation = null;
+    confirmMask.classList.add("hidden");
+    confirmMask.setAttribute("aria-hidden", "true");
+    if (resolver) resolver(Boolean(result));
+  }
+
+  function requestConfirmation(description, title = "请确认操作") {
+    return new Promise((resolve) => {
+      pendingConfirmation = resolve;
+      confirmTitle.textContent = title;
+      confirmDescription.textContent = description;
+      confirmMask.classList.remove("hidden");
+      confirmMask.setAttribute("aria-hidden", "false");
+      confirmConfirm.focus?.();
+    });
+  }
 
   function stopReindexPolling() {
     if (reindexPollTimer !== null) {
@@ -222,7 +247,10 @@ async function initCaptureIndexPage() {
   async function deleteIndexedItem(item, card, button) {
     const location = getImageLocation(item);
     if (!location) return;
-    if (!window.confirm(`确认永久删除 ${location.filename}？此操作不可恢复。`)) return;
+    if (!(await requestConfirmation(
+      `确认永久删除 ${location.filename}？此操作不可恢复。`,
+      "永久删除图片",
+    ))) return;
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
     try {
@@ -442,7 +470,11 @@ async function initCaptureIndexPage() {
     }
   });
   reindexButton.addEventListener("click", async () => {
-    if (!packSelect.value || !window.confirm("将旧分类目录迁移到平铺目录，并按 meme_<哈希> 重建标签索引。继续吗？")) return;
+    if (!packSelect.value) return;
+    if (!(await requestConfirmation(
+      "将旧分类目录迁移到平铺目录，并按 meme_<哈希> 重建标签索引。继续吗？",
+      "重索引表情目录",
+    ))) return;
     reindexing = true;
     reindexButton.disabled = true;
     reindexButton.setAttribute("aria-busy", "true");
@@ -457,6 +489,16 @@ async function initCaptureIndexPage() {
       reindexButton.disabled = false;
       reindexButton.setAttribute("aria-busy", "false");
       showError(error);
+    }
+  });
+  confirmCancel.addEventListener("click", () => closeConfirmation(false));
+  confirmConfirm.addEventListener("click", () => closeConfirmation(true));
+  confirmMask.addEventListener("click", (event) => {
+    if (event.target === confirmMask) closeConfirmation(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !confirmMask.classList.contains("hidden")) {
+      closeConfirmation(false);
     }
   });
   document.querySelector("#preview-close").addEventListener("click", () => {

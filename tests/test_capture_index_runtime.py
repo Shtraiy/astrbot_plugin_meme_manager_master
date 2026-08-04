@@ -58,6 +58,7 @@ class Element {
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] || null; }
   removeAttribute(name) { delete this.attributes[name]; }
+  focus() {}
 }
 
 function makeDocument() {
@@ -68,7 +69,9 @@ function makeDocument() {
     "capture-reindex-progress", "capture-reindex-progress-label",
     "capture-reindex-progress-count", "capture-reindex-progress-bar",
     "capture-index-button", "capture-category-filters", "preview-mask",
-    "preview-image", "preview-close",
+    "preview-image", "preview-close", "capture-confirm-mask",
+    "capture-confirm-title", "capture-confirm-description",
+    "capture-confirm-cancel", "capture-confirm-confirm",
   ];
   const elements = new Map(ids.map((id) => [id, new Element("div", id)]));
   const progressRow = new Element("div");
@@ -84,6 +87,7 @@ function makeDocument() {
       return null;
     },
     querySelectorAll() { return []; },
+    addEventListener() {},
     createElement(tagName) { return new Element(tagName); },
   };
 }
@@ -118,7 +122,7 @@ async function runPage(scriptPath) {
     },
   };
   globalThis.document = document;
-  globalThis.window = { AstrBotPluginPage: pageApi, confirm: () => true, setTimeout, clearTimeout };
+  globalThis.window = { AstrBotPluginPage: pageApi, setTimeout, clearTimeout };
   const source = fs.readFileSync(scriptPath, "utf8").replace(
     "void initCaptureIndexPage();",
     "globalThis.pageInit = initCaptureIndexPage();",
@@ -130,19 +134,28 @@ async function runPage(scriptPath) {
 
   const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
   const successButton = getDeleteButton();
-  await successButton.dispatch("click");
+  const successDelete = successButton.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await successDelete;
   await new Promise((resolve) => setImmediate(resolve));
   const deletePayload = calls.find((call) => call.endpoint === "emoji/delete").body;
   const successNotice = document.querySelector("#notice").textContent;
 
   deleteShouldFail = true;
   const failureButton = getDeleteButton();
-  await failureButton.dispatch("click");
+  const failedDelete = failureButton.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await failedDelete;
   await new Promise((resolve) => setImmediate(resolve));
   const failureRestored = !failureButton.disabled && failureButton.getAttribute("aria-busy") === "false";
 
   deleteShouldFail = false;
-  await document.querySelector("#capture-reindex-button").dispatch("click");
+  const reindexAction = document.querySelector("#capture-reindex-button").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await reindexAction;
   await new Promise((resolve) => setImmediate(resolve));
   const reindexPayload = calls.find((call) => call.endpoint === "capture/reindex").body;
   const reindexButton = document.querySelector("#capture-reindex-button");

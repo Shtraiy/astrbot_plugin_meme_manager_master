@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>表情索引</title>
-    <link rel="stylesheet" href="./style.css?v=20260804-capture-index-1" />
+    <link rel="stylesheet" href="./style.css?v=20260804-capture-index-2" />
   </head>
   <body>
     <header class="page-header">
@@ -72,10 +72,28 @@
       </section>
     </main>
 
+    <div id="capture-confirm-mask" class="capture-confirm-mask hidden" aria-hidden="true">
+      <div
+        class="capture-confirm-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="capture-confirm-title"
+        aria-describedby="capture-confirm-description"
+      >
+        <p class="kicker">操作确认</p>
+        <h2 id="capture-confirm-title">请确认操作</h2>
+        <p id="capture-confirm-description"></p>
+        <div class="capture-confirm-actions">
+          <button id="capture-confirm-cancel" type="button">取消</button>
+          <button id="capture-confirm-confirm" type="button" class="primary">确认</button>
+        </div>
+      </div>
+    </div>
+
     <div id="preview-mask" class="preview-mask hidden" aria-hidden="true">
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260804-capture-index-1"></script>
+    <script type="module" src="./script.js?v=20260804-capture-index-2"></script>
   </body>
 </html>

@@ -116,8 +116,8 @@ class CaptureIndexPageTests(unittest.TestCase):
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn('style.css?v=20260804-capture-index-1', source)
-            self.assertIn('script.js?v=20260804-capture-index-1', source)
+            self.assertIn('style.css?v=20260804-capture-index-2', source)
+            self.assertIn('script.js?v=20260804-capture-index-2', source)
             self.assertNotIn("20260803-", source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):
@@ -131,6 +131,16 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn(".card-actions { position: absolute", style)
             self.assertIn(".card-delete-icon", style)
             self.assertIn("@media (prefers-reduced-motion: reduce)", style)
+
+    def test_index_actions_use_an_embedded_confirmation_dialog(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            script = (page_dir / "script.js").read_text(encoding="utf-8")
+            self.assertIn("capture-confirm-mask", source)
+            self.assertIn("capture-confirm-cancel", source)
+            self.assertIn("capture-confirm-confirm", source)
+            self.assertIn("requestConfirmation", script)
+            self.assertNotIn("window.confirm(", script)
 
     def test_reindex_error_state_stops_polling_without_refreshing_workspace(self):
         for script_path in (
