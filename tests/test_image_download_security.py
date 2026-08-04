@@ -17,9 +17,22 @@ from meme_manager_master.backend.image_download import (  # noqa: E402
     is_safe_image_url,
     validate_image_payload,
 )
+from meme_manager_master.backend.remote_fetch import (  # noqa: E402
+    bounded_chunks,
+    is_public_https_url,
+)
 
 
 class ImageDownloadSecurityTests(unittest.TestCase):
+    def test_shared_remote_policy_rejects_private_urls_and_bounds_streams(self):
+        self.assertTrue(is_public_https_url("https://example.com/image.png"))
+        self.assertFalse(is_public_https_url("http://example.com/image.png"))
+        self.assertFalse(is_public_https_url("https://127.0.0.1/image.png"))
+        self.assertFalse(is_public_https_url("https://user:pass@example.com/image.png"))
+
+        with self.assertRaises(ValueError):
+            list(bounded_chunks((part for part in (b"1234", b"5678")), 7))
+
     def test_public_resolver_pins_checked_addresses(self):
         from meme_manager_master.backend import image_download
 

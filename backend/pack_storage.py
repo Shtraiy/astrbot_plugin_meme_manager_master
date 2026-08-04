@@ -39,6 +39,7 @@ from .pack_protocol import (
     validate_source_descriptor,
     validate_transfer_manifest,
 )
+from .remote_fetch import bounded_chunks, is_public_https_url
 from .semantic_index import index_is_ready, load_index_manifest
 from .semantic_storage import (
     LEGACY_METADATA_BACKUP_NAME,
@@ -121,13 +122,20 @@ def _http_get_with_optional_acceleration(
     timeout: int,
     github_accelerator_url: str = "",
 ) -> requests.Response:
+    if not is_public_https_url(raw_url):
+        raise ValueError("remote target must use a public HTTPS URL")
     request_url = _build_accelerated_url(raw_url, github_accelerator_url)
+    if request_url != raw_url and not is_public_https_url(request_url):
+        request_url = raw_url
     last_error = None
 
     if request_url and request_url != raw_url:
         try:
             accelerated_response = requests.get(
-                request_url, timeout=timeout, stream=True
+                request_url,
+                timeout=timeout,
+                stream=True,
+                allow_redirects=False,
             )
             if accelerated_response.status_code == 200:
                 return accelerated_response
@@ -139,7 +147,12 @@ def _http_get_with_optional_acceleration(
             last_error = exc
 
     try:
-        native_response = requests.get(raw_url, timeout=timeout, stream=True)
+        native_response = requests.get(
+            raw_url,
+            timeout=timeout,
+            stream=True,
+            allow_redirects=False,
+        )
         return native_response
     except Exception as exc:
         if last_error is not None:
@@ -163,14 +176,10 @@ def _read_bounded_response(response: requests.Response, limit: int) -> bytes:
         response.close()
         raise ValueError("远程响应超过大小限制")
     chunks: list[bytes] = []
-    total = 0
     try:
-        for chunk in response.iter_content(chunk_size=64 * 1024):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > limit:
-                raise ValueError("远程响应超过大小限制")
+        for chunk in bounded_chunks(
+            response.iter_content(chunk_size=64 * 1024), limit
+        ):
             chunks.append(chunk)
         return b"".join(chunks)
     finally:
@@ -189,15 +198,11 @@ def _write_bounded_response(
     fd, temp_name = tempfile.mkstemp(
         prefix=f".{target_path.name}.", suffix=".tmp", dir=target_path.parent
     )
-    total = 0
     try:
         with os.fdopen(fd, "wb") as file_obj:
-            for chunk in response.iter_content(chunk_size=64 * 1024):
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > limit:
-                    raise ValueError("远程压缩包超过大小限制")
+            for chunk in bounded_chunks(
+                response.iter_content(chunk_size=64 * 1024), limit
+            ):
                 file_obj.write(chunk)
             file_obj.flush()
             os.fsync(file_obj.fileno())

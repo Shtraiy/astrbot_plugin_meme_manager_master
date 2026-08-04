@@ -14,6 +14,34 @@ from meme_manager_master.backend import pack_storage  # noqa: E402
 
 
 class PackStorageSecurityTests(unittest.TestCase):
+    def test_remote_requests_disable_redirects(self):
+        calls = []
+
+        class Response:
+            status_code = 200
+
+        def fake_get(*args, **kwargs):
+            calls.append((args, kwargs))
+            return Response()
+
+        with patch.object(
+            pack_storage.requests, "get", side_effect=fake_get, create=True
+        ):
+            pack_storage._http_get_with_optional_acceleration(
+                "https://github.com/example/project/archive/main.zip", timeout=5
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(calls[0][1]["allow_redirects"])
+
+    def test_remote_requests_reject_non_https_targets(self):
+        with patch.object(pack_storage.requests, "get", create=True) as request_get:
+            with self.assertRaises(ValueError):
+                pack_storage._http_get_with_optional_acceleration(
+                    "http://example.com/archive.zip", timeout=5
+                )
+        request_get.assert_not_called()
+
     def _make_outside_pack(self, root: Path) -> tuple[Path, Path]:
         packs_dir = root / "packs"
         outside_dir = root / "outside"

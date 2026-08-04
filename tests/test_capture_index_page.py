@@ -152,6 +152,15 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn('showError(new Error(state.message', script)
             self.assertIn('if (state.status === "completed")', script)
 
+    def test_index_stats_render_dynamic_values_without_inner_html(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertNotIn("item.innerHTML", script)
+            self.assertIn("valueElement.textContent", script)
+
 
 if __name__ == "__main__":
     unittest.main()

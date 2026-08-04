@@ -61,6 +61,7 @@ from ..storage import (
     scan_pack_emojis,
 )
 from .web_routes import enabled_route_specs
+from .web_security import MUTATING_METHODS, check_web_mutation_access
 from .capture_index_api import CaptureIndexAPIMixin
 from .emoji_api import EmojiAPIMixin
 from .pack_api import PackAPIMixin
@@ -109,6 +110,24 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
         async def logged_handler(*args, **kwargs):
             started_at = time.monotonic()
             try:
+                if request.method.upper() in MUTATING_METHODS:
+                    decision = check_web_mutation_access(request)
+                    if not decision.allowed:
+                        logger.warning(
+                            "%s %s 写操作被安全门拒绝: %s",
+                            WEBUI_LOG_PREFIX,
+                            route_path,
+                            decision.code,
+                        )
+                        return (
+                            jsonify(
+                                {
+                                    "message": decision.message,
+                                    "code": decision.code,
+                                }
+                            ),
+                            decision.status,
+                        )
                 response = await handler(*args, **kwargs)
             except Exception:
                 elapsed_ms = int((time.monotonic() - started_at) * 1000)

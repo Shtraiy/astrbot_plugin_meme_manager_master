@@ -60,6 +60,116 @@ from meme_manager_master.mixins import web_api  # noqa: E402
 
 
 class WebApiBehaviorTests(unittest.TestCase):
+    def test_registered_mutation_rejects_missing_authentication_context(self):
+        from quart import request
+
+        request.method = "POST"
+        request.username = None
+        request.headers = {
+            "Host": "localhost:6185",
+            "Origin": "http://localhost:6185",
+        }
+        registered = []
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.context = types.SimpleNamespace(
+            register_web_api=lambda *args: registered.append(args)
+        )
+
+        async def mutation():
+            return {"mutated": True}
+
+        instance._register_webui_api("mutation", mutation, ["POST"], "test")
+        response = asyncio_run(registered[0][1]())
+        status = response[1] if isinstance(response, tuple) else None
+
+        self.assertEqual(status, 401)
+
+    def test_registered_mutation_rejects_cross_origin_request(self):
+        from quart import request
+
+        request.method = "POST"
+        request.username = "admin"
+        request.headers = {
+            "Host": "localhost:6185",
+            "Origin": "https://attacker.example",
+        }
+        registered = []
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.context = types.SimpleNamespace(
+            register_web_api=lambda *args: registered.append(args)
+        )
+
+        async def mutation():
+            return {"mutated": True}
+
+        instance._register_webui_api("mutation", mutation, ["POST"], "test")
+        response = asyncio_run(registered[0][1]())
+        status = response[1] if isinstance(response, tuple) else None
+
+        self.assertEqual(status, 403)
+
+    def test_registered_mutation_allows_authenticated_same_origin_request(self):
+        from quart import request
+
+        request.method = "POST"
+        request.username = "admin"
+        request.headers = {
+            "Host": "localhost:6185",
+            "Origin": "http://localhost:6185",
+        }
+        registered = []
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.context = types.SimpleNamespace(
+            register_web_api=lambda *args: registered.append(args)
+        )
+
+        async def mutation():
+            return {"mutated": True}
+
+        instance._register_webui_api("mutation", mutation, ["POST"], "test")
+        payload = asyncio_run(registered[0][1]())
+
+        self.assertEqual(payload, {"mutated": True})
+
+    def test_registered_mutation_rejects_missing_origin_evidence(self):
+        from quart import request
+
+        request.method = "POST"
+        request.username = "admin"
+        request.headers = {"Host": "localhost:6185"}
+        registered = []
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.context = types.SimpleNamespace(
+            register_web_api=lambda *args: registered.append(args)
+        )
+
+        async def mutation():
+            return {"mutated": True}
+
+        instance._register_webui_api("mutation", mutation, ["POST"], "test")
+        response = asyncio_run(registered[0][1]())
+
+        self.assertEqual(response[1], 403)
+
+    def test_registered_read_does_not_require_mutation_security_context(self):
+        from quart import request
+
+        request.method = "GET"
+        request.username = None
+        request.headers = {}
+        registered = []
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.context = types.SimpleNamespace(
+            register_web_api=lambda *args: registered.append(args)
+        )
+
+        async def read_only():
+            return {"read": True}
+
+        instance._register_webui_api("read-only", read_only, ["GET"], "test")
+
+        self.assertEqual(asyncio_run(registered[0][1]()), {"read": True})
+
     def test_bound_webui_response_status_helper_accepts_response(self):
         instance = WebAPIMixin.__new__(WebAPIMixin)
         self.assertEqual(instance._get_webui_response_status(({}, 201)), 201)

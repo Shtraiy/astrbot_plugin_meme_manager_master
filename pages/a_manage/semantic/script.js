@@ -325,7 +325,11 @@ async function initCaptureIndexPage() {
     ]) {
       const item = document.createElement("div");
       item.className = "stat panel";
-      item.innerHTML = `<span>${label}</span><strong>${value}</strong>`;
+      const labelElement = document.createElement("span");
+      labelElement.textContent = label;
+      const valueElement = document.createElement("strong");
+      valueElement.textContent = String(value);
+      item.append(labelElement, valueElement);
       summary.append(item);
     }
 

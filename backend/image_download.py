@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import aiohttp
 
 from ..storage import detect_image_extension
+from .remote_fetch import bounded_async_chunks, is_public_https_url
 
 
 @dataclass(frozen=True)
@@ -19,22 +20,7 @@ class ImageDownload:
 
 def is_safe_image_url(source: str) -> bool:
     """Apply syntax-level restrictions before any network request."""
-    try:
-        parsed = urlparse(str(source or "").strip())
-        hostname = parsed.hostname
-        parsed.port
-    except (TypeError, ValueError):
-        return False
-    if parsed.scheme.lower() != "https" or not hostname:
-        return False
-    if parsed.username or parsed.password:
-        return False
-    if hostname.lower() in {"localhost", "localhost.localdomain"}:
-        return False
-    try:
-        return ip_address(hostname).is_global
-    except ValueError:
-        return True
+    return is_public_https_url(source)
 
 
 async def _remote_target_is_public(source: str) -> bool:
@@ -150,11 +136,9 @@ async def download_image(
                         return None
 
                 chunks: list[bytes] = []
-                total = 0
-                async for chunk in response.content.iter_chunked(64 * 1024):
-                    total += len(chunk)
-                    if total > limit:
-                        return None
+                async for chunk in bounded_async_chunks(
+                    response.content.iter_chunked(64 * 1024), limit
+                ):
                     chunks.append(chunk)
                 return validate_image_payload(b"".join(chunks), limit)
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError):

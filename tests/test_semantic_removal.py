@@ -70,6 +70,15 @@ class SemanticRemovalTests(unittest.TestCase):
         self.assertNotIn('apiGet("removed"', source)
         self.assertNotIn('apiPost("removed"', source)
 
+    def test_settings_scripts_have_no_unreachable_semantic_rebuild_logic(self):
+        for script_path in (
+            ROOT / "pages" / "settings" / "script.js",
+            ROOT / "pages" / "a_manage" / "settings" / "script.js",
+        ):
+            source = script_path.read_text(encoding="utf-8")
+            self.assertNotIn("semantic_rebuild_packs", source)
+            self.assertNotIn('apiPost("removed"', source)
+
 
 if __name__ == "__main__":
     unittest.main()
