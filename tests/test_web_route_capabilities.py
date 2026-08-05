@@ -17,6 +17,7 @@ class WebRouteCapabilityTests(unittest.TestCase):
             "settings/rules",
             "capture/workspace",
             "capture/index",
+            "capture/index/status",
             "capture/reindex",
             "capture/reindex/status",
         ):

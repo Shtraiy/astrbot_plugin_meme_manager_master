@@ -278,6 +278,24 @@ class CaptureIndexAPIMixin:
             logger.error("启动偷取表情包索引失败: %s", exc, exc_info=True)
             return jsonify({"message": "启动偷取表情包索引失败"}), 500
 
+    async def _api_capture_index_status(self):
+        try:
+            pack_id = self._capture_pack_id()
+            state = dict(getattr(self, "_library_index_state", {}) or {})
+            state.setdefault("status", "idle")
+            state.setdefault("processed", 0)
+            state.setdefault("total", 0)
+            state.setdefault("classified", 0)
+            state.setdefault("errors", 0)
+            state.setdefault("message", "尚未开始目录索引")
+            state["pack_id"] = pack_id
+            return jsonify(state)
+        except (FileNotFoundError, ValueError) as exc:
+            return jsonify({"message": str(exc)}), 400
+        except Exception as exc:
+            logger.error("读取偷取表情包索引状态失败: %s", exc, exc_info=True)
+            return jsonify({"message": "读取偷取表情包索引状态失败"}), 500
+
     async def _api_capture_reindex(self):
         try:
             data = await request.get_json() or {}

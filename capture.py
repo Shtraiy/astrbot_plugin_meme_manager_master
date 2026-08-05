@@ -99,6 +99,7 @@ OUTGOING_DECISION_SYSTEM_PROMPT = """
 
 LIBRARY_INDEX_VERSION = 3
 LIBRARY_INDEX_PROMPT_VERSION = "library-batch-v3"
+LIBRARY_INDEX_LLM_TIMEOUT = 120.0
 
 
 @dataclass(frozen=True)
@@ -610,7 +611,11 @@ class CaptureMixin:
                 status="error",
                 message=f"标签索引失败：{exception}",
             )
-            logger.error("[meme_manager_master] 后台表情包索引任务异常: %s", exception)
+            logger.error(
+                "[meme_manager_master] 后台表情包索引任务异常: %s",
+                exception,
+                exc_info=True,
+            )
 
     async def on_message(
         self,
@@ -1076,22 +1081,51 @@ class CaptureMixin:
             classified = 0
             errors = 0
             batch_size = self.runtime_config.library_index_batch_size
+            batch_total = (len(pending) + batch_size - 1) // batch_size
             for start in range(0, len(pending), batch_size):
                 batch = pending[start : start + batch_size]
                 batch_paths = [path for path, _digest in batch]
+                batch_number = start // batch_size + 1
                 classified += len(batch)
+                self._library_index_state.update(
+                    message=(
+                        f"正在请求视觉模型：批次 {batch_number}/{batch_total}"
+                        f"（{len(batch)} 张）"
+                    )
+                )
+                logger.info(
+                    "[meme_manager_master] 分类索引批次开始 batch=%s/%s count=%s provider=%s",
+                    batch_number,
+                    batch_total,
+                    len(batch),
+                    provider_id,
+                )
                 try:
                     batch_results = await self._describe_library_batch(
                         None, batch_paths, "固定标签", provider_id
                     )
                 except Exception as exc:
-                    logger.debug(
-                        "标签索引批次失败，改用逐图识别 count=%s: %s",
+                    logger.warning(
+                        "[meme_manager_master] 分类索引批次失败，改用逐图识别 batch=%s/%s count=%s: %s",
+                        batch_number,
+                        batch_total,
                         len(batch),
                         exc,
                     )
+                    self._library_index_state.update(
+                        message=(
+                            f"批量识别失败，正在逐图重试：批次 "
+                            f"{batch_number}/{batch_total}（{len(batch)} 张）"
+                        )
+                    )
                     batch_results = {}
-                    for path in batch_paths:
+                    for retry_index, path in enumerate(batch_paths, start=1):
+                        self._library_index_state.update(
+                            message=(
+                                f"正在逐图重试：批次 {batch_number}/{batch_total}，"
+                                f"第 {retry_index}/{len(batch_paths)} 张"
+                            )
+                        )
                         try:
                             batch_results.update(
                                 await self._describe_library_single(
@@ -1099,7 +1133,11 @@ class CaptureMixin:
                                 )
                             )
                         except Exception as single_exc:
-                            logger.debug("single-image tag index failed path=%s: %s", path, single_exc)
+                            logger.warning(
+                                "[meme_manager_master] 分类索引逐图重试失败 path=%s: %s",
+                                path,
+                                single_exc,
+                            )
                     if not batch_results:
                         self._schedule_library_retry(provider_id)
                         self._library_index_state.update(
@@ -1109,7 +1147,19 @@ class CaptureMixin:
                             errors=errors + len(batch),
                             message="标签索引失败，稍后可重试",
                         )
+                        logger.error(
+                            "[meme_manager_master] 分类索引批次完全失败 batch=%s/%s count=%s",
+                            batch_number,
+                            batch_total,
+                            len(batch),
+                        )
                         return
+                logger.info(
+                    "[meme_manager_master] 分类索引批次完成 batch=%s/%s results=%s",
+                    batch_number,
+                    batch_total,
+                    len(batch_results),
+                )
                 for path, digest in batch:
                     metadata = dict(batch_results.get(path) or {})
                     if not metadata:
@@ -1159,6 +1209,12 @@ class CaptureMixin:
                 classified=classified,
                 errors=errors,
                 message="标签索引完成" if not errors else "标签索引完成，但有图片待重试",
+            )
+            logger.info(
+                "[meme_manager_master] 分类索引完成 total=%s newly_classified=%s errors=%s",
+                total,
+                classified,
+                errors,
             )
             self._library_completed_key = (provider_id, run_signature)
             self._library_retry_key = None
@@ -1401,12 +1457,13 @@ class CaptureMixin:
                 *[f"{image_id}: {path.name}" for path, image_id in image_ids.items()],
             ]
         )
-        response = await self._generate(
+        response = await self._generate_library_index_response(
             event,
             prompt,
             image_urls=[str(path) for path in image_paths],
             provider_id=provider_id,
             system_prompt=_library_batch_system_prompt(category),
+            operation=f"batch:{len(image_paths)}",
         )
         parsed = parse_model_json(response)
         if isinstance(parsed, dict):
@@ -1422,12 +1479,13 @@ class CaptureMixin:
         category: str,
         provider_id: str,
     ) -> dict[Path, dict]:
-        response = await self._generate(
+        response = await self._generate_library_index_response(
             event,
             f"分类目录：{category}\n请识别这张图片并返回描述、情绪、图片文字和标签。",
             image_urls=[str(image_path)],
             provider_id=provider_id,
             system_prompt=_library_single_system_prompt(category),
+            operation=f"single:{image_path.name}",
         )
         parsed = parse_model_json(response)
         items = parsed.get("items", parsed) if isinstance(parsed, dict) else parsed
@@ -1435,6 +1493,43 @@ class CaptureMixin:
         if image_path not in result:
             raise ValueError("single-image index response cannot be matched")
         return result
+
+    async def _generate_library_index_response(
+        self,
+        event: AstrMessageEvent | None,
+        prompt: str,
+        image_urls: list[str],
+        provider_id: str,
+        system_prompt: str,
+        operation: str,
+    ) -> str:
+        started_at = time.monotonic()
+        try:
+            response = await asyncio.wait_for(
+                self._generate(
+                    event,
+                    prompt,
+                    image_urls=image_urls,
+                    provider_id=provider_id,
+                    system_prompt=system_prompt,
+                ),
+                timeout=LIBRARY_INDEX_LLM_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            elapsed = time.monotonic() - started_at
+            logger.warning(
+                "[meme_manager_master] 分类索引视觉模型超时 operation=%s timeout=%ss elapsed=%.1fs",
+                operation,
+                LIBRARY_INDEX_LLM_TIMEOUT,
+                elapsed,
+            )
+            raise
+        logger.info(
+            "[meme_manager_master] 分类索引视觉模型完成 operation=%s elapsed=%.1fs",
+            operation,
+            time.monotonic() - started_at,
+        )
+        return response
 
     async def _choose_outgoing_meme_from_index(
         self,

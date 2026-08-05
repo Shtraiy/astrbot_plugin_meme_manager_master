@@ -96,19 +96,28 @@ async function runPage(scriptPath) {
   const document = makeDocument();
   const calls = [];
   const workspace = {
-    summary: { indexed: 1, pending: 0, duplicate: 0, complete_folders: 1, folder_total: 1 },
+    summary: { indexed: 1, pending: 1, duplicate: 0, complete_folders: 0, folder_total: 1 },
     folders: [{ category: "happy", tag: "happy", indexed: 1, total: 1, complete: true }],
     indexed_items: [{ filename: "meme_demo.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo.png", indexed: true }],
-    pending_items: [],
+    pending_items: [{ filename: "meme_pending.png", tag: "happy", category: "happy", relative_path: "memes/meme_pending.png", indexed: false }],
     library_index: { status: "idle", active_pack: true, message: "目录索引已加载" },
   };
   let deleteShouldFail = false;
+  let workspaceCalls = 0;
+  let indexStatusCalls = 0;
   const pageApi = {
     async ready() {},
     async apiGet(endpoint) {
       if (endpoint === "packs") return { packs: [{ id: "pack" }] };
-      if (endpoint === "capture/workspace") return workspace;
+      if (endpoint === "capture/workspace") {
+        workspaceCalls += 1;
+        return workspace;
+      }
       if (endpoint === "meme_image_data") return { data_url: "data:image/png;base64,AA==" };
+      if (endpoint === "capture/index/status") {
+        indexStatusCalls += 1;
+        return { status: "completed", processed: 1, total: 1, message: "分类索引已完成" };
+      }
       if (endpoint === "capture/reindex/status") {
         return { status: "completed", processed: 1, total: 1, message: "重索引已完成" };
       }
@@ -117,6 +126,7 @@ async function runPage(scriptPath) {
     async apiPost(endpoint, body) {
       calls.push({ endpoint, body });
       if (endpoint === "emoji/delete" && deleteShouldFail) throw new Error("delete failed");
+      if (endpoint === "capture/index") return { status: "running", message: "分类索引已开始" };
       if (endpoint === "capture/reindex") return { status: "running", processed: 0, total: 1, message: "正在重索引" };
       return { status: "ok" };
     },
@@ -152,6 +162,11 @@ async function runPage(scriptPath) {
   const failureRestored = !failureButton.disabled && failureButton.getAttribute("aria-busy") === "false";
 
   deleteShouldFail = false;
+  const indexAction = document.querySelector("#capture-index-button").dispatch("click");
+  await indexAction;
+  await new Promise((resolve) => setImmediate(resolve));
+  const indexPayload = calls.find((call) => call.endpoint === "capture/index").body;
+
   const reindexAction = document.querySelector("#capture-reindex-button").dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
   await document.querySelector("#capture-confirm-confirm").dispatch("click");
@@ -163,6 +178,9 @@ async function runPage(scriptPath) {
     deletePayload,
     successNotice,
     failureRestored,
+    indexPayload,
+    indexStatusCalls,
+    workspaceCalls,
     reindexPayload,
     reindexRestored: !reindexButton.disabled && reindexButton.getAttribute("aria-busy") === "false",
     reindexNotice: document.querySelector("#notice").textContent,
@@ -202,6 +220,9 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertEqual(payload["deletePayload"]["image_file"], "meme_demo.png")
             self.assertIn("已删除", payload["successNotice"])
             self.assertTrue(payload["failureRestored"])
+            self.assertEqual(payload["indexPayload"]["pack_id"], "pack")
+            self.assertEqual(payload["indexStatusCalls"], 1)
+            self.assertEqual(payload["workspaceCalls"], 6)
             self.assertEqual(payload["reindexPayload"]["pack_id"], "pack")
             self.assertTrue(payload["reindexRestored"])
             self.assertIn("重索引已完成", payload["reindexNotice"])

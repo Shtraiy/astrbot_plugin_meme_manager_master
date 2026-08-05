@@ -199,6 +199,50 @@ class ManualIndexApiTests(unittest.IsolatedAsyncioTestCase):
             await instance._library_task
 
 
+class ManualIndexStatusApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_index_status_returns_current_snapshot_without_workspace_scan(self):
+        instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+        instance._capture_pack_id = lambda data=None: "pack"
+        instance._library_index_state = {
+            "status": "running",
+            "processed": 1147,
+            "total": 1149,
+            "classified": 2,
+            "errors": 0,
+            "message": "正在请求视觉模型：批次 1/1（2 张）",
+        }
+
+        class Request:
+            args = {"pack_id": "pack"}
+
+        with (
+            patch.object(capture_index_api, "request", Request()),
+            patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+        ):
+            result = await instance._api_capture_index_status()
+
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["processed"], 1147)
+        self.assertEqual(result["message"], "正在请求视觉模型：批次 1/1（2 张）")
+
+    async def test_index_status_returns_idle_snapshot_when_not_started(self):
+        instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+        instance._capture_pack_id = lambda data=None: "pack"
+        instance._library_index_state = {}
+
+        class Request:
+            args = {"pack_id": "pack"}
+
+        with (
+            patch.object(capture_index_api, "request", Request()),
+            patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+        ):
+            result = await instance._api_capture_index_status()
+
+        self.assertEqual(result["status"], "idle")
+        self.assertEqual(result["pack_id"], "pack")
+
+
 class ReindexProgressApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_reindex_reports_running_progress_then_completed_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -63,8 +63,8 @@ class CaptureIndexPageTests(unittest.TestCase):
             ROOT / "pages" / "a_manage" / "semantic" / "script.js",
         ):
             script = script_path.read_text(encoding="utf-8")
-            self.assertIn("loadWorkspace({ renderItems: false })", script)
-            self.assertIn("renderItems = true", script)
+            self.assertIn('apiGet("capture/index/status"', script)
+            self.assertNotIn("loadWorkspace({ renderItems: false })", script)
 
     def test_reindex_progress_is_outside_the_resource_toolbar(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -81,9 +81,10 @@ class CaptureIndexPageTests(unittest.TestCase):
             script = script_path.read_text(encoding="utf-8")
             self.assertIn('apiPost("capture/index"', script)
             self.assertIn("pollIndexStatus", script)
+            self.assertIn('apiGet("capture/index/status"', script)
+            self.assertNotIn('loadWorkspace({ renderItems: false })', script)
             self.assertIn('setTimeout(() => void pollIndexStatus(), 500)', script)
             self.assertIn('["queued", "running"]', script)
-            self.assertIn('state.message !== "没有待索引图片"', script)
 
     def test_progress_page_assets_use_a_cache_busting_script_version(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):

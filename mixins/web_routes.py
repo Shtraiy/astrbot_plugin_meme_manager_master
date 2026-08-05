@@ -80,6 +80,13 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         capability="catalog_index",
     ),
     WebRouteSpec(
+        "capture/index/status",
+        "_api_capture_index_status",
+        ("GET",),
+        "获取偷取表情包分类索引进度",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
         "capture/reindex",
         "_api_capture_reindex",
         ("POST",),

@@ -164,17 +164,25 @@ async function initCaptureIndexPage() {
   async function pollIndexStatus() {
     if (!packSelect.value || !indexing) return;
     try {
-      const data = await loadWorkspace({ renderItems: false });
-      const state = data?.library_index || {};
-      const stillRunning = ["queued", "running"].includes(state.status)
-        || (state.status === "idle" && state.message !== "没有待索引图片");
-      if (indexing && stillRunning) {
+      const state = await apiGet("capture/index/status", { pack_id: packSelect.value });
+      if (["queued", "running"].includes(state.status)) {
+        notice.textContent = state.message || "分类索引处理中……";
+        notice.classList.remove("error");
         indexPollTimer = window.setTimeout(() => void pollIndexStatus(), 500);
         return;
       }
       indexing = false;
       indexPollTimer = null;
-      if (data) renderWorkspace(data);
+      if (state.status === "error") {
+        indexButton.disabled = false;
+        showError(new Error(state.message || "分类索引失败"));
+        return;
+      }
+      const data = await loadWorkspace();
+      if (data) {
+        notice.textContent = state.message || "分类索引已完成";
+        notice.classList.remove("error");
+      }
     } catch (error) {
       indexing = false;
       indexPollTimer = null;
