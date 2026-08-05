@@ -2,12 +2,12 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
-## [Unreleased] - 2026-08-05
+## [v2.1.1] - 2026-08-05
 
 ### Refactor delivery note
 
-- Stage commit `352b86b` on branch `codex/storage-boundary-complete` adds storage/pack boundary modules, application service forwarding, lazy semantic capability boundaries, capture image validation helpers, and 272 regression tests (1 skipped).
-- The legacy `storage.py` and `backend/pack_storage.py` implementations remain as compatibility facades during the migration window; full physical extraction of the remaining legacy bodies and a live AstrBot upload smoke test are follow-up acceptance items.
+- The follow-up repair pass adds bounded `PackRuntime.create()` validation, active-pack rebinding for capture and automatic selection, community/official install service routing, semantic failure diagnostics, and a dependency-free real-image upload smoke test.
+- The legacy `storage.py` and `backend/pack_storage.py` implementations remain as compatibility facades during the migration window; full physical extraction of the remaining legacy bodies and live AstrBot host acceptance are still follow-up items.
 
 ### 新增
 
@@ -22,13 +22,13 @@
 
 ### 验证
 
-- 全量 unittest：269 项通过，1 项既有兼容用例跳过。
+- 全量 pytest：283 项通过，1 项既有兼容用例跳过；unittest discover：284 项通过，1 项跳过。
 - compileall、配置 schema、架构边界检查和全部页面 JavaScript 语法检查通过。
 - `bandit` 和 `pip-audit` 尚未执行，当前环境未安装。
 
 ### 迁移状态
 
-- `storage.py` 与 `backend/pack_storage.py` 的旧实现尚未完全物理拆除，capture/WebUI 全量应用层迁移将在后续独立提交中完成。
+- `storage.py` 与 `backend/pack_storage.py` 的旧实现尚未完全物理拆除；capture 的活动资源包同步和社区/官方安装路由已接入应用服务，兼容 facade 暂时保留。
 
 ## [v2.1.0] - 2026-08-04
 

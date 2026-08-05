@@ -1,5 +1,7 @@
+import asyncio
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -248,6 +250,49 @@ class WebApiBehaviorTests(unittest.TestCase):
             emoji_api.add_emoji_to_category = original
         self.assertEqual(status, 400)
 
+    def test_community_routes_use_composition_root_service(self):
+        class Community:
+            def fetch(self, **kwargs):
+                return {"fetched_at": "now", "source_url": kwargs["index_url"], "index": {"packs": [{"id": "demo"}]}}
+
+            def cached(self):
+                return {"fetched_at": "cached", "source_url": "cache", "index": {"packs": []}}
+
+            def find_cached(self, pack_id):
+                return {"id": pack_id, "source": {"repo": "owner/repo"}}
+
+            def install(self, source, **kwargs):
+                return {"pack_id": "demo", "source": source}
+
+            def install_official_first(self, **kwargs):
+                return {"pack_id": "official-demo"}
+
+        async def get_json():
+            return {"pack_id": "demo", "set_as_default": True}
+
+        async def run_guarded(_operation, function, *args, **kwargs):
+            return function(*args, **kwargs)
+
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.community_pack_service = Community()
+        instance._get_github_accelerator_url = lambda: ""
+        instance._run_guarded_runtime_file_operation = run_guarded
+        instance._reload_personas = lambda: None
+        from quart import request
+
+        request.get_json = get_json
+        fetched, fetched_status = asyncio_run(instance._api_fetch_community_index())
+        cached, cached_status = asyncio_run(instance._api_get_cached_community_index())
+        installed, install_status = asyncio_run(instance._api_install_community_pack())
+        request.get_json = lambda: _async_value({"set_as_default": True})
+        official, official_status = asyncio_run(instance._api_install_official_first_pack())
+
+        self.assertEqual((fetched_status, cached_status, install_status, official_status), (200, 200, 200, 200))
+        self.assertEqual(fetched["source_url"], web_api.COMMUNITY_INDEX_URL)
+        self.assertEqual(cached["fetched_at"], "cached")
+        self.assertEqual(installed["pack_id"], "demo")
+        self.assertEqual(official["pack_id"], "official-demo")
+
     def test_get_emojis_without_managed_pack_does_not_raise_binding_error(self):
         from quart import request
 
@@ -370,6 +415,145 @@ class WebApiBehaviorTests(unittest.TestCase):
             request.args = {"category": "happy", "filename": "ghost.png"}
             _payload, status = asyncio_run(instance._api_serve_meme_image())
             self.assertEqual(status, 404)
+
+    def test_guarded_runtime_pack_mutation_refreshes_active_capture_store(self):
+        """Catch import, install, or restore succeeding while capture keeps an old pack."""
+        events = []
+
+        class Guard:
+            def begin_external_pack_operation(self, pack_id, operation):
+                events.append(("begin", pack_id, operation))
+
+            def end_external_pack_operation(self, pack_id):
+                events.append(("end", pack_id))
+
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.catalog_index_service = Guard()
+        instance._refresh_store_for_active_pack = lambda: events.append(("refresh",))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            packs_dir = Path(temp_dir) / "packs"
+            (packs_dir / "before").mkdir(parents=True)
+            result = asyncio_run(
+                _run_guarded_runtime_mutation(instance, packs_dir)
+            )
+
+        self.assertEqual(result, {"pack_id": "after"})
+        self.assertIn(("refresh",), events)
+
+    def test_guarded_pack_mutation_refreshes_active_capture_store(self):
+        """Catch overwrite import or uninstall changing the default behind capture."""
+        events = []
+
+        class Guard:
+            def begin_external_pack_operation(self, pack_id, operation):
+                events.append(("begin", pack_id, operation))
+
+            def end_external_pack_operation(self, pack_id):
+                events.append(("end", pack_id))
+
+        instance = WebAPIMixin.__new__(WebAPIMixin)
+        instance.catalog_index_service = Guard()
+        instance._refresh_store_for_active_pack = lambda: events.append(("refresh",))
+
+        result = asyncio_run(
+            instance._run_guarded_pack_file_operation(
+                "default-pack",
+                "overwrite pack",
+                lambda **_kwargs: {"switched_default_to": "after"},
+            )
+        )
+
+        self.assertEqual(result, {"switched_default_to": "after"})
+        self.assertIn(("refresh",), events)
+
+    def test_cancelled_runtime_mutation_refreshes_store_after_worker_finishes(self):
+        """Catch a cancelled backup restore that leaves capture on the old pack."""
+        events = []
+        instance = _guarded_operation_instance(events)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            packs_dir = Path(temp_dir) / "packs"
+            (packs_dir / "before").mkdir(parents=True)
+            cancelled = asyncio_run(
+                _cancel_guarded_runtime_mutation(instance, packs_dir)
+            )
+
+        self.assertTrue(cancelled)
+        self.assertIn(("refresh",), events)
+
+    def test_cancelled_pack_mutation_refreshes_store_after_worker_finishes(self):
+        """Catch a cancelled overwrite import that leaves capture on the old pack."""
+        events = []
+        instance = _guarded_operation_instance(events)
+
+        cancelled = asyncio_run(_cancel_guarded_pack_mutation(instance))
+
+        self.assertTrue(cancelled)
+        self.assertIn(("refresh",), events)
+
+
+async def _run_guarded_runtime_mutation(instance, packs_dir):
+    with patch.object(web_api, "PACKS_DIR", packs_dir):
+        return await instance._run_guarded_runtime_file_operation(
+            "install pack",
+            lambda **_kwargs: {"pack_id": "after"},
+        )
+
+
+def _guarded_operation_instance(events):
+    class Guard:
+        def begin_external_pack_operation(self, pack_id, operation):
+            events.append(("begin", pack_id, operation))
+
+        def end_external_pack_operation(self, pack_id):
+            events.append(("end", pack_id))
+
+    instance = WebAPIMixin.__new__(WebAPIMixin)
+    instance.catalog_index_service = Guard()
+    instance._refresh_store_for_active_pack = lambda: events.append(("refresh",))
+    return instance
+
+
+async def _cancel_guarded_runtime_mutation(instance, packs_dir):
+    with patch.object(web_api, "PACKS_DIR", packs_dir):
+        return await _cancel_guarded_operation(
+            instance._run_guarded_runtime_file_operation,
+            "restore backup",
+        )
+
+
+async def _cancel_guarded_pack_mutation(instance):
+    return await _cancel_guarded_operation(
+        lambda operation, function: instance._run_guarded_pack_file_operation(
+            "default-pack", operation, function
+        ),
+        "overwrite pack",
+    )
+
+
+async def _cancel_guarded_operation(run_operation, operation):
+    worker_started = threading.Event()
+    worker_completed = threading.Event()
+
+    def mutation(**_kwargs):
+        worker_started.set()
+        worker_completed.wait()
+        return {"pack_id": "after"}
+
+    task = asyncio.create_task(run_operation(operation, mutation))
+    await asyncio.to_thread(worker_started.wait)
+    task.cancel()
+    worker_completed.set()
+    try:
+        await task
+    except asyncio.CancelledError:
+        return True
+    return False
+
+
+async def _async_value(value):
+    return value
 
 
 def asyncio_run(awaitable):

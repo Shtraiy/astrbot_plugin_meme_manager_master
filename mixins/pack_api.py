@@ -116,6 +116,10 @@ class PackAPIMixin:
         """
         return getattr(self, "pack_runtime_service", None)
 
+    def _community_packs(self):
+        """Use the community application service when the composition root provides it."""
+        return getattr(self, "community_pack_service", None)
+
     async def _api_list_packs(self):
         try:
             service = self._pack_runtime()
@@ -480,8 +484,10 @@ class PackAPIMixin:
     async def _api_fetch_community_index(self):
         try:
             index_url = COMMUNITY_INDEX_URL
-            cache_data = fetch_and_cache_community_index(
-                index_url,
+            service = self._community_packs()
+            fetch_operation = service.fetch if service is not None else fetch_and_cache_community_index
+            cache_data = fetch_operation(
+                index_url=index_url,
                 github_accelerator_url=self._get_github_accelerator_url(),
             )
             packs = cache_data.get("index", {}).get("packs", [])
@@ -505,7 +511,8 @@ class PackAPIMixin:
 
     async def _api_get_cached_community_index(self):
         try:
-            cache_data = load_cached_community_index()
+            service = self._community_packs()
+            cache_data = service.cached() if service is not None else load_cached_community_index()
             packs = cache_data.get("index", {}).get("packs", [])
             return (
                 jsonify(
@@ -546,13 +553,17 @@ class PackAPIMixin:
                         ),
                         400,
                     )
-                source = find_cached_pack_entry(pack_id).get("source")
+                service = self._community_packs()
+                cached_entry = service.find_cached(pack_id) if service is not None else find_cached_pack_entry(pack_id)
+                source = cached_entry.get("source")
                 if not isinstance(source, dict):
                     return jsonify({"message": "缓存条目缺少 source 信息"}), 400
 
+            service = self._community_packs()
+            install_operation = service.install if service is not None else install_pack_from_github_source
             result = await self._run_guarded_runtime_file_operation(
                 "安装社区资源包",
-                install_pack_from_github_source,
+                install_operation,
                 source=source,
                 overwrite=overwrite,
                 set_as_default=set_as_default,
@@ -584,9 +595,15 @@ class PackAPIMixin:
             overwrite = bool(payload.get("overwrite", False))
             set_as_default = bool(payload.get("set_as_default", True))
 
+            service = self._community_packs()
+            install_operation = (
+                service.install_official_first
+                if service is not None
+                else install_first_official_pack_from_index
+            )
             result = await self._run_guarded_runtime_file_operation(
                 "安装官方资源包",
-                install_first_official_pack_from_index,
+                install_operation,
                 index_url=COMMUNITY_INDEX_URL,
                 overwrite=overwrite,
                 set_as_default=set_as_default,
@@ -627,6 +644,9 @@ class PackAPIMixin:
                 if isinstance(item, dict)
             }
             saved = save_selection_rules(rules)
+            refresh_store = getattr(self, "_refresh_store_for_active_pack", None)
+            if callable(refresh_store):
+                refresh_store()
             self._reload_personas()
             return jsonify({"message": "规则保存成功", **saved}), 200
         except ValueError as e:

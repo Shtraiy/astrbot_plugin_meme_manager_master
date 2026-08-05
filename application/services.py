@@ -92,6 +92,18 @@ class CommunityPackService:
     def fetch(self, **kwargs: Any):
         return self._source.fetch(**kwargs)
 
+    def cached(self):
+        return self._source.cached()
+
+    def find_cached(self, pack_id: str):
+        return self._source.find_cached(pack_id)
+
+    def install(self, source: dict[str, Any], **kwargs: Any):
+        return self._source.install(source, **kwargs)
+
+    def install_official_first(self, **kwargs: Any):
+        return self._source.install_official_first(**kwargs)
+
 
 class CatalogService:
     def __init__(self, repository: Any):

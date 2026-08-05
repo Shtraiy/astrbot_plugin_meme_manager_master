@@ -1,4 +1,5 @@
 import io
+import subprocess
 import sys
 import tempfile
 import types
@@ -37,6 +38,38 @@ def png_bytes() -> bytes:
 
 
 class ModelsUploadSecurityTests(unittest.TestCase):
+    def test_upload_save_path_runs_without_astrbot_installed(self):
+        script = r'''
+import io, sys, tempfile, types
+from pathlib import Path
+from PIL import Image
+sys.path.insert(0, str(Path.cwd().parent))
+werkzeug = types.ModuleType("werkzeug")
+utils = types.ModuleType("werkzeug.utils")
+utils.secure_filename = lambda value: str(value or "")
+werkzeug.utils = utils
+sys.modules["werkzeug"] = werkzeug
+sys.modules["werkzeug.utils"] = utils
+from astrbot_plugin_meme_manager_master.backend.models import add_emoji_to_category
+payload = io.BytesIO()
+Image.new("RGB", (1, 1), "blue").save(payload, "PNG")
+class Upload:
+    filename = "smoke.png"
+    stream = io.BytesIO(payload.getvalue())
+with tempfile.TemporaryDirectory() as root:
+    result = add_emoji_to_category("happy", Upload(), Path(root))
+    assert Path(result["path"]).is_file()
+assert "astrbot" not in sys.modules
+'''
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_rejects_fake_image_without_creating_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with self.assertRaises(ValueError):

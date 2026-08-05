@@ -166,12 +166,22 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
         kwargs["operation_guard"] = None if locked else self._semantic_operation_guard
         worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
         try:
-            return await asyncio.shield(worker)
+            result = await asyncio.shield(worker)
+            refresh_store = getattr(self, "_refresh_store_for_active_pack", None)
+            if callable(refresh_store):
+                refresh_store()
+            return result
         except asyncio.CancelledError:
             try:
                 await asyncio.shield(worker)
             except Exception:
                 pass
+            refresh_store = getattr(self, "_refresh_store_for_active_pack", None)
+            if callable(refresh_store):
+                try:
+                    refresh_store()
+                except Exception:
+                    logger.warning("刷新活动资源包失败", exc_info=True)
             raise
         finally:
             if locked:
@@ -204,12 +214,22 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
         kwargs["operation_guard"] = None
         worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
         try:
-            return await asyncio.shield(worker)
+            result = await asyncio.shield(worker)
+            refresh_store = getattr(self, "_refresh_store_for_active_pack", None)
+            if callable(refresh_store):
+                refresh_store()
+            return result
         except asyncio.CancelledError:
             try:
                 await asyncio.shield(worker)
             except Exception:
                 pass
+            refresh_store = getattr(self, "_refresh_store_for_active_pack", None)
+            if callable(refresh_store):
+                try:
+                    refresh_store()
+                except Exception:
+                    logger.warning("刷新活动资源包失败", exc_info=True)
             raise
         finally:
             for pack_id in reversed(locked_pack_ids):

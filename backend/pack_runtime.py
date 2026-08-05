@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
+from .pack_protocol import validate_pack_id
+
 
 class PackRuntime:
     def __init__(self, backend: Any | None = None):
@@ -20,4 +22,7 @@ class PackRuntime:
         return self.backend.set_default_pack(pack_id)
 
     def create(self, pack_id: str):
-        return self.backend._create_empty_pack(pack_id)
+        normalized = str(pack_id or "").strip()
+        if normalized:
+            normalized = validate_pack_id(normalized, "pack")
+        return self.backend._create_empty_pack(normalized)

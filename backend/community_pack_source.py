@@ -16,5 +16,11 @@ class CommunityPackSource:
     def cached(self):
         return self.backend.load_cached_community_index()
 
-    def install(self, source: str, **kwargs: Any):
+    def find_cached(self, pack_id: str):
+        return self.backend.find_cached_pack_entry(pack_id)
+
+    def install(self, source: dict[str, Any], **kwargs: Any):
         return self.backend.install_pack_from_github_source(source, **kwargs)
+
+    def install_official_first(self, **kwargs: Any):
+        return self.backend.install_first_official_pack_from_index(**kwargs)

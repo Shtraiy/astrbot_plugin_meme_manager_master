@@ -73,39 +73,6 @@ ARCHIVE_JSON_SIZE_LIMITS = {
 }
 
 
-def _resolve_pack_directory(
-    pack_id: str,
-    context: str = "表情包",
-    *,
-    require_exists: bool = False,
-) -> tuple[str, Path]:
-    """Validate a pack ID and keep its resolved directory inside PACKS_DIR."""
-    normalized = validate_pack_id(pack_id, context)
-    packs_root = PACKS_DIR.resolve(strict=False)
-    pack_dir = (PACKS_DIR / normalized).resolve(strict=False)
-    try:
-        relative = pack_dir.relative_to(packs_root)
-    except ValueError as exc:
-        raise ValueError(f"{context}路径超出资源包目录范围") from exc
-    if len(relative.parts) != 1 or relative.parts[0] != normalized:
-        raise ValueError(f"{context}路径必须是资源包目录的直接子目录")
-    if require_exists and not pack_dir.is_dir():
-        raise FileNotFoundError(f"表情包 {normalized} 不存在")
-    return normalized, pack_dir
-
-
-def _resolve_backup_output_dir(output_dir: str | None = None) -> Path:
-    """Keep user-selected backup output inside the configured backup root."""
-    backup_root = BACKUP_DIR.resolve(strict=False)
-    requested = Path(output_dir).expanduser() if output_dir else BACKUP_DIR
-    target_dir = requested.resolve(strict=False)
-    try:
-        target_dir.relative_to(backup_root)
-    except ValueError as exc:
-        raise ValueError("备份输出目录必须位于插件 backup 目录内") from exc
-    return target_dir
-
-
 def _build_accelerated_url(raw_url: str, github_accelerator_url: str) -> str:
     accelerator = str(github_accelerator_url or "").strip()
     url = str(raw_url or "").strip()
@@ -506,7 +473,7 @@ def _apply_post_install_policy(
 
 def _create_empty_pack(pack_id: str) -> str:
     pack_id = str(pack_id or "").strip() or DEFAULT_PACK_ID
-    pack_dir = PACKS_DIR / pack_id
+    pack_id, pack_dir = _resolve_pack_directory(pack_id, "pack")
     memes_dir = pack_dir / "memes"
     empty_category = "empty"
     category_descriptions = {

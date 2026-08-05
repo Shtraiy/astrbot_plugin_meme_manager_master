@@ -127,12 +127,11 @@ class MemeStore:
     @classmethod
     def from_astrbot(cls) -> "MemeStore":
         try:
-            # The reference manager resolves the active runtime pack during
-            # import.  Use that same directory so captured images, WebUI
-            # operations and automatic selection share one filesystem view.
-            from .config import ACTIVE_PACK_DIR
+            # Resolve at construction time: the default pack can be changed
+            # without reloading this module.
+            from .config import get_active_pack_paths
 
-            root = Path(ACTIVE_PACK_DIR)
+            root = Path(get_active_pack_paths()["pack_dir"])
         except Exception:
             try:
                 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path

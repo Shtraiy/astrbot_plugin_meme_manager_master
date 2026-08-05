@@ -26,13 +26,26 @@ class ApplicationServiceTests(unittest.TestCase):
                 "export_runtime_backup": lambda _, **kwargs: {"backup": True},
                 "import_runtime_backup": lambda _, path, **kwargs: {"restore": path},
                 "fetch_and_cache_community_index": lambda _, **kwargs: {"community": True},
+                "load_cached_community_index": lambda _: {"cached": True},
+                "find_cached_pack_entry": lambda _, pack_id: {"id": pack_id},
+                "install_pack_from_github_source": lambda _, source, **kwargs: {
+                    "install": source
+                },
+                "install_first_official_pack_from_index": lambda _, **kwargs: {
+                    "official": True
+                },
             },
         )()
         self.assertEqual(PackRuntimeService(legacy).list(), ["demo"])
         self.assertEqual(PackRuntimeService(legacy).detail("demo")["pack_id"], "demo")
         self.assertEqual(PackBackupService(legacy).export()["backup"], True)
         self.assertEqual(PackBackupService(legacy).restore("backup.zip")["restore"], "backup.zip")
-        self.assertEqual(CommunityPackService(legacy).fetch()["community"], True)
+        community = CommunityPackService(legacy)
+        self.assertEqual(community.fetch()["community"], True)
+        self.assertEqual(community.cached()["cached"], True)
+        self.assertEqual(community.find_cached("demo")["id"], "demo")
+        self.assertEqual(community.install({"repo": "owner/repo"})["install"], {"repo": "owner/repo"})
+        self.assertTrue(community.install_official_first(index_url="https://example.test/index.json")["official"])
 
     def test_pack_transfer_service_exposes_stable_operation_names(self):
         legacy = type(

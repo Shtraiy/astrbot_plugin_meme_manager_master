@@ -129,9 +129,15 @@ class CommandMixin:
             )
 
         try:
+            service = getattr(self, "community_pack_service", None)
+            install_operation = (
+                service.install_official_first
+                if service is not None
+                else install_first_official_pack_from_index
+            )
             result = await self._run_guarded_runtime_file_operation(
                 "安装官方资源包",
-                install_first_official_pack_from_index,
+                install_operation,
                 index_url=COMMUNITY_INDEX_URL,
                 overwrite=False,
                 set_as_default=True,

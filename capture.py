@@ -204,7 +204,12 @@ class CaptureMixin:
             context = resolve_pack_context()
             pack_dir = Path(context.get("pack_dir", self.store.root))
             if pack_dir.resolve() != self.store.root.resolve():
-                self.store = MemeStore(pack_dir)
+                store = MemeStore(pack_dir)
+                # The pipeline and automatic selector retain their store
+                # dependencies, so switch all three together.
+                self.store = store
+                self.capture_pipeline.store = store
+                self.meme_selection.store = store
                 return True
         except Exception:
             # The manager health check below will report an actionable state.

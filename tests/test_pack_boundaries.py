@@ -1,11 +1,19 @@
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from backend.community_pack_source import CommunityPackSource
 from backend.pack_backup import PackBackup
 from backend.pack_paths import PackPaths
 from backend.pack_runtime import PackRuntime
 from backend.pack_transfer import PackTransfer
+from tests.fakes import install_package_alias
+
+
+install_package_alias()
+
+from meme_manager_master.backend import pack_storage  # noqa: E402
 
 
 class PackBoundaryTests(unittest.TestCase):
@@ -75,6 +83,28 @@ class PackBoundaryTests(unittest.TestCase):
         self.assertEqual(community.fetch()["community"], True)
         self.assertEqual(community.cached()["cached"], True)
         self.assertEqual(community.install("owner/repo")["install"], "owner/repo")
+
+    def test_runtime_create_rejects_invalid_pack_ids_before_calling_backend(self):
+        class Backend:
+            def _create_empty_pack(self, pack_id):
+                raise AssertionError("invalid IDs must not reach the backend")
+
+        runtime = PackRuntime(Backend())
+        for pack_id in ("../outside", "/absolute", "bad id"):
+            with self.subTest(pack_id=pack_id):
+                with self.assertRaises(ValueError):
+                    runtime.create(pack_id)
+
+    def test_empty_pack_creation_is_bounded_to_the_configured_packs_root(self):
+        with TemporaryDirectory() as temporary_directory:
+            packs_root = Path(temporary_directory) / "packs"
+            with patch.object(pack_storage, "PACKS_DIR", packs_root):
+                self.assertEqual(pack_storage._create_empty_pack("valid-pack"), "valid-pack")
+                self.assertTrue((packs_root / "valid-pack" / "manifest.json").is_file())
+                for pack_id in ("../outside", "/absolute", "bad id"):
+                    with self.subTest(pack_id=pack_id):
+                        with self.assertRaises(ValueError):
+                            pack_storage._create_empty_pack(pack_id)
 
 
 if __name__ == "__main__":
