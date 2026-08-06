@@ -110,6 +110,8 @@ OUTGOING_DECISION_SYSTEM_PROMPT = """
 LIBRARY_INDEX_VERSION = 3
 LIBRARY_INDEX_PROMPT_VERSION = "library-batch-v3"
 LIBRARY_INDEX_LLM_TIMEOUT = 120.0
+LIBRARY_INDEX_SINGLE_RETRIES = 1
+LIBRARY_INDEX_RETRY_DELAY = 0.5
 
 
 @dataclass(frozen=True)
@@ -1110,6 +1112,7 @@ class CaptureMixin:
                     len(batch),
                     provider_id,
                 )
+                fallback_paths: list[Path] = []
                 try:
                     batch_results = await self._describe_library_batch(
                         None, batch_paths, "固定标签", provider_id
@@ -1129,41 +1132,71 @@ class CaptureMixin:
                         )
                     )
                     batch_results = {}
-                    for retry_index, path in enumerate(batch_paths, start=1):
+                    fallback_paths = list(batch_paths)
+                else:
+                    fallback_paths = [
+                        path for path in batch_paths if path not in batch_results
+                    ]
+                    if fallback_paths:
+                        logger.warning(
+                            "[meme_manager_master] 分类索引批量结果不完整，逐图补齐 "
+                            "batch=%s/%s expected=%s received=%s missing=%s",
+                            batch_number,
+                            batch_total,
+                            len(batch_paths),
+                            len(batch_results),
+                            len(fallback_paths),
+                        )
+                        self._library_index_state.update(
+                            message=(
+                                f"批量识别结果不完整，正在补齐：批次 "
+                                f"{batch_number}/{batch_total}（{len(fallback_paths)} 张）"
+                            )
+                        )
+                fallback_is_full_batch = len(fallback_paths) == len(batch_paths)
+                for retry_index, path in enumerate(fallback_paths, start=1):
+                    if fallback_is_full_batch:
                         self._library_index_state.update(
                             message=(
                                 f"正在逐图重试：批次 {batch_number}/{batch_total}，"
-                                f"第 {retry_index}/{len(batch_paths)} 张"
+                                f"第 {retry_index}/{len(fallback_paths)} 张"
                             )
                         )
-                        try:
-                            batch_results.update(
-                                await self._describe_library_single(
-                                    None, path, "固定标签", provider_id
-                                )
-                            )
-                        except Exception as single_exc:
-                            logger.warning(
-                                "[meme_manager_master] 分类索引逐图重试失败 path=%s: %s",
-                                path,
-                                single_exc,
-                            )
-                    if not batch_results:
-                        self._schedule_library_retry(provider_id)
+                    else:
                         self._library_index_state.update(
-                            status="completed_with_errors",
-                            processed=processed,
-                            classified=classified,
-                            errors=errors + len(batch),
-                            message="标签索引失败，稍后可重试",
+                            message=(
+                                f"正在逐图补齐：批次 {batch_number}/{batch_total}，"
+                                f"第 {retry_index}/{len(fallback_paths)} 张"
+                            )
                         )
-                        logger.error(
-                            "[meme_manager_master] 分类索引批次完全失败 batch=%s/%s count=%s",
-                            batch_number,
-                            batch_total,
-                            len(batch),
+                    try:
+                        batch_results.update(
+                            await self._describe_library_single(
+                                None, path, "固定标签", provider_id
+                            )
                         )
-                        return
+                    except Exception as single_exc:
+                        logger.warning(
+                            "[meme_manager_master] 分类索引逐图补偿失败 path=%s: %s",
+                            path,
+                            single_exc,
+                        )
+                if fallback_paths and not batch_results:
+                    self._schedule_library_retry(provider_id)
+                    self._library_index_state.update(
+                        status="completed_with_errors",
+                        processed=processed,
+                        classified=classified,
+                        errors=errors + len(batch),
+                        message="标签索引失败，稍后可重试",
+                    )
+                    logger.error(
+                        "[meme_manager_master] 分类索引批次完全失败 batch=%s/%s count=%s",
+                        batch_number,
+                        batch_total,
+                        len(batch),
+                    )
+                    return
                 logger.info(
                     "[meme_manager_master] 分类索引批次完成 batch=%s/%s results=%s",
                     batch_number,
@@ -1514,32 +1547,50 @@ class CaptureMixin:
         operation: str,
     ) -> str:
         started_at = time.monotonic()
-        try:
-            response = await asyncio.wait_for(
-                self._generate(
-                    event,
-                    prompt,
-                    image_urls=image_urls,
-                    provider_id=provider_id,
-                    system_prompt=system_prompt,
-                ),
-                timeout=LIBRARY_INDEX_LLM_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            elapsed = time.monotonic() - started_at
-            logger.warning(
-                "[meme_manager_master] 分类索引视觉模型超时 operation=%s timeout=%ss elapsed=%.1fs",
+        retries = LIBRARY_INDEX_SINGLE_RETRIES if operation.startswith("single:") else 0
+        attempt = 0
+        while True:
+            try:
+                response = await asyncio.wait_for(
+                    self._generate(
+                        event,
+                        prompt,
+                        image_urls=image_urls,
+                        provider_id=provider_id,
+                        system_prompt=system_prompt,
+                    ),
+                    timeout=LIBRARY_INDEX_LLM_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                if attempt >= retries:
+                    elapsed = time.monotonic() - started_at
+                    logger.warning(
+                        "[meme_manager_master] 分类索引视觉模型超时 operation=%s "
+                        "timeout=%ss attempts=%s elapsed=%.1fs",
+                        operation,
+                        LIBRARY_INDEX_LLM_TIMEOUT,
+                        attempt + 1,
+                        elapsed,
+                    )
+                    raise
+                attempt += 1
+                logger.warning(
+                    "[meme_manager_master] 分类索引单图请求超时，准备重试 "
+                    "operation=%s retry=%s/%s",
+                    operation,
+                    attempt,
+                    retries,
+                )
+                if LIBRARY_INDEX_RETRY_DELAY > 0:
+                    await asyncio.sleep(LIBRARY_INDEX_RETRY_DELAY)
+                continue
+            logger.info(
+                "[meme_manager_master] 分类索引视觉模型完成 operation=%s attempts=%s elapsed=%.1fs",
                 operation,
-                LIBRARY_INDEX_LLM_TIMEOUT,
-                elapsed,
+                attempt + 1,
+                time.monotonic() - started_at,
             )
-            raise
-        logger.info(
-            "[meme_manager_master] 分类索引视觉模型完成 operation=%s elapsed=%.1fs",
-            operation,
-            time.monotonic() - started_at,
-        )
-        return response
+            return response
 
     async def _choose_outgoing_meme_from_index(
         self,

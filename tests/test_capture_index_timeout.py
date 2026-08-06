@@ -17,10 +17,61 @@ from meme_manager_master.storage import MemeStore
 
 
 class LibraryIndexTimeoutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_partial_batch_results_retry_only_missing_images(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "pack")
+            first_path = store.save_image(b"first", "happy", ".png").path
+            second_path = store.save_image(b"second", "happy", ".png").path
+            instance = self._make_instance(store, batch_size=2)
+            metadata = {
+                "description": "测试图片",
+                "emotion": "开心",
+                "text": "",
+                "tags": ["开心"],
+                "indexed": True,
+            }
+            instance._describe_library_batch = AsyncMock(
+                return_value={first_path: metadata}
+            )
+            instance._describe_library_single = AsyncMock(
+                return_value={second_path: metadata}
+            )
+
+            await instance._ensure_flat_library_index()
+
+        instance._describe_library_single.assert_awaited_once_with(
+            None, second_path, "固定标签", "provider"
+        )
+        self.assertEqual(instance._library_index_state["status"], "completed")
+        self.assertEqual(instance._library_index_state["errors"], 0)
+
+    async def test_single_timeout_retries_once_before_failing(self):
+        instance = CaptureMixin.__new__(CaptureMixin)
+        image_path = Path("meme_retry.png")
+        instance._generate = AsyncMock(
+            side_effect=[
+                asyncio.TimeoutError(),
+                '{"description":"测试图片","emotion":"开心","text":"","tags":["开心"]}',
+            ]
+        )
+
+        with patch.object(capture_module, "LIBRARY_INDEX_LLM_TIMEOUT", 0.01, create=True), patch.object(
+            capture_module, "LIBRARY_INDEX_RETRY_DELAY", 0, create=True
+        ):
+            result = await instance._describe_library_single(
+                None, image_path, "固定标签", "provider"
+            )
+
+        self.assertIn(image_path, result)
+        self.assertEqual(instance._generate.await_count, 2)
+
     async def test_batch_model_call_has_a_bounded_timeout(self):
         instance = CaptureMixin.__new__(CaptureMixin)
+        calls = 0
 
         async def returns_too_late(*args, **kwargs):
+            nonlocal calls
+            calls += 1
             await asyncio.sleep(0.03)
             return '{"items": []}'
 
@@ -32,6 +83,7 @@ class LibraryIndexTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 await instance._describe_library_batch(
                     None, [image_path], "固定标签", "provider"
                 )
+        self.assertEqual(calls, 1)
 
     @staticmethod
     def _make_instance(store, *, batch_size=2):
@@ -58,13 +110,13 @@ class LibraryIndexTimeoutTests(unittest.IsolatedAsyncioTestCase):
         instance._library_completed_key = None
         return instance
 
-    async def test_batch_failure_falls_back_to_single_image_calls(self):
+    async def test_invalid_json_batch_falls_back_to_single_image_calls(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemeStore(Path(temp_dir) / "pack")
             image_path = store.save_image(b"image", "happy", ".png").path
             instance = self._make_instance(store, batch_size=1)
             instance._describe_library_batch = AsyncMock(
-                side_effect=asyncio.TimeoutError()
+                side_effect=ValueError("model response contains invalid JSON")
             )
             instance._describe_library_single = AsyncMock(
                 return_value={
