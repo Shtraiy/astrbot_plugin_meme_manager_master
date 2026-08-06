@@ -14,6 +14,7 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn("capture-indexed-items", source)
         self.assertIn("capture-pending-items", source)
         self.assertIn("capture-reindex-button", source)
+        self.assertIn("capture-ignore-duplicates-button", source)
         self.assertIn("capture-category-filters", source)
         self.assertIn("sections-stack", source)
 
@@ -27,6 +28,7 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn("sections-stack", source)
         self.assertIn('size: "preview"', script)
         self.assertIn('apiPost("capture/reindex"', script)
+        self.assertIn('apiPost("capture/duplicates/ignore"', script)
         self.assertIn(".sections-stack", style)
 
     def test_reindex_button_is_not_silently_disabled_by_model_index_state(self):
@@ -117,8 +119,8 @@ class CaptureIndexPageTests(unittest.TestCase):
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn('style.css?v=20260804-capture-index-2', source)
-            self.assertIn('script.js?v=20260804-capture-index-2', source)
+            self.assertIn('style.css?v=20260806-capture-ignore-1', source)
+            self.assertIn('script.js?v=20260806-capture-ignore-1', source)
             self.assertNotIn("20260803-", source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):

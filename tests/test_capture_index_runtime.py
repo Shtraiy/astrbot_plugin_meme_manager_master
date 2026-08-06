@@ -68,7 +68,7 @@ function makeDocument() {
     "capture-pending-count", "capture-refresh-button", "capture-reindex-button",
     "capture-reindex-progress", "capture-reindex-progress-label",
     "capture-reindex-progress-count", "capture-reindex-progress-bar",
-    "capture-index-button", "capture-category-filters", "preview-mask",
+    "capture-index-button", "capture-ignore-duplicates-button", "capture-category-filters", "preview-mask",
     "preview-image", "preview-close", "capture-confirm-mask",
     "capture-confirm-title", "capture-confirm-description",
     "capture-confirm-cancel", "capture-confirm-confirm",
@@ -96,13 +96,20 @@ async function runPage(scriptPath) {
   const document = makeDocument();
   const calls = [];
   const workspace = {
-    summary: { indexed: 1, pending: 1, duplicate: 0, complete_folders: 0, folder_total: 1 },
+    summary: { indexed: 1, pending: 1, duplicate: 3, complete_folders: 0, folder_total: 1 },
     folders: [{ category: "happy", tag: "happy", indexed: 1, total: 1, complete: true }],
     indexed_items: [{ filename: "meme_demo.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo.png", indexed: true }],
-    pending_items: [{ filename: "meme_pending.png", tag: "happy", category: "happy", relative_path: "memes/meme_pending.png", indexed: false }],
+    pending_items: [
+      { filename: "meme_pending.png", tag: "happy", category: "happy", relative_path: "memes/meme_pending.png", indexed: false },
+      { filename: "meme_duplicate_a.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_a.png", indexed: false, duplicate: true, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      { filename: "meme_duplicate_b.png", tag: "sad", category: "sad", relative_path: "memes/meme_duplicate_b.png", indexed: false, duplicate: true, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      { filename: "meme_duplicate_c.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_c.png", indexed: false, duplicate: true, sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    ],
+    duplicate_digests: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
     library_index: { status: "idle", active_pack: true, message: "目录索引已加载" },
   };
   let deleteShouldFail = false;
+  let ignoreShouldFail = false;
   let workspaceCalls = 0;
   let indexStatusCalls = 0;
   const pageApi = {
@@ -126,6 +133,7 @@ async function runPage(scriptPath) {
     async apiPost(endpoint, body) {
       calls.push({ endpoint, body });
       if (endpoint === "emoji/delete" && deleteShouldFail) throw new Error("delete failed");
+      if (endpoint === "capture/duplicates/ignore" && ignoreShouldFail) throw new Error("ignore failed");
       if (endpoint === "capture/index") return { status: "running", message: "分类索引已开始" };
       if (endpoint === "capture/reindex") return { status: "running", processed: 0, total: 1, message: "正在重索引" };
       return { status: "ok" };
@@ -161,6 +169,31 @@ async function runPage(scriptPath) {
   await new Promise((resolve) => setImmediate(resolve));
   const failureRestored = !failureButton.disabled && failureButton.getAttribute("aria-busy") === "false";
 
+  const getIgnoreButton = () => document.querySelector("#capture-pending-items").children[1].children[1].children[0];
+  const ignoreButton = getIgnoreButton();
+  const ignoreAction = ignoreButton.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await ignoreAction;
+  const ignorePayload = calls.find((call) => call.endpoint === "capture/duplicates/ignore").body;
+  const ignoredWithoutDelete = !calls.some((call) => call.endpoint === "emoji/delete" && call.body.image_file === "meme_duplicate_a.png");
+
+  ignoreShouldFail = true;
+  const failedIgnore = getIgnoreButton();
+  const failedIgnoreAction = failedIgnore.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await failedIgnoreAction;
+  const ignoreFailureRestored = !failedIgnore.disabled && failedIgnore.getAttribute("aria-busy") === "false";
+  ignoreShouldFail = false;
+
+  const bulkAction = document.querySelector("#capture-ignore-duplicates-button").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await bulkAction;
+  const ignoreCalls = calls.filter((call) => call.endpoint === "capture/duplicates/ignore");
+  const bulkPayload = ignoreCalls[ignoreCalls.length - 1].body;
+
   deleteShouldFail = false;
   const indexAction = document.querySelector("#capture-index-button").dispatch("click");
   await indexAction;
@@ -178,6 +211,10 @@ async function runPage(scriptPath) {
     deletePayload,
     successNotice,
     failureRestored,
+    ignorePayload,
+    bulkPayload,
+    ignoredWithoutDelete,
+    ignoreFailureRestored,
     indexPayload,
     indexStatusCalls,
     workspaceCalls,
@@ -222,10 +259,25 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["failureRestored"])
             self.assertEqual(payload["indexPayload"]["pack_id"], "pack")
             self.assertEqual(payload["indexStatusCalls"], 1)
-            self.assertEqual(payload["workspaceCalls"], 6)
+            self.assertEqual(payload["workspaceCalls"], 8)
             self.assertEqual(payload["reindexPayload"]["pack_id"], "pack")
             self.assertTrue(payload["reindexRestored"])
             self.assertIn("重索引已完成", payload["reindexNotice"])
+            self.assertEqual(payload["ignorePayload"]["pack_id"], "pack")
+            self.assertEqual(
+                payload["ignorePayload"]["sha256s"],
+                ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            )
+            self.assertEqual(payload["bulkPayload"]["pack_id"], "pack")
+            self.assertEqual(
+                payload["bulkPayload"]["sha256s"],
+                [
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                ],
+            )
+            self.assertTrue(payload["ignoredWithoutDelete"])
+            self.assertTrue(payload["ignoreFailureRestored"])
 
 
 if __name__ == "__main__":

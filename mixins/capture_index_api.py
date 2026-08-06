@@ -8,7 +8,11 @@ from quart import jsonify, request
 
 from astrbot.api import logger
 
-from ..capture_activity import load_capture_activity
+from ..capture_activity import (
+    MAX_CAPTURE_ACTIVITY_ITEMS,
+    load_capture_activity,
+    mark_capture_events_ignored,
+)
 from ..config import PACKS_DIR, get_active_pack_paths
 from ..backend.tagging import canonical_tag
 from ..storage import MemeStore
@@ -136,6 +140,11 @@ class CaptureIndexAPIMixin:
         pending_items.extend(duplicate_items)
         indexed_items.sort(key=self._capture_item_time, reverse=True)
         pending_items.sort(key=self._capture_item_time, reverse=True)
+        duplicate_digests = list(dict.fromkeys(
+            str(item.get("sha256") or "").lower()
+            for item in duplicate_items
+            if re.fullmatch(r"[0-9a-fA-F]{64}", str(item.get("sha256") or ""))
+        ))
         state = dict(getattr(self, "_library_index_state", {}) or {})
         active_store = getattr(self, "store", None)
         state["active_pack"] = bool(
@@ -153,6 +162,7 @@ class CaptureIndexAPIMixin:
                 "folder_total": len(visible_folders),
             },
             "folders": folders,
+            "duplicate_digests": duplicate_digests,
             "indexed_items": indexed_items if selected_tag else indexed_items[:48],
             "pending_items": pending_items if selected_tag else pending_items[:48],
         }
@@ -277,6 +287,40 @@ class CaptureIndexAPIMixin:
         except Exception as exc:
             logger.error("启动偷取表情包索引失败: %s", exc, exc_info=True)
             return jsonify({"message": "启动偷取表情包索引失败"}), 500
+
+    async def _api_capture_ignore_duplicates(self):
+        try:
+            data = await request.get_json() or {}
+            if not isinstance(data, dict):
+                return jsonify({"message": "请求体无效"}), 400
+            pack_id = self._capture_pack_id(data)
+            raw_digests = data.get("sha256s")
+            if not isinstance(raw_digests, list) or not raw_digests:
+                return jsonify({"message": "图片指纹列表不能为空"}), 400
+            if len(raw_digests) > MAX_CAPTURE_ACTIVITY_ITEMS:
+                return jsonify({"message": "图片指纹列表过大"}), 400
+            digests: set[str] = set()
+            for value in raw_digests:
+                if not isinstance(value, str):
+                    return jsonify({"message": "图片指纹无效"}), 400
+                digest = value.strip().lower()
+                if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                    return jsonify({"message": "图片指纹无效"}), 400
+                digests.add(digest)
+            pack_dir = (PACKS_DIR / pack_id).resolve()
+            active_store = getattr(self, "store", None)
+            if active_store is None or Path(active_store.root).resolve() != pack_dir:
+                return (
+                    jsonify({"message": "请先将该资源包设为当前运行资源包后再忽略重复记录"}),
+                    409,
+                )
+            ignored = mark_capture_events_ignored(pack_dir, digests=digests)
+            return jsonify({"message": "已忽略重复记录", "ignored": ignored})
+        except (FileNotFoundError, ValueError) as exc:
+            return jsonify({"message": str(exc)}), 400
+        except Exception as exc:
+            logger.error("忽略重复捕获记录失败: %s", exc, exc_info=True)
+            return jsonify({"message": "忽略重复捕获记录失败"}), 500
 
     async def _api_capture_index_status(self):
         try:

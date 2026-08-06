@@ -114,3 +114,27 @@ def mark_capture_events_indexed(
         if changed:
             _write_atomic(_path(pack_dir), data)
         return changed
+
+
+def mark_capture_events_ignored(
+    pack_dir: Path,
+    *,
+    digests: set[str],
+    ignored_at: int | None = None,
+) -> int:
+    """Hide duplicate activity records for the supplied image digests."""
+    if not digests:
+        return 0
+    with _lock_for(pack_dir):
+        data = load_capture_activity(pack_dir)
+        changed = 0
+        timestamp = int(ignored_at or time.time())
+        for event in data["events"]:
+            if event.get("status") != "duplicate" or event.get("sha256") not in digests:
+                continue
+            event["status"] = "ignored"
+            event["ignored_at"] = timestamp
+            changed += 1
+        if changed:
+            _write_atomic(_path(pack_dir), data)
+        return changed

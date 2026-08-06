@@ -40,7 +40,7 @@ if "quart" not in sys.modules:
     sys.modules["werkzeug.utils"] = utils
     sys.modules["requests"] = types.ModuleType("requests")
 
-from capture_activity import record_capture_event
+from capture_activity import mark_capture_events_ignored, record_capture_event
 from meme_manager_master.mixins import capture_index_api
 from meme_manager_master.mixins.capture_index_api import CaptureIndexAPIMixin
 from meme_manager_master.backend.catalog_index_service import CatalogIndexService
@@ -130,6 +130,119 @@ class CaptureIndexApiTests(unittest.TestCase):
         self.assertEqual(workspace["summary"]["indexed"], 1)
         self.assertEqual(workspace["summary"]["pending"], 0)
         self.assertEqual(workspace["summary"]["folder_total"], 1)
+
+    def test_workspace_hides_ignored_duplicates_and_exposes_digest_scope(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            image = store.save_image(b"duplicate-image", "happy", ".png").path
+            digest = store.image_digest(image)
+            record_capture_event(
+                pack_dir,
+                category="happy",
+                filename=image.name,
+                digest=digest,
+                status="duplicate",
+            )
+
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance._library_index_state = {}
+            instance._safe_image_filename = lambda value: True
+            with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent):
+                before = instance._capture_workspace_for_pack("pack")
+                self.assertEqual(before["summary"]["duplicate"], 1)
+                self.assertEqual(before["duplicate_digests"], [digest])
+                mark_capture_events_ignored(pack_dir, digests={digest})
+                after = instance._capture_workspace_for_pack("pack")
+
+        self.assertEqual(after["summary"]["duplicate"], 0)
+        self.assertFalse(any(item.get("duplicate") for item in after["pending_items"]))
+        self.assertEqual(after["duplicate_digests"], [])
+
+
+class IgnoreDuplicateApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ignore_endpoint_marks_all_matching_events_without_deleting_image(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            image = store.save_image(b"duplicate-image", "happy", ".png").path
+            digest = store.image_digest(image)
+            record_capture_event(
+                pack_dir,
+                category="happy",
+                filename=image.name,
+                digest=digest,
+                status="duplicate",
+            )
+            record_capture_event(
+                pack_dir,
+                category="sad",
+                filename=image.name,
+                digest=digest,
+                status="duplicate",
+            )
+            catalog_before = store.load_catalog("happy")
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance.store = store
+            instance._capture_pack_id = CaptureIndexAPIMixin._capture_pack_id.__get__(instance)
+
+            class Request:
+                args = {}
+
+                async def get_json(self):
+                    return {"pack_id": "pack", "sha256s": [digest, digest]}
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                response = await instance._api_capture_ignore_duplicates()
+
+            self.assertEqual(response, {"message": "已忽略重复记录", "ignored": 2})
+            self.assertTrue(image.is_file())
+            self.assertEqual(store.load_catalog("happy"), catalog_before)
+            self.assertEqual(
+                {event["status"] for event in capture_index_api.load_capture_activity(pack_dir)["events"]},
+                {"ignored"},
+            )
+
+    async def test_ignore_endpoint_rejects_invalid_digest_and_inactive_pack(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            pack_dir.mkdir()
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance.store = MemeStore(pack_dir)
+            instance._capture_pack_id = CaptureIndexAPIMixin._capture_pack_id.__get__(instance)
+
+            class Request:
+                args = {}
+
+                async def get_json(self):
+                    return {"pack_id": "pack", "sha256s": ["not-a-sha256"]}
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                response = await instance._api_capture_ignore_duplicates()
+
+            self.assertEqual(response[1], 400)
+
+            instance.store = MemeStore(pack_dir.parent / "other")
+            class InactiveRequest(Request):
+                async def get_json(self):
+                    return {"pack_id": "pack", "sha256s": ["a" * 64]}
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent),
+                patch.object(capture_index_api, "request", InactiveRequest()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                response = await instance._api_capture_ignore_duplicates()
+
+            self.assertEqual(response[1], 409)
 
     def test_reindex_pack_updates_filenames_without_model_work(self):
         with tempfile.TemporaryDirectory() as temp_dir:

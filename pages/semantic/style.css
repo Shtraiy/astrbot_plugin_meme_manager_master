@@ -71,7 +71,9 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .card-preview:hover,
 .card-preview:focus-visible,
 .card-delete:hover,
-.card-delete:focus-visible {
+.card-delete:focus-visible,
+.card-ignore:hover,
+.card-ignore:focus-visible {
   border-color: #218a73;
   box-shadow: 0 10px 22px rgba(33, 126, 103, .16);
   outline: none;
@@ -88,6 +90,7 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
   text-align: left;
 }
 .card-actions { position: absolute; top: 16px; right: 16px; z-index: 2; }
+.card-ignore { padding: 6px 9px; border-color: #d7c18d; background: #fff8e7; color: #8d6728; font-size: 12px; }
 .card-delete {
   display: grid;
   place-items: center;

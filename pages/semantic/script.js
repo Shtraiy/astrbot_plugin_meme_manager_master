@@ -16,6 +16,7 @@ async function initCaptureIndexPage() {
   const reindexProgressCount = document.querySelector("#capture-reindex-progress-count");
   const reindexProgressBar = document.querySelector("#capture-reindex-progress-bar");
   const indexButton = document.querySelector("#capture-index-button");
+  const ignoreDuplicatesButton = document.querySelector("#capture-ignore-duplicates-button");
   const categoryFilters = document.querySelector("#capture-category-filters");
   const previewMask = document.querySelector("#preview-mask");
   const previewImage = document.querySelector("#preview-image");
@@ -30,6 +31,7 @@ async function initCaptureIndexPage() {
   let indexing = false;
   let indexPollTimer = null;
   let pendingConfirmation = null;
+  let currentWorkspace = null;
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -282,6 +284,46 @@ async function initCaptureIndexPage() {
     }
   }
 
+  function uniqueDuplicateDigests(items) {
+    return [...new Set((items || [])
+      .filter((item) => item?.duplicate && /^[0-9a-f]{64}$/i.test(String(item.sha256 || "")))
+      .map((item) => String(item.sha256).toLowerCase()))];
+  }
+
+  async function ignoreDuplicateRecords(digests, button) {
+    const uniqueDigests = [...new Set((digests || [])
+      .map((digest) => String(digest || "").trim().toLowerCase())
+      .filter((digest) => /^[0-9a-f]{64}$/.test(digest)))];
+    if (!uniqueDigests.length || !packSelect.value) {
+      showError(new Error("没有可忽略的重复记录"));
+      return;
+    }
+    if (!(await requestConfirmation(
+      `将忽略这张图片的全部重复记录，共 ${uniqueDigests.length} 个图片指纹；不会删除图片。`,
+      "忽略重复记录",
+    ))) return;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    try {
+      const result = await apiPost("capture/duplicates/ignore", {
+        pack_id: packSelect.value,
+        sha256s: uniqueDigests,
+      });
+      const refreshed = await loadWorkspace();
+      if (refreshed) {
+        notice.textContent = result.message || "已忽略重复记录";
+        notice.classList.remove("error");
+      } else {
+        button.disabled = false;
+        button.setAttribute("aria-busy", "false");
+      }
+    } catch (error) {
+      button.disabled = false;
+      button.setAttribute("aria-busy", "false");
+      showError(error);
+    }
+  }
+
   function renderCard(item, target) {
     const card = document.createElement("article");
     card.className = `card thumbnail-loading${item.duplicate ? " duplicate" : ""}`;
@@ -324,7 +366,17 @@ async function initCaptureIndexPage() {
     actions.className = "card-actions";
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
-    deleteButton.className = "card-delete";
+    if (item.duplicate) {
+      deleteButton.className = "card-ignore";
+      deleteButton.textContent = "忽略";
+      deleteButton.setAttribute("aria-label", `忽略 ${item.filename || "图片"} 的全部重复记录`);
+      deleteButton.title = "忽略该图片的全部重复记录，不会删除图片";
+      deleteButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void ignoreDuplicateRecords([item.sha256], deleteButton);
+      });
+    } else {
+      deleteButton.className = "card-delete";
     deleteButton.innerHTML = `
       <svg class="card-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-.7 10.4A2.8 2.8 0 0 1 14.5 22h-5a2.8 2.8 0 0 1-2.8-2.6L6 9Zm3 2v7h2v-7H9Zm4 0v7h2v-7h-2Z" />
@@ -335,6 +387,7 @@ async function initCaptureIndexPage() {
       event.stopPropagation();
       void deleteIndexedItem(item, card, deleteButton);
     });
+    }
     actions.append(deleteButton);
     card.append(previewButton, actions);
     target.append(card);
@@ -357,6 +410,7 @@ async function initCaptureIndexPage() {
   }
 
   function renderWorkspace(data, { renderItems = true } = {}) {
+    currentWorkspace = data;
     const stats = data.summary || {};
     summary.replaceChildren();
     for (const [label, value] of [
@@ -424,6 +478,11 @@ async function initCaptureIndexPage() {
       indexInProgress || !state.active_pack || !(stats.pending || stats.duplicate);
     indexButton.textContent = indexInProgress ? "分类索引中……" : "分类索引待处理项";
     reindexButton.disabled = reindexing;
+    const bulkDigests = selectedCategory
+      ? uniqueDuplicateDigests(pending)
+      : (data.duplicate_digests || []).filter((digest) => /^[0-9a-f]{64}$/i.test(String(digest)));
+    ignoreDuplicatesButton.disabled = !state.active_pack || !bulkDigests.length;
+    ignoreDuplicatesButton.setAttribute("aria-busy", "false");
     notice.textContent = indexing && state.status === "idle"
       ? "已提交分类索引，正在启动……"
       : state.message || "目录索引已加载";
@@ -480,6 +539,13 @@ async function initCaptureIndexPage() {
       await loadWorkspace();
       showError(error);
     }
+  });
+  ignoreDuplicatesButton.addEventListener("click", () => {
+    const pending = currentWorkspace?.pending_items || [];
+    const digests = selectedCategory
+      ? uniqueDuplicateDigests(pending)
+      : (currentWorkspace?.duplicate_digests || []);
+    void ignoreDuplicateRecords(digests, ignoreDuplicatesButton);
   });
   reindexButton.addEventListener("click", async () => {
     if (!packSelect.value) return;

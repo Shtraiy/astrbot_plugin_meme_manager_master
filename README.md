@@ -2,7 +2,7 @@
 
 # 表情包管理大师
 
-[![version](https://img.shields.io/badge/version-v2.1.1-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
+[![version](https://img.shields.io/badge/version-v2.1.2-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.5.7-orange.svg)](https://github.com/Soulter/AstrBot)
 
 **让表情包管理、收集与选图更简单**
@@ -17,6 +17,7 @@
 
 - 在 AstrBot WebUI 的插件页面直接打开“表情包管理大师”。
 - 按分类浏览、上传、删除、移动和批量管理图片。
+- 捕获索引工作台支持按图片指纹忽略重复记录；只隐藏记录，不删除图片或修改 catalog。
 - 使用 pack 运行时保存表情包，支持默认包、导入导出和会话/人格选包规则。
 - 参考原版 `meme_manager` 的分类标记、语义候选和精确 ID 选图逻辑。
 - 自动识别群聊图片，使用视觉模型判断是否为表情包，再按场景分类保存。

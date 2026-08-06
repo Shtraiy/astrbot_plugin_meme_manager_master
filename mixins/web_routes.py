@@ -87,6 +87,13 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         capability="catalog_index",
     ),
     WebRouteSpec(
+        "capture/duplicates/ignore",
+        "_api_capture_ignore_duplicates",
+        ("POST",),
+        "忽略重复捕获记录",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
         "capture/reindex",
         "_api_capture_reindex",
         ("POST",),

@@ -20,6 +20,7 @@ class WebRouteCapabilityTests(unittest.TestCase):
             "capture/index/status",
             "capture/reindex",
             "capture/reindex/status",
+            "capture/duplicates/ignore",
         ):
             self.assertIn(route, paths, f"default surface must register {route}")
 

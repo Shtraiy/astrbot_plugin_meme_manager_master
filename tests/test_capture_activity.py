@@ -6,6 +6,7 @@ from pathlib import Path
 from capture_activity import (
     index_metadata_matches,
     load_capture_activity,
+    mark_capture_events_ignored,
     mark_capture_events_indexed,
     record_capture_event,
 )
@@ -52,6 +53,39 @@ class CaptureActivityTests(unittest.TestCase):
 
             saved = json.loads((root / "capture_activity.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["version"], 1)
+
+    def test_ignoring_digest_updates_all_duplicate_events_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = root / "meme.png"
+            image.write_bytes(b"keep this file")
+            for category, status in (("happy", "duplicate"), ("sad", "duplicate"), ("angry", "pending")):
+                record_capture_event(
+                    root,
+                    category=category,
+                    filename=image.name,
+                    digest="a" * 64,
+                    status=status,
+                    captured_at=200,
+                )
+            record_capture_event(
+                root,
+                category="happy",
+                filename=image.name,
+                digest="b" * 64,
+                status="indexed",
+                captured_at=201,
+            )
+
+            changed = mark_capture_events_ignored(
+                root, digests={"a" * 64}, ignored_at=1234567890
+            )
+
+            self.assertEqual(changed, 2)
+            events = load_capture_activity(root)["events"]
+            self.assertEqual([event["status"] for event in events], ["ignored", "ignored", "pending", "indexed"])
+            self.assertEqual(events[0]["ignored_at"], 1234567890)
+            self.assertEqual(image.read_bytes(), b"keep this file")
 
 
 if __name__ == "__main__":
