@@ -85,6 +85,51 @@ class LibraryIndexTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertEqual(calls, 1)
 
+    async def test_batch_invalid_json_retries_once_and_accepts_valid_response(self):
+        instance = CaptureMixin.__new__(CaptureMixin)
+        image_paths = [Path("first.png"), Path("second.png")]
+        instance._generate = AsyncMock(
+            side_effect=[
+                '<think>{"draft":{"invalid":true}}</think>\nnot-json',
+                (
+                    '```json\n'
+                    '{"items":['
+                    '{"id":"image_0","description":"第一张","emotion":"开心",'
+                    '"text":"","tags":["开心"]},'
+                    '{"id":"image_1","description":"第二张","emotion":"疑惑",'
+                    '"text":"","tags":["疑惑"]}'
+                    ']}\n'
+                    '识别完成。'
+                ),
+            ]
+        )
+
+        with patch.object(capture_module, "LIBRARY_INDEX_LLM_TIMEOUT", 0.01, create=True):
+            result = await instance._describe_library_batch(
+                None, image_paths, "固定标签", "provider"
+            )
+
+        self.assertEqual(set(result), set(image_paths))
+        self.assertEqual(instance._generate.await_count, 2)
+
+    async def test_batch_retry_exhaustion_falls_back_to_single_image(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "pack")
+            image_path = store.save_image(b"image", "happy", ".png").path
+            instance = self._make_instance(store, batch_size=1)
+            instance._generate = AsyncMock(
+                side_effect=[
+                    "not-json",
+                    "still-not-json",
+                    '{"description":"测试图片","emotion":"开心","text":"","tags":["开心"]}',
+                ]
+            )
+
+            await instance._ensure_flat_library_index()
+
+        self.assertEqual(instance._library_index_state["status"], "completed")
+        self.assertEqual(instance._generate.await_count, 3)
+
     @staticmethod
     def _make_instance(store, *, batch_size=2):
         instance = CaptureMixin.__new__(CaptureMixin)

@@ -2,6 +2,12 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
+## [Unreleased] - 2026-08-06
+
+### 修复
+
+- 批量视觉索引遇到模型思考标签、代码块或尾部说明时，增强 JSON 提取并对格式错误的批量响应最多重试一次；重试仍失败时继续逐图补偿，避免批次因单次非法 JSON 中断。
+
 ## [v2.1.1] - 2026-08-05
 
 ### Refactor delivery note

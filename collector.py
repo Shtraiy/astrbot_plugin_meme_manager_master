@@ -450,15 +450,29 @@ def parse_model_json(text: str) -> dict[str, Any]:
     fenced = re.search(r"```(?:json)?\s*(.*?)```", candidate, flags=re.IGNORECASE | re.DOTALL)
     if fenced:
         candidate = fenced.group(1).strip()
+    candidate = re.sub(
+        r"<(?:think|analysis|reasoning)\b[^>]*>.*?</(?:think|analysis|reasoning)\s*>",
+        "",
+        candidate,
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
     try:
         parsed = json.loads(candidate)
     except json.JSONDecodeError:
-        start, end = candidate.find("{"), candidate.rfind("}")
-        if start < 0 or end <= start:
-            raise ValueError("model response does not contain a JSON object") from None
-        try:
-            parsed = json.loads(candidate[start : end + 1])
-        except json.JSONDecodeError as exc:
+        decoder = json.JSONDecoder()
+        parsed = None
+        for match in re.finditer(r"\{", candidate):
+            try:
+                value, _end = decoder.raw_decode(candidate[match.start() :])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                parsed = value
+                break
+        if parsed is None:
+            start, end = candidate.find("{"), candidate.rfind("}")
+            if start < 0 or end <= start:
+                raise ValueError("model response does not contain a JSON object") from None
             try:
                 parsed = ast.literal_eval(candidate[start : end + 1])
             except (SyntaxError, ValueError) as literal_exc:

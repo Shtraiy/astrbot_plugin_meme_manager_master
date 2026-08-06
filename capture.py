@@ -82,7 +82,8 @@ def _library_batch_system_prompt(category: str) -> str:
 你是表情包素材库批量整理器。当前收到多张图片，请根据画面含义为每张图片选择固定标签。
 可选标签必须来自：开心、愤怒、悲伤、震惊、疑惑、尴尬、害怕、期待、无语、赞同、拒绝、嘲讽、嫌弃、感谢、道歉、安慰、催促、围观、吃瓜、摸鱼、庆祝、工作、加班、睡觉、早安、求助、发钱、其他。每张最多选择5个标签。
 不要创建新标签，也不要移动图片。请为每张图片输出一条结果，并严格保留输入的 id。
-只输出 JSON，不要 Markdown。
+只输出一个可被 json.loads 直接解析的 JSON 对象；禁止输出 <think>、分析过程、Markdown、代码块或 JSON 之外的说明。
+输出前检查 JSON 语法正确，并确保每个输入 id 都出现且只出现一次。
 格式：{{"items":[{{"id":"image_0", "description":"不超过40字", "emotion":"主要情绪", "text":"图片文字，没有则为空", "tags":["关键词1"]}}]}}
 """.strip()
 
@@ -110,6 +111,7 @@ OUTGOING_DECISION_SYSTEM_PROMPT = """
 LIBRARY_INDEX_VERSION = 3
 LIBRARY_INDEX_PROMPT_VERSION = "library-batch-v3"
 LIBRARY_INDEX_LLM_TIMEOUT = 120.0
+LIBRARY_INDEX_BATCH_RETRIES = 1
 LIBRARY_INDEX_SINGLE_RETRIES = 1
 LIBRARY_INDEX_RETRY_DELAY = 0.5
 
@@ -1500,20 +1502,32 @@ class CaptureMixin:
                 *[f"{image_id}: {path.name}" for path, image_id in image_ids.items()],
             ]
         )
-        response = await self._generate_library_index_response(
-            event,
-            prompt,
-            image_urls=[str(path) for path in image_paths],
-            provider_id=provider_id,
-            system_prompt=_library_batch_system_prompt(category),
-            operation=f"batch:{len(image_paths)}",
-        )
-        parsed = parse_model_json(response)
-        if isinstance(parsed, dict):
-            items = parsed.get("items", parsed.get("results", parsed))
-        else:
-            items = parsed
-        return normalize_library_results(items, image_paths)
+        for attempt in range(LIBRARY_INDEX_BATCH_RETRIES + 1):
+            response = await self._generate_library_index_response(
+                event,
+                prompt,
+                image_urls=[str(path) for path in image_paths],
+                provider_id=provider_id,
+                system_prompt=_library_batch_system_prompt(category),
+                operation=f"batch:{len(image_paths)}",
+            )
+            try:
+                parsed = parse_model_json(response)
+                items = parsed.get("items", parsed.get("results", parsed))
+                return normalize_library_results(items, image_paths)
+            except ValueError as exc:
+                if attempt >= LIBRARY_INDEX_BATCH_RETRIES:
+                    raise
+                logger.warning(
+                    "[meme_manager_master] 分类索引批量响应格式无效，准备重试 "
+                    "count=%s retry=%s/%s error=%s",
+                    len(image_paths),
+                    attempt + 1,
+                    LIBRARY_INDEX_BATCH_RETRIES,
+                    exc,
+                )
+                if LIBRARY_INDEX_RETRY_DELAY > 0:
+                    await asyncio.sleep(LIBRARY_INDEX_RETRY_DELAY)
 
     async def _describe_library_single(
         self,

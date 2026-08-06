@@ -3,12 +3,26 @@ import unittest
 from collector import (
     contains_meme_send_claim,
     is_safe_remote_image_url,
+    parse_model_json,
     should_block_agent_tool_for_meme_request,
     is_supported_image_source,
 )
 
 
 class CollectorRequestTests(unittest.TestCase):
+    def test_model_json_ignores_thinking_object_and_trailing_text(self):
+        response = (
+            '<think>{"draft":{"invalid":true}}</think>\n'
+            '{"items":[]}\n识别完成。'
+        )
+
+        self.assertEqual(parse_model_json(response), {"items": []})
+
+    def test_model_json_accepts_fenced_json_with_trailing_text(self):
+        response = '```json\n{"items":[]}\n```\n识别完成。'
+
+        self.assertEqual(parse_model_json(response), {"items": []})
+
     def test_natural_language_does_not_activate_image_tool_guard(self):
         self.assertFalse(
             should_block_agent_tool_for_meme_request(
