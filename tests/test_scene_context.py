@@ -14,6 +14,43 @@ from meme_manager_master.collector import collect_recent_scene_context  # noqa: 
 
 
 class SceneContextTests(unittest.TestCase):
+    def test_classify_scene_builds_prompt_and_parses_category(self):
+        async def scenario():
+            captured = {}
+            mixin = CaptureMixin(FakeContext(), {})
+
+            async def fake_generate(
+                _event,
+                _prompt,
+                *,
+                image_urls,
+                provider_id,
+                system_prompt,
+            ):
+                captured.update(
+                    image_urls=image_urls,
+                    provider_id=provider_id,
+                    system_prompt=system_prompt,
+                )
+                return '{"category":"happy","confidence":0.9,"reason":"匹配"}'
+
+            mixin._generate = fake_generate
+            result = await mixin._classify_scene(
+                FakeEvent(message_text="今天真开心"),
+                {"description": "开心地笑"},
+                {"confused", "happy"},
+                "今天真开心",
+                "用户表达积极情绪",
+            )
+            return result, captured
+
+        result, captured = asyncio.run(scenario())
+
+        self.assertEqual(result["category"], "happy")
+        self.assertEqual(captured["image_urls"], [])
+        self.assertIn("confused, happy", captured["system_prompt"])
+        self.assertIn('"category"', captured["system_prompt"])
+
     def test_keeps_the_last_three_turns_and_discards_older_messages(self):
         request = SimpleNamespace(
             contexts=[

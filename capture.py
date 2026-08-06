@@ -67,6 +67,16 @@ JSON 格式：
 """.strip()
 
 
+def _scene_system_prompt(categories: set[str]) -> str:
+    category_text = ", ".join(sorted(categories))
+    return f"""
+你是群聊表情包分类器。只能从以下分类中选择一个：{category_text}
+请结合图片识别结果和消息语境，选择最适合日常聊天使用的分类。
+只输出 JSON，不要 Markdown，不要输出列表外的分类。
+JSON 格式：{{"category": "分类名", "confidence": 0.0, "reason": "不超过30字的理由"}}
+""".strip()
+
+
 def _library_batch_system_prompt(category: str) -> str:
     return f"""
 你是表情包素材库批量整理器。当前收到多张图片，请根据画面含义为每张图片选择固定标签。
