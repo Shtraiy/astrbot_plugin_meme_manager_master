@@ -66,7 +66,7 @@ class CaptureIndexPageTests(unittest.TestCase):
         ):
             script = script_path.read_text(encoding="utf-8")
             self.assertIn('apiGet("capture/index/status"', script)
-            self.assertNotIn("loadWorkspace({ renderItems: false })", script)
+            self.assertIn("const data = await loadWorkspace();", script)
 
     def test_reindex_progress_is_outside_the_resource_toolbar(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -84,7 +84,7 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn('apiPost("capture/index"', script)
             self.assertIn("pollIndexStatus", script)
             self.assertIn('apiGet("capture/index/status"', script)
-            self.assertNotIn('loadWorkspace({ renderItems: false })', script)
+            self.assertIn("const data = await loadWorkspace();", script)
             self.assertIn('setTimeout(() => void pollIndexStatus(), 500)', script)
             self.assertIn('["queued", "running"]', script)
 
@@ -116,11 +116,42 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn('document.createElement("article")', script)
             self.assertNotIn('const card = document.createElement("button")', script)
 
+    def test_duplicate_batch_ignore_controls_exist_in_both_pages(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            script = (page_dir / "script.js").read_text(encoding="utf-8")
+            self.assertIn("capture-selection-mode-button", source)
+            self.assertIn("capture-select-visible-duplicates-button", source)
+            self.assertIn("capture-ignore-selected-button", source)
+            self.assertIn("selectedDuplicateDigests", script)
+            self.assertIn("selectVisibleDuplicates", script)
+            self.assertIn("ignoreSelectedDuplicates", script)
+
+    def test_mutations_remove_cards_and_sync_metadata_without_full_rerender(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn("removeCardsForItems", script)
+            self.assertIn("data-sha256", script)
+            self.assertIn("loadWorkspace({ renderItems: false })", script)
+            self.assertIn("renderWorkspace(data, { renderItems });", script)
+
+    def test_batch_ignore_deduplicates_sha256_before_posting(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn("new Set(selectedDuplicateDigests)", script)
+            self.assertIn('apiPost("capture/duplicates/ignore"', script)
+
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn('style.css?v=20260806-capture-ignore-1', source)
-            self.assertIn('script.js?v=20260806-capture-ignore-1', source)
+            self.assertIn('style.css?v=20260809-batch-ignore-1', source)
+            self.assertIn('script.js?v=20260809-batch-ignore-1', source)
             self.assertNotIn("20260803-", source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):

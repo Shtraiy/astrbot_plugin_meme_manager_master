@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>表情索引</title>
-    <link rel="stylesheet" href="./style.css?v=20260806-capture-ignore-1" />
+    <link rel="stylesheet" href="./style.css?v=20260809-batch-ignore-1" />
   </head>
   <body>
     <header class="page-header">
@@ -27,6 +27,12 @@
         <button id="capture-refresh-button" type="button">刷新记录</button>
         <div class="reindex-control">
           <button id="capture-reindex-button" type="button">重索引</button>
+        </div>
+        <div class="selection-control" aria-live="polite">
+          <button id="capture-selection-mode-button" type="button" aria-pressed="false">&#24320;&#21551;&#25209;&#37327;&#36873;&#25321;</button>
+          <span id="capture-selection-summary">&#26410;&#24320;&#21551;&#25209;&#37327;&#36873;&#25321;</span>
+          <button id="capture-select-visible-duplicates-button" type="button" hidden>&#36873;&#25321;&#24403;&#21069;&#35270;&#22270;&#20840;&#37096;&#37325;&#22797;&#39033;</button>
+          <button id="capture-ignore-selected-button" type="button" class="primary" hidden disabled>&#24573;&#30053;&#24050;&#36873;</button>
         </div>
         <button id="capture-index-button" type="button" class="primary">
           分类索引待处理项
@@ -95,6 +101,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260806-capture-ignore-1"></script>
+    <script type="module" src="./script.js?v=20260809-batch-ignore-1"></script>
   </body>
 </html>

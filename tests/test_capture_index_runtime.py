@@ -47,6 +47,17 @@ class Element {
       if (this.tagName === "select" && !this.value && item.value) this.value = item.value;
     }
   }
+  remove() {
+    if (!this.parentElement) return;
+    this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+    this.parentElement = null;
+  }
+  querySelector(selector) {
+    if (selector === ".card") {
+      return this.children.find((child) => String(child.className || "").split(/\s+/).includes("card")) || null;
+    }
+    return null;
+  }
   replaceChildren(...items) { this.children = []; this.append(...items); }
   addEventListener(type, handler) {
     (this.listeners[type] ||= []).push(handler);
@@ -68,7 +79,9 @@ function makeDocument() {
     "capture-pending-count", "capture-refresh-button", "capture-reindex-button",
     "capture-reindex-progress", "capture-reindex-progress-label",
     "capture-reindex-progress-count", "capture-reindex-progress-bar",
-    "capture-index-button", "capture-ignore-duplicates-button", "capture-category-filters", "preview-mask",
+    "capture-index-button", "capture-ignore-duplicates-button", "capture-selection-mode-button",
+    "capture-select-visible-duplicates-button", "capture-ignore-selected-button", "capture-selection-summary",
+    "capture-category-filters", "preview-mask",
     "preview-image", "preview-close", "capture-confirm-mask",
     "capture-confirm-title", "capture-confirm-description",
     "capture-confirm-cancel", "capture-confirm-confirm",
@@ -86,7 +99,21 @@ function makeDocument() {
       if (selector === ".capture-progress-row") return progressRow;
       return null;
     },
-    querySelectorAll() { return []; },
+    querySelectorAll(selector) {
+      if (!selector.startsWith(".card")) return [];
+      const results = [];
+      const visit = (node) => {
+        for (const child of node.children || []) {
+          const classes = String(child.className || "").split(/\s+/);
+          if (classes.includes("card") && (!selector.includes("[data-sha256]") || child.dataset.sha256)) {
+            results.push(child);
+          }
+          visit(child);
+        }
+      };
+      for (const element of elements.values()) visit(element);
+      return results;
+    },
     addEventListener() {},
     createElement(tagName) { return new Element(tagName); },
   };
@@ -96,9 +123,12 @@ async function runPage(scriptPath) {
   const document = makeDocument();
   const calls = [];
   const workspace = {
-    summary: { indexed: 1, pending: 1, duplicate: 3, complete_folders: 0, folder_total: 1 },
-    folders: [{ category: "happy", tag: "happy", indexed: 1, total: 1, complete: true }],
-    indexed_items: [{ filename: "meme_demo.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo.png", indexed: true }],
+     summary: { indexed: 2, pending: 1, duplicate: 3, complete_folders: 0, folder_total: 1 },
+     folders: [{ category: "happy", tag: "happy", indexed: 2, total: 2, complete: true }],
+     indexed_items: [
+       { filename: "meme_demo.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo.png", indexed: true },
+       { filename: "meme_demo_two.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo_two.png", indexed: true },
+     ],
     pending_items: [
       { filename: "meme_pending.png", tag: "happy", category: "happy", relative_path: "memes/meme_pending.png", indexed: false },
       { filename: "meme_duplicate_a.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_a.png", indexed: false, duplicate: true, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
@@ -150,7 +180,7 @@ async function runPage(scriptPath) {
   const pack = document.querySelector("#pack");
   pack.value = "pack";
 
-  const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
+   const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[2].children[0];
   const successButton = getDeleteButton();
   const successDelete = successButton.dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
@@ -169,7 +199,7 @@ async function runPage(scriptPath) {
   await new Promise((resolve) => setImmediate(resolve));
   const failureRestored = !failureButton.disabled && failureButton.getAttribute("aria-busy") === "false";
 
-  const getIgnoreButton = () => document.querySelector("#capture-pending-items").children[1].children[1].children[0];
+   const getIgnoreButton = () => document.querySelector("#capture-pending-items").children[1].children[2].children[0];
   const ignoreButton = getIgnoreButton();
   const ignoreAction = ignoreButton.dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
