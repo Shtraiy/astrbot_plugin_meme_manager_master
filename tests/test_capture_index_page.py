@@ -127,6 +127,20 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("selectVisibleDuplicates", script)
             self.assertIn("ignoreSelectedDuplicates", script)
 
+    def test_pagination_and_unique_tag_card_contract_exists_in_both_pages(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            script = (page_dir / "script.js").read_text(encoding="utf-8")
+            style = (page_dir / "style.css").read_text(encoding="utf-8")
+            self.assertIn("capture-pagination", source)
+            self.assertIn("capture-pagination-prev", source)
+            self.assertIn("capture-pagination-next", source)
+            self.assertIn("pagination", script)
+            self.assertIn('params.page = currentPage', script)
+            self.assertIn("card-tags", script)
+            self.assertIn("width: 22px", style)
+            self.assertIn("max-height", style)
+
     def test_mutations_remove_cards_and_sync_metadata_without_full_rerender(self):
         for script_path in (
             ROOT / "pages" / "semantic" / "script.js",
@@ -150,8 +164,8 @@ class CaptureIndexPageTests(unittest.TestCase):
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn('style.css?v=20260809-batch-ignore-1', source)
-            self.assertIn('script.js?v=20260809-batch-ignore-1', source)
+            self.assertIn('style.css?v=20260809-index-pagination-1', source)
+            self.assertIn('script.js?v=20260809-index-pagination-1', source)
             self.assertNotIn("20260803-", source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):

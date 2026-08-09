@@ -48,6 +48,38 @@ from storage import MemeStore
 
 
 class CaptureIndexApiTests(unittest.TestCase):
+    def test_workspace_merges_tags_and_paginates_unique_images(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            first = store.save_image(b"multi-tag-image", ["happy", "sad"], ".png").path
+            for index in range(50):
+                store.save_image(f"image-{index}".encode(), "happy", ".png")
+            catalog = store.load_catalog()
+            for item in catalog["items"]:
+                item["indexed"] = True
+            store.write_catalog(catalog["items"])
+
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance._library_index_state = {"status": "idle"}
+            instance.store = store
+
+            with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent):
+                first_page = instance._capture_workspace_for_pack("pack", page=1)
+                second_page = instance._capture_workspace_for_pack("pack", page=2)
+                filtered = instance._capture_workspace_for_pack("pack", "sad", page=1)
+
+        self.assertEqual(first_page["pagination"]["page"], 1)
+        self.assertEqual(first_page["pagination"]["page_size"], 48)
+        self.assertEqual(first_page["pagination"]["indexed"]["total"], 51)
+        self.assertEqual(first_page["pagination"]["indexed"]["total_pages"], 2)
+        self.assertEqual(len(first_page["indexed_items"]), 48)
+        self.assertEqual(len(second_page["indexed_items"]), 3)
+        self.assertEqual(first_page["summary"]["indexed"], 51)
+        self.assertEqual(len(filtered["indexed_items"]), 1)
+        self.assertEqual(filtered["indexed_items"][0]["filename"], first.name)
+        self.assertEqual(set(filtered["indexed_items"][0]["tags"]), {"开心", "悲伤"})
+
     def test_workspace_returns_recent_indexed_and_pending_items(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pack_dir = Path(temp_dir) / "pack"

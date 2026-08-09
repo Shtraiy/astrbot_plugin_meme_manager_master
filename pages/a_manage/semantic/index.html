@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>表情索引</title>
-    <link rel="stylesheet" href="./style.css?v=20260809-batch-ignore-1" />
+    <link rel="stylesheet" href="./style.css?v=20260809-index-pagination-1" />
   </head>
   <body>
     <header class="page-header">
@@ -77,6 +77,12 @@
           <div id="capture-pending-items" class="cards"></div>
         </article>
       </section>
+      <nav id="capture-pagination" class="capture-pagination panel" aria-label="表情索引分页" hidden>
+        <button id="capture-pagination-prev" type="button">上一页</button>
+        <div id="capture-pagination-pages" class="capture-pagination-pages"></div>
+        <button id="capture-pagination-next" type="button">下一页</button>
+        <span id="capture-pagination-summary" class="capture-pagination-summary"></span>
+      </nav>
     </main>
 
     <div id="capture-confirm-mask" class="capture-confirm-mask hidden" aria-hidden="true">
@@ -101,6 +107,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260809-batch-ignore-1"></script>
+    <script type="module" src="./script.js?v=20260809-index-pagination-1"></script>
   </body>
 </html>

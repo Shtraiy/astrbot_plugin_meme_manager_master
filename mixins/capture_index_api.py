@@ -18,6 +18,9 @@ from ..backend.tagging import canonical_tag
 from ..storage import MemeStore
 
 
+CAPTURE_WORKSPACE_PAGE_SIZE = 48
+
+
 class CaptureIndexAPIMixin:
     """Web endpoints for the capture activity and catalog workspace."""
 
@@ -57,20 +60,36 @@ class CaptureIndexAPIMixin:
                 return value
         return fallback
 
-    def _capture_workspace_for_pack(self, pack_id: str, category: str = "") -> dict:
-        return self._flat_capture_workspace_for_pack(pack_id, category)
+    def _capture_workspace_for_pack(
+        self,
+        pack_id: str,
+        category: str = "",
+        *,
+        page: int = 1,
+    ) -> dict:
+        return self._flat_capture_workspace_for_pack(pack_id, category, page=page)
 
-    def _flat_capture_workspace_for_pack(self, pack_id: str, category: str = "") -> dict:
+    def _flat_capture_workspace_for_pack(
+        self,
+        pack_id: str,
+        category: str = "",
+        *,
+        page: int = 1,
+    ) -> dict:
         """Build the capture workspace from flat files and virtual tags."""
         selected_tag = canonical_tag(category) if str(category or "").strip() else None
         if category and not selected_tag:
             raise ValueError("invalid tag")
+        try:
+            requested_page = max(1, int(page))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("page 无效") from exc
         pack_dir = (PACKS_DIR / pack_id).resolve()
         store = MemeStore(pack_dir)
         store.reindex_flat_catalog()
         activity = load_capture_activity(pack_dir)
-        indexed_items: list[dict] = []
-        pending_items: list[dict] = []
+        indexed_by_filename: dict[str, dict] = {}
+        pending_by_filename: dict[str, dict] = {}
         folders: list[dict] = []
         tag_counts: dict[str, dict[str, int]] = {}
         for entry in store.load_catalog().get("items", []):
@@ -82,7 +101,12 @@ class CaptureIndexAPIMixin:
                 continue
             indexed = bool(entry.get("indexed"))
             modified_at = int(path.stat().st_mtime)
-            for tag in entry.get("tags", []):
+            tags = sorted({
+                normalized
+                for raw_tag in entry.get("tags", [])
+                if (normalized := canonical_tag(raw_tag))
+            }) or ["其他"]
+            for tag in tags:
                 counts = tag_counts.setdefault(tag, {"total": 0, "indexed": 0, "pending": 0})
                 counts["total"] += 1
                 counts["indexed" if indexed else "pending"] += 1
@@ -90,6 +114,7 @@ class CaptureIndexAPIMixin:
                     continue
                 item = {
                     **entry,
+                    "tags": tags,
                     "category": tag,
                     "tag": tag,
                     "filename": filename,
@@ -97,11 +122,14 @@ class CaptureIndexAPIMixin:
                     "indexed": indexed,
                     "captured_at": int(entry.get("captured_at") or modified_at),
                 }
-                if indexed:
-                    indexed_items.append(item)
-                else:
+                if not indexed:
                     item["activity_status"] = "pending"
-                    pending_items.append(item)
+                target = indexed_by_filename if indexed else pending_by_filename
+                existing = target.get(filename)
+                if existing is None:
+                    target[filename] = item
+                else:
+                    existing["tags"] = sorted(set(existing.get("tags", [])) | set(tags))
         for tag, counts in sorted(tag_counts.items()):
             folders.append({
                 "category": tag,
@@ -111,8 +139,7 @@ class CaptureIndexAPIMixin:
                 "indexed_at": None,
                 "index_provider_id": "",
             })
-        duplicate_items = []
-        duplicate_count = 0
+        duplicate_digests: list[str] = []
         for event in activity.get("events", []):
             if not isinstance(event, dict) or event.get("status") != "duplicate":
                 continue
@@ -123,11 +150,14 @@ class CaptureIndexAPIMixin:
             path = store.memes_dir / Path(filename).name
             if not path.is_file():
                 continue
-            duplicate_count += 1
-            duplicate_items.append({
+            digest = str(event.get("sha256") or "").lower()
+            if re.fullmatch(r"[0-9a-f]{64}", digest) and digest not in duplicate_digests:
+                duplicate_digests.append(digest)
+            duplicate_item = {
                 "id": event.get("id", ""),
                 "category": event_tag,
                 "tag": event_tag,
+                "tags": [event_tag] if event_tag else ["其他"],
                 "filename": filename,
                 "sha256": event.get("sha256", ""),
                 "relative_path": f"memes/{filename}",
@@ -136,21 +166,28 @@ class CaptureIndexAPIMixin:
                 "activity_status": "duplicate",
                 "duplicate_of": event.get("duplicate_of", ""),
                 "captured_at": event.get("captured_at", 0),
-            })
-        pending_items.extend(duplicate_items)
-        indexed_items.sort(key=self._capture_item_time, reverse=True)
-        pending_items.sort(key=self._capture_item_time, reverse=True)
-        duplicate_digests = list(dict.fromkeys(
-            str(item.get("sha256") or "").lower()
-            for item in duplicate_items
-            if re.fullmatch(r"[0-9a-fA-F]{64}", str(item.get("sha256") or ""))
-        ))
+            }
+            existing = pending_by_filename.get(filename) or indexed_by_filename.pop(filename, None)
+            if existing is None:
+                pending_by_filename[filename] = duplicate_item
+            else:
+                existing.update(duplicate_item)
+                existing["tags"] = sorted(set(existing.get("tags", [])) | set(duplicate_item["tags"]))
+                pending_by_filename[filename] = existing
+        indexed_items = sorted(indexed_by_filename.values(), key=self._capture_item_time, reverse=True)
+        pending_items = sorted(pending_by_filename.values(), key=self._capture_item_time, reverse=True)
+        duplicate_count = sum(1 for item in pending_items if item.get("duplicate"))
         state = dict(getattr(self, "_library_index_state", {}) or {})
         active_store = getattr(self, "store", None)
         state["active_pack"] = bool(
             active_store is not None and Path(getattr(active_store, "root", "")).resolve() == pack_dir
         )
         visible_folders = [folder for folder in folders if not selected_tag or folder["tag"] == selected_tag]
+        indexed_total_pages = max(1, (len(indexed_items) + CAPTURE_WORKSPACE_PAGE_SIZE - 1) // CAPTURE_WORKSPACE_PAGE_SIZE)
+        pending_total_pages = max(1, (len(pending_items) + CAPTURE_WORKSPACE_PAGE_SIZE - 1) // CAPTURE_WORKSPACE_PAGE_SIZE)
+        current_page = min(requested_page, max(indexed_total_pages, pending_total_pages))
+        page_start = (current_page - 1) * CAPTURE_WORKSPACE_PAGE_SIZE
+        page_end = page_start + CAPTURE_WORKSPACE_PAGE_SIZE
         return {
             "pack_id": pack_id,
             "library_index": state,
@@ -163,8 +200,20 @@ class CaptureIndexAPIMixin:
             },
             "folders": folders,
             "duplicate_digests": duplicate_digests,
-            "indexed_items": indexed_items if selected_tag else indexed_items[:48],
-            "pending_items": pending_items if selected_tag else pending_items[:48],
+            "pagination": {
+                "page": current_page,
+                "page_size": CAPTURE_WORKSPACE_PAGE_SIZE,
+                "indexed": {
+                    "total": len(indexed_items),
+                    "total_pages": indexed_total_pages,
+                },
+                "pending": {
+                    "total": len(pending_items),
+                    "total_pages": pending_total_pages,
+                },
+            },
+            "indexed_items": indexed_items[page_start:page_end],
+            "pending_items": pending_items[page_start:page_end],
         }
     def _reindex_pack_catalog(self, pack_id: str) -> dict[str, int | str]:
         """Renumber local files and update catalog references without models."""
@@ -246,7 +295,8 @@ class CaptureIndexAPIMixin:
         try:
             pack_id = self._capture_pack_id()
             category = str(request.args.get("category") or "").strip()
-            return jsonify(self._capture_workspace_for_pack(pack_id, category))
+            page = request.args.get("page", "1")
+            return jsonify(self._capture_workspace_for_pack(pack_id, category, page=page))
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"message": str(exc)}), 400
         except Exception as exc:
