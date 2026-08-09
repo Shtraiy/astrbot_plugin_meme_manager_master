@@ -22,6 +22,11 @@ async function initCaptureIndexPage() {
   const ignoreSelectedButton = document.querySelector("#capture-ignore-selected-button");
   const selectionSummary = document.querySelector("#capture-selection-summary");
   const categoryFilters = document.querySelector("#capture-category-filters");
+  const pagination = document.querySelector("#capture-pagination");
+  const paginationPrev = document.querySelector("#capture-pagination-prev");
+  const paginationNext = document.querySelector("#capture-pagination-next");
+  const paginationPages = document.querySelector("#capture-pagination-pages");
+  const paginationSummary = document.querySelector("#capture-pagination-summary");
   const previewMask = document.querySelector("#preview-mask");
   const previewImage = document.querySelector("#preview-image");
   const confirmMask = document.querySelector("#capture-confirm-mask");
@@ -39,6 +44,7 @@ async function initCaptureIndexPage() {
   let selectionMode = false;
   const selectedDuplicateDigests = new Set();
   let mutationInProgress = false;
+  let currentPage = 1;
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -278,6 +284,7 @@ async function initCaptureIndexPage() {
         control.textContent = selected ? "✓" : "";
       }
     });
+    renderPagination(currentWorkspace?.pagination);
   }
 
   function setSelectionMode(enabled) {
@@ -303,6 +310,49 @@ async function initCaptureIndexPage() {
     if (selectedDuplicateDigests.has(normalized)) selectedDuplicateDigests.delete(normalized);
     else selectedDuplicateDigests.add(normalized);
     updateSelectionUi();
+  }
+
+  function renderPagination(paginationData = {}) {
+    const indexed = paginationData.indexed || {};
+    const pending = paginationData.pending || {};
+    const indexedTotalPages = Math.max(1, Number(indexed.total_pages || 1));
+    const pendingTotalPages = Math.max(1, Number(pending.total_pages || 1));
+    const totalPages = Math.max(indexedTotalPages, pendingTotalPages);
+    currentPage = Math.min(Math.max(1, Number(paginationData.page || currentPage)), totalPages);
+    if (!pagination || !paginationPages || !paginationSummary) return;
+    pagination.hidden = totalPages <= 1;
+    paginationPages.replaceChildren();
+    if (pagination.hidden) return;
+
+    paginationPrev.disabled = currentPage <= 1 || mutationInProgress;
+    paginationNext.disabled = currentPage >= totalPages || mutationInProgress;
+    const pageNumbers = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+    const visiblePages = [...pageNumbers]
+      .filter((page) => page >= 1 && page <= totalPages)
+      .sort((a, b) => a - b);
+    let previousPage = 0;
+    visiblePages.forEach((page) => {
+      if (page - previousPage > 1) {
+        const ellipsis = document.createElement("span");
+        ellipsis.className = "capture-pagination-ellipsis";
+        ellipsis.textContent = "…";
+        paginationPages.append(ellipsis);
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `capture-pagination-page${page === currentPage ? " active" : ""}`;
+      button.textContent = String(page);
+      button.setAttribute("aria-label", `第 ${page} 页`);
+      button.setAttribute("aria-current", page === currentPage ? "page" : "false");
+      button.disabled = page === currentPage || mutationInProgress;
+      button.addEventListener("click", () => {
+        currentPage = page;
+        void loadWorkspace({ preserveSelection: true });
+      });
+      paginationPages.append(button);
+      previousPage = page;
+    });
+    paginationSummary.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${(Number(indexed.total || 0) + Number(pending.total || 0))} 张`;
   }
 
   function itemMatchesRemoval(item, { sha256s = [], locations = [] } = {}) {
@@ -494,13 +544,25 @@ async function initCaptureIndexPage() {
     thumbnail.append(image, placeholder, errorText);
     const title = document.createElement("strong");
     title.textContent = item.filename || "未命名图片";
+    const tagList = document.createElement("span");
+    tagList.className = "card-tags";
+    const tags = Array.isArray(item.tags) && item.tags.length
+      ? item.tags
+      : [item.category || item.tag || "未分类"];
+    tags.forEach((tag) => {
+      const tagBadge = document.createElement("span");
+      tagBadge.className = "card-tag";
+      tagBadge.textContent = tag;
+      tagList.append(tagBadge);
+    });
     const meta = document.createElement("span");
-    meta.textContent = `${item.category || "未分类"} · ${
+    meta.className = "card-status";
+    meta.textContent = `${
       item.duplicate ? "重复待去重" : item.indexed ? "已索引" : "待分类"
     }`;
     const description = document.createElement("small");
     description.textContent = item.description || "点击查看图片";
-    previewButton.append(thumbnail, title, meta, description);
+    previewButton.append(thumbnail, title, tagList, meta, description);
     const actions = document.createElement("div");
     actions.className = "card-actions";
     const deleteButton = document.createElement("button");
@@ -550,6 +612,7 @@ async function initCaptureIndexPage() {
 
   function renderWorkspace(data, { renderItems = true } = {}) {
     currentWorkspace = data;
+    currentPage = Number(data.pagination?.page || currentPage);
     const stats = data.summary || {};
     summary.replaceChildren();
     for (const [label, value] of [
@@ -583,6 +646,7 @@ async function initCaptureIndexPage() {
     allCategories.textContent = "全部标签";
     allCategories.addEventListener("click", () => {
       selectedCategory = "";
+      currentPage = 1;
       void loadWorkspace();
     });
     categoryFilters.append(allCategories);
@@ -593,6 +657,7 @@ async function initCaptureIndexPage() {
       button.textContent = folder.category;
       button.addEventListener("click", () => {
         selectedCategory = folder.category;
+        currentPage = 1;
         void loadWorkspace();
       });
       categoryFilters.append(button);
@@ -610,6 +675,7 @@ async function initCaptureIndexPage() {
       if (pending.length) pending.forEach((item) => renderCard(item, pendingItems));
       else renderEmpty(pendingItems, "当前没有待处理偷取图片");
     }
+    renderPagination(data.pagination);
 
     const state = data.library_index || {};
     const indexInProgress = indexing || ["queued", "running"].includes(state.status);
@@ -628,17 +694,23 @@ async function initCaptureIndexPage() {
     notice.classList.remove("error");
   }
 
-  async function loadWorkspace({ renderItems = true } = {}) {
+  async function loadWorkspace({ renderItems = true, preserveSelection = false } = {}) {
     if (!packSelect.value) return;
-    if (renderItems) {
+    if (renderItems && !preserveSelection) {
       selectionMode = false;
       selectedDuplicateDigests.clear();
     }
     try {
+      const requestedPage = currentPage;
       const params = { pack_id: packSelect.value };
       if (selectedCategory) params.category = selectedCategory;
+      params.page = currentPage;
       const data = await apiGet("capture/workspace", params);
       renderWorkspace(data, { renderItems });
+      if (Number(data.pagination?.page || requestedPage) !== requestedPage) {
+        currentPage = Number(data.pagination.page);
+        return loadWorkspace({ renderItems: true, preserveSelection: true });
+      }
       updateSelectionUi();
       return data;
     } catch (error) {
@@ -661,6 +733,7 @@ async function initCaptureIndexPage() {
     stopReindexPolling();
     stopIndexPolling();
     selectedCategory = "";
+    currentPage = 1;
     setSelectionMode(false);
     reindexing = false;
     indexing = false;
@@ -670,6 +743,22 @@ async function initCaptureIndexPage() {
     void loadWorkspace();
   });
   refreshButton.addEventListener("click", () => void loadWorkspace());
+  paginationPrev?.addEventListener("click", () => {
+    if (currentPage > 1) {
+      currentPage -= 1;
+      void loadWorkspace({ preserveSelection: true });
+    }
+  });
+  paginationNext?.addEventListener("click", () => {
+    const totalPages = Math.max(
+      Number(currentWorkspace?.pagination?.indexed?.total_pages || 1),
+      Number(currentWorkspace?.pagination?.pending?.total_pages || 1),
+    );
+    if (currentPage < totalPages) {
+      currentPage += 1;
+      void loadWorkspace({ preserveSelection: true });
+    }
+  });
   selectionModeButton?.addEventListener("click", () => setSelectionMode(!selectionMode));
   selectVisibleDuplicatesButton?.addEventListener("click", () => {
     if (!mutationInProgress) toggleVisibleDuplicateSelection();

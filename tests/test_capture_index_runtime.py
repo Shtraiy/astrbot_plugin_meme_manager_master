@@ -82,6 +82,8 @@ function makeDocument() {
     "capture-index-button", "capture-ignore-duplicates-button", "capture-selection-mode-button",
     "capture-select-visible-duplicates-button", "capture-ignore-selected-button", "capture-selection-summary",
     "capture-category-filters", "preview-mask",
+    "capture-pagination", "capture-pagination-prev", "capture-pagination-pages",
+    "capture-pagination-next", "capture-pagination-summary",
     "preview-image", "preview-close", "capture-confirm-mask",
     "capture-confirm-title", "capture-confirm-description",
     "capture-confirm-cancel", "capture-confirm-confirm",
@@ -129,25 +131,46 @@ async function runPage(scriptPath) {
        { filename: "meme_demo.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo.png", indexed: true },
        { filename: "meme_demo_two.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo_two.png", indexed: true },
      ],
-    pending_items: [
+     pending_items: [
       { filename: "meme_pending.png", tag: "happy", category: "happy", relative_path: "memes/meme_pending.png", indexed: false },
       { filename: "meme_duplicate_a.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_a.png", indexed: false, duplicate: true, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
       { filename: "meme_duplicate_b.png", tag: "sad", category: "sad", relative_path: "memes/meme_duplicate_b.png", indexed: false, duplicate: true, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-      { filename: "meme_duplicate_c.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_c.png", indexed: false, duplicate: true, sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
-    ],
-    duplicate_digests: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+       { filename: "meme_duplicate_c.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_c.png", indexed: false, duplicate: true, sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+     ],
+     pagination: {
+       page: 1,
+       page_size: 48,
+       indexed: { total: 49, total_pages: 2 },
+       pending: { total: 4, total_pages: 1 },
+     },
+     duplicate_digests: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
     library_index: { status: "idle", active_pack: true, message: "目录索引已加载" },
   };
   let deleteShouldFail = false;
   let ignoreShouldFail = false;
   let workspaceCalls = 0;
+  const workspacePages = [];
   let indexStatusCalls = 0;
   const pageApi = {
     async ready() {},
-    async apiGet(endpoint) {
+    async apiGet(endpoint, params = {}) {
       if (endpoint === "packs") return { packs: [{ id: "pack" }] };
       if (endpoint === "capture/workspace") {
         workspaceCalls += 1;
+        workspacePages.push(String(params.page || "1"));
+        if (String(params.page || "1") === "2") {
+          return {
+            ...workspace,
+            indexed_items: [{ filename: "meme_page_two.png", tag: "happy", category: "happy", relative_path: "memes/meme_page_two.png", indexed: true }],
+            pending_items: [],
+            pagination: {
+              page: 2,
+              page_size: 48,
+              indexed: { total: 49, total_pages: 2 },
+              pending: { total: 4, total_pages: 1 },
+            },
+          };
+        }
         return workspace;
       }
       if (endpoint === "meme_image_data") return { data_url: "data:image/png;base64,AA==" };
@@ -237,6 +260,11 @@ async function runPage(scriptPath) {
   await new Promise((resolve) => setImmediate(resolve));
   const reindexPayload = calls.find((call) => call.endpoint === "capture/reindex").body;
   const reindexButton = document.querySelector("#capture-reindex-button");
+  const reindexNotice = document.querySelector("#notice").textContent;
+  const paginationAction = document.querySelector("#capture-pagination-next").dispatch("click");
+  await paginationAction;
+  await new Promise((resolve) => setImmediate(resolve));
+  const pageTwoRendered = document.querySelector("#capture-indexed-items").children[0].children[1].children[1].textContent === "meme_page_two.png";
   return {
     deletePayload,
     successNotice,
@@ -250,7 +278,9 @@ async function runPage(scriptPath) {
     workspaceCalls,
     reindexPayload,
     reindexRestored: !reindexButton.disabled && reindexButton.getAttribute("aria-busy") === "false",
-    reindexNotice: document.querySelector("#notice").textContent,
+    reindexNotice,
+    pageTwoRendered,
+    workspacePages,
   };
 }
 
@@ -289,7 +319,7 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["failureRestored"])
             self.assertEqual(payload["indexPayload"]["pack_id"], "pack")
             self.assertEqual(payload["indexStatusCalls"], 1)
-            self.assertEqual(payload["workspaceCalls"], 8)
+            self.assertEqual(payload["workspaceCalls"], 9)
             self.assertEqual(payload["reindexPayload"]["pack_id"], "pack")
             self.assertTrue(payload["reindexRestored"])
             self.assertIn("重索引已完成", payload["reindexNotice"])
@@ -308,6 +338,8 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             )
             self.assertTrue(payload["ignoredWithoutDelete"])
             self.assertTrue(payload["ignoreFailureRestored"])
+            self.assertTrue(payload["pageTwoRendered"])
+            self.assertEqual(payload["workspacePages"][-1], "2")
 
 
 if __name__ == "__main__":

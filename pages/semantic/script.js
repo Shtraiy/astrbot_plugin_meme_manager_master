@@ -312,6 +312,7 @@ async function initCaptureIndexPage() {
         control.textContent = selected ? "✓" : "";
       }
     });
+    renderPagination(currentWorkspace?.pagination);
   }
 
   function setSelectionMode(enabled) {
@@ -734,12 +735,13 @@ async function initCaptureIndexPage() {
       selectedDuplicateDigests.clear();
     }
     try {
+      const requestedPage = currentPage;
       const params = { pack_id: packSelect.value };
       if (selectedCategory) params.category = selectedCategory;
       params.page = currentPage;
       const data = await apiGet("capture/workspace", params);
       renderWorkspace(data, { renderItems });
-      if (renderItems && preserveSelection && Number(data.pagination?.page || currentPage) !== currentPage) {
+      if (Number(data.pagination?.page || requestedPage) !== requestedPage) {
         currentPage = Number(data.pagination.page);
         return loadWorkspace({ renderItems: true, preserveSelection: true });
       }

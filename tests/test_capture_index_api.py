@@ -67,6 +67,7 @@ class CaptureIndexApiTests(unittest.TestCase):
             with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent):
                 first_page = instance._capture_workspace_for_pack("pack", page=1)
                 second_page = instance._capture_workspace_for_pack("pack", page=2)
+                clamped_page = instance._capture_workspace_for_pack("pack", page=99)
                 filtered = instance._capture_workspace_for_pack("pack", "sad", page=1)
 
         self.assertEqual(first_page["pagination"]["page"], 1)
@@ -75,6 +76,8 @@ class CaptureIndexApiTests(unittest.TestCase):
         self.assertEqual(first_page["pagination"]["indexed"]["total_pages"], 2)
         self.assertEqual(len(first_page["indexed_items"]), 48)
         self.assertEqual(len(second_page["indexed_items"]), 3)
+        self.assertEqual(clamped_page["pagination"]["page"], 2)
+        self.assertEqual(len(clamped_page["indexed_items"]), 3)
         self.assertEqual(first_page["summary"]["indexed"], 51)
         self.assertEqual(len(filtered["indexed_items"]), 1)
         self.assertEqual(filtered["indexed_items"][0]["filename"], first.name)
