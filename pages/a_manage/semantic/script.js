@@ -274,15 +274,10 @@ async function initCaptureIndexPage() {
       ignoreSelectedButton.setAttribute("aria-busy", String(mutationInProgress));
     }
     document.querySelectorAll(".card[data-sha256]").forEach((card) => {
-      const selected = selectionMode && selectedDuplicateDigests.has(card.dataset.sha256);
+      const digest = normalizeDigest(card.dataset.sha256);
+      const selected = selectionMode && digest && selectedDuplicateDigests.has(digest);
       card.classList.toggle("selection-mode", selectionMode);
       card.classList.toggle("selected", selected);
-      const control = card.querySelector(".card-select");
-      if (control) {
-        control.hidden = !selectionMode;
-        control.setAttribute("aria-pressed", String(selected));
-        control.textContent = selected ? "✓" : "";
-      }
     });
     renderPagination(currentWorkspace?.pagination);
   }
@@ -314,10 +309,8 @@ async function initCaptureIndexPage() {
 
   function renderPagination(paginationData = {}) {
     const indexed = paginationData.indexed || {};
-    const pending = paginationData.pending || {};
     const indexedTotalPages = Math.max(1, Number(indexed.total_pages || 1));
-    const pendingTotalPages = Math.max(1, Number(pending.total_pages || 1));
-    const totalPages = Math.max(indexedTotalPages, pendingTotalPages);
+    const totalPages = indexedTotalPages;
     currentPage = Math.min(Math.max(1, Number(paginationData.page || currentPage)), totalPages);
     if (!pagination || !paginationPages || !paginationSummary) return;
     pagination.hidden = totalPages <= 1;
@@ -352,6 +345,7 @@ async function initCaptureIndexPage() {
       paginationPages.append(button);
       previousPage = page;
     });
+    const pending = paginationData.pending || {};
     paginationSummary.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${(Number(indexed.total || 0) + Number(pending.total || 0))} 张`;
   }
 
@@ -510,18 +504,6 @@ async function initCaptureIndexPage() {
     const digest = normalizeDigest(item.sha256);
     if (item.duplicate && digest) card.dataset.sha256 = digest;
 
-    const selectionButton = document.createElement("button");
-    selectionButton.type = "button";
-    selectionButton.className = "card-select";
-    selectionButton.hidden = true;
-    selectionButton.setAttribute("aria-label", "选择重复记录");
-    selectionButton.setAttribute("aria-pressed", "false");
-    if (item.duplicate && digest) {
-      selectionButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        toggleDuplicateSelection(digest);
-      });
-    }
     card.title = item.filename || "未命名图片";
     const previewButton = document.createElement("button");
     previewButton.type = "button";
@@ -590,10 +572,15 @@ async function initCaptureIndexPage() {
     });
     }
     actions.append(deleteButton);
-    card.append(selectionButton, previewButton, actions);
+    card.append(previewButton, actions);
     target.append(card);
     card.addEventListener("click", (event) => {
       if (event.target !== card) return;
+      const selectionDigest = normalizeDigest(card.dataset.sha256);
+      if (selectionMode && selectionDigest) {
+        toggleDuplicateSelection(selectionDigest);
+        return;
+      }
       if (card.classList.contains("thumbnail-error")) {
         void loadThumbnail(item, image, card);
       } else {
@@ -601,6 +588,11 @@ async function initCaptureIndexPage() {
       }
     });
     previewButton.addEventListener("click", () => {
+      const selectionDigest = normalizeDigest(card.dataset.sha256);
+      if (selectionMode && selectionDigest) {
+        toggleDuplicateSelection(selectionDigest);
+        return;
+      }
       if (card.classList.contains("thumbnail-error")) {
         void loadThumbnail(item, image, card);
         return;
@@ -750,10 +742,7 @@ async function initCaptureIndexPage() {
     }
   });
   paginationNext?.addEventListener("click", () => {
-    const totalPages = Math.max(
-      Number(currentWorkspace?.pagination?.indexed?.total_pages || 1),
-      Number(currentWorkspace?.pagination?.pending?.total_pages || 1),
-    );
+    const totalPages = Math.max(1, Number(currentWorkspace?.pagination?.indexed?.total_pages || 1));
     if (currentPage < totalPages) {
       currentPage += 1;
       void loadWorkspace({ preserveSelection: true });

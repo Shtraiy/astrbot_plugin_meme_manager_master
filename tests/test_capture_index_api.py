@@ -55,9 +55,10 @@ class CaptureIndexApiTests(unittest.TestCase):
             first = store.save_image(b"multi-tag-image", ["happy", "sad"], ".png").path
             for index in range(50):
                 store.save_image(f"image-{index}".encode(), "happy", ".png")
+            pending = store.save_image(b"pending-image", "happy", ".png").path
             catalog = store.load_catalog()
             for item in catalog["items"]:
-                item["indexed"] = True
+                item["indexed"] = item["filename"] != pending.name
             store.write_catalog(catalog["items"])
 
             instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
@@ -74,8 +75,12 @@ class CaptureIndexApiTests(unittest.TestCase):
         self.assertEqual(first_page["pagination"]["page_size"], 48)
         self.assertEqual(first_page["pagination"]["indexed"]["total"], 51)
         self.assertEqual(first_page["pagination"]["indexed"]["total_pages"], 2)
+        self.assertEqual(first_page["pagination"]["pending"]["total"], 1)
+        self.assertEqual(first_page["pagination"]["pending"]["total_pages"], 1)
         self.assertEqual(len(first_page["indexed_items"]), 48)
+        self.assertEqual(len(first_page["pending_items"]), 1)
         self.assertEqual(len(second_page["indexed_items"]), 3)
+        self.assertEqual(len(second_page["pending_items"]), 1)
         self.assertEqual(clamped_page["pagination"]["page"], 2)
         self.assertEqual(len(clamped_page["indexed_items"]), 3)
         self.assertEqual(first_page["summary"]["indexed"], 51)

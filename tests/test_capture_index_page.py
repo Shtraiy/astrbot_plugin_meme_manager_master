@@ -138,7 +138,9 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("pagination", script)
             self.assertIn('params.page = currentPage', script)
             self.assertIn("card-tags", script)
-            self.assertIn("width: 22px", style)
+            self.assertIn("card.selected", style)
+            self.assertNotIn("card-select", script)
+            self.assertNotIn("card-select", style)
             self.assertIn("max-height", style)
 
     def test_mutations_remove_cards_and_sync_metadata_without_full_rerender(self):
@@ -164,8 +166,8 @@ class CaptureIndexPageTests(unittest.TestCase):
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn('style.css?v=20260809-index-pagination-1', source)
-            self.assertIn('script.js?v=20260809-index-pagination-1', source)
+            self.assertIn('style.css?v=20260810-capture-workspace-1', source)
+            self.assertIn('script.js?v=20260810-capture-workspace-1', source)
             self.assertNotIn("20260803-", source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):

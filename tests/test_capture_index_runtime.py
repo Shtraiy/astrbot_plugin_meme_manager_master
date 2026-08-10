@@ -162,7 +162,7 @@ async function runPage(scriptPath) {
           return {
             ...workspace,
             indexed_items: [{ filename: "meme_page_two.png", tag: "happy", category: "happy", relative_path: "memes/meme_page_two.png", indexed: true }],
-            pending_items: [],
+            pending_items: workspace.pending_items,
             pagination: {
               page: 2,
               page_size: 48,
@@ -200,10 +200,22 @@ async function runPage(scriptPath) {
   );
   vm.runInThisContext(source, { filename: scriptPath });
   await globalThis.pageInit;
+  await new Promise((resolve) => setImmediate(resolve));
   const pack = document.querySelector("#pack");
   pack.value = "pack";
 
-   const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[2].children[0];
+  const duplicateCard = document.querySelector("#capture-pending-items").children[1];
+  await document.querySelector("#capture-selection-mode-button").dispatch("click");
+  await duplicateCard.dispatch("click");
+  const selectedByCardClick = duplicateCard.classList.contains("selected");
+  await duplicateCard.dispatch("click");
+  const deselectedByCardClick = !duplicateCard.classList.contains("selected");
+  const duplicateIgnoreButton = duplicateCard.children[1].children[0];
+  await duplicateIgnoreButton.dispatch("click");
+  await document.querySelector("#capture-confirm-cancel").dispatch("click");
+  const ignoreButtonDidNotSelect = !duplicateCard.classList.contains("selected");
+
+   const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
   const successButton = getDeleteButton();
   const successDelete = successButton.dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
@@ -222,7 +234,7 @@ async function runPage(scriptPath) {
   await new Promise((resolve) => setImmediate(resolve));
   const failureRestored = !failureButton.disabled && failureButton.getAttribute("aria-busy") === "false";
 
-   const getIgnoreButton = () => document.querySelector("#capture-pending-items").children[1].children[2].children[0];
+   const getIgnoreButton = () => document.querySelector("#capture-pending-items").children[1].children[1].children[0];
   const ignoreButton = getIgnoreButton();
   const ignoreAction = ignoreButton.dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
@@ -264,7 +276,7 @@ async function runPage(scriptPath) {
   const paginationAction = document.querySelector("#capture-pagination-next").dispatch("click");
   await paginationAction;
   await new Promise((resolve) => setImmediate(resolve));
-  const pageTwoRendered = document.querySelector("#capture-indexed-items").children[0].children[1].children[1].textContent === "meme_page_two.png";
+  const pageTwoRendered = document.querySelector("#capture-indexed-items").children[0].children[0].children[1].textContent === "meme_page_two.png";
   return {
     deletePayload,
     successNotice,
@@ -280,6 +292,10 @@ async function runPage(scriptPath) {
     reindexRestored: !reindexButton.disabled && reindexButton.getAttribute("aria-busy") === "false",
     reindexNotice,
     pageTwoRendered,
+    pendingVisibleOnPageTwo: document.querySelector("#capture-pending-items").children.length > 1,
+    selectedByCardClick,
+    deselectedByCardClick,
+    ignoreButtonDidNotSelect,
     workspacePages,
   };
 }
@@ -339,6 +355,10 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["ignoredWithoutDelete"])
             self.assertTrue(payload["ignoreFailureRestored"])
             self.assertTrue(payload["pageTwoRendered"])
+            self.assertTrue(payload["pendingVisibleOnPageTwo"])
+            self.assertTrue(payload["selectedByCardClick"])
+            self.assertTrue(payload["deselectedByCardClick"])
+            self.assertTrue(payload["ignoreButtonDidNotSelect"])
             self.assertEqual(payload["workspacePages"][-1], "2")
 
 

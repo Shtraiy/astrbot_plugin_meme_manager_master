@@ -184,8 +184,8 @@ class CaptureIndexAPIMixin:
         )
         visible_folders = [folder for folder in folders if not selected_tag or folder["tag"] == selected_tag]
         indexed_total_pages = max(1, (len(indexed_items) + CAPTURE_WORKSPACE_PAGE_SIZE - 1) // CAPTURE_WORKSPACE_PAGE_SIZE)
-        pending_total_pages = max(1, (len(pending_items) + CAPTURE_WORKSPACE_PAGE_SIZE - 1) // CAPTURE_WORKSPACE_PAGE_SIZE)
-        current_page = min(requested_page, max(indexed_total_pages, pending_total_pages))
+        pending_total_pages = 1
+        current_page = min(requested_page, indexed_total_pages)
         page_start = (current_page - 1) * CAPTURE_WORKSPACE_PAGE_SIZE
         page_end = page_start + CAPTURE_WORKSPACE_PAGE_SIZE
         return {
@@ -213,7 +213,7 @@ class CaptureIndexAPIMixin:
                 },
             },
             "indexed_items": indexed_items[page_start:page_end],
-            "pending_items": pending_items[page_start:page_end],
+            "pending_items": pending_items,
         }
     def _reindex_pack_catalog(self, pack_id: str) -> dict[str, int | str]:
         """Renumber local files and update catalog references without models."""
