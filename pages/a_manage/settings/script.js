@@ -1,46 +1,29 @@
 async function initSettingsPage() {
   await window.AstrBotPluginPage.ready();
 
-  function withCurrentPageParams(pageName, extraParams = {}) {
-    const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
-    if (!allowedPages.has(pageName)) {
-      return null;
-    }
-    const currentParams = new URLSearchParams(window.location.search);
-    for (const [key, value] of Object.entries(extraParams)) {
-      if (value === null || value === undefined || value === "") {
-        currentParams.delete(key);
-      } else {
-        currentParams.set(key, String(value));
-      }
-    }
-    const routeParams = new URLSearchParams();
-    for (const key of ["view", "managed_pack_id"]) {
-      const value = currentParams.get(key);
-      if (value) {
-        routeParams.set(key, value);
-      }
-    }
-    const nextUrl = new URL(window.location.origin + "/");
-    const suffix = routeParams.toString() ? `?${routeParams}` : "";
-    nextUrl.hash = `/plugin-page/meme_manager_master/${pageName}${suffix}`;
-    return nextUrl.toString();
-  }
-
   function applySecureNavLinks() {
+    const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
+    const currentParams = new URLSearchParams(window.location.search);
     document.querySelectorAll("a[data-nav-page]").forEach((link) => {
       const pageName = link.getAttribute("data-nav-page");
-      if (!pageName) {
+      if (!allowedPages.has(pageName)) {
         return;
       }
+      const nextUrl = new URL(link.href, window.location.href);
       const navView = link.getAttribute("data-nav-view") || "";
-      const nextUrl = withCurrentPageParams(pageName, {
-        view: navView || null,
-      });
-      if (nextUrl) {
-        link.target = "_top";
-        link.href = nextUrl;
+      if (navView) {
+        nextUrl.searchParams.set("view", navView);
+      } else {
+        nextUrl.searchParams.delete("view");
       }
+      const managedPackId = currentParams.get("managed_pack_id");
+      if (managedPackId) {
+        nextUrl.searchParams.set("managed_pack_id", managedPackId);
+      } else {
+        nextUrl.searchParams.delete("managed_pack_id");
+      }
+      link.removeAttribute("target");
+      link.href = nextUrl.toString();
     });
   }
 
