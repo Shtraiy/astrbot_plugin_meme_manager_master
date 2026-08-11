@@ -306,6 +306,9 @@ window.MemeManagerUI.pack.syncManagedPackQuery = function (managedPackId) {
       nextUrl.searchParams.delete("managed_pack_id");
     }
     window.history.replaceState(null, "", nextUrl.toString());
+    if (typeof window.MemeManagerUI.api.applySecureNavLinks === "function") {
+      window.MemeManagerUI.api.applySecureNavLinks();
+    }
   }
 window.MemeManagerUI.pack.buildCatalogPageUrl = function () {
     const catalogLink = document.querySelector('a[data-nav-page="catalog"]');

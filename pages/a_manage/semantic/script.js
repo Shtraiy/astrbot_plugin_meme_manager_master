@@ -52,8 +52,29 @@ async function initCaptureIndexPage() {
   }
 
   await pageApi.ready();
+  const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
+  const pageOrigin = window.location?.origin || "http://localhost";
+  const currentParams = new URLSearchParams(window.location?.search || "");
   document.querySelectorAll("a[data-nav-page]").forEach((link) => {
-    link.removeAttribute("target");
+    const pageName = link.getAttribute("data-nav-page");
+    if (!pageName || !allowedPages.has(pageName)) {
+      return;
+    }
+    const routeParams = new URLSearchParams();
+    const navView = link.getAttribute("data-nav-view") || "";
+    if (navView) {
+      routeParams.set("view", navView);
+    } else if (currentParams.get("view")) {
+      routeParams.set("view", currentParams.get("view"));
+    }
+    if (currentParams.get("managed_pack_id")) {
+      routeParams.set("managed_pack_id", currentParams.get("managed_pack_id"));
+    }
+    const nextUrl = new URL(pageOrigin + "/");
+    const suffix = routeParams.toString() ? `?${routeParams}` : "";
+    nextUrl.hash = `/plugin-page/meme_manager_master/${pageName}${suffix}`;
+    link.target = "_top";
+    link.href = nextUrl.toString();
   });
 
   const apiGet = (path, params = {}) => pageApi.apiGet(path, params);
