@@ -79,8 +79,7 @@ function makeDocument() {
     "capture-pending-count", "capture-refresh-button", "capture-reindex-button",
     "capture-reindex-progress", "capture-reindex-progress-label",
     "capture-reindex-progress-count", "capture-reindex-progress-bar",
-    "capture-index-button", "capture-ignore-duplicates-button", "capture-selection-mode-button",
-    "capture-select-visible-duplicates-button", "capture-ignore-selected-button", "capture-selection-summary",
+    "capture-index-button", "capture-ignore-duplicates-button",
     "capture-category-filters", "preview-mask",
     "capture-pagination", "capture-pagination-prev", "capture-pagination-pages",
     "capture-pagination-next", "capture-pagination-summary",
@@ -193,27 +192,19 @@ async function runPage(scriptPath) {
     },
   };
   globalThis.document = document;
-  globalThis.window = { AstrBotPluginPage: pageApi, setTimeout, clearTimeout };
-  const source = fs.readFileSync(scriptPath, "utf8").replace(
-    "void initCaptureIndexPage();",
-    "globalThis.pageInit = initCaptureIndexPage();",
-  );
+  globalThis.window = {
+    AstrBotPluginPage: pageApi,
+    MemeManagerUI: { router: { updateManagedPackQuery() {} } },
+    location: { search: "?managed_pack_id=pack" },
+    setTimeout,
+    clearTimeout,
+  };
+  const source = `${fs.readFileSync(scriptPath, "utf8")}\nglobalThis.pageInit = initCaptureIndexView();`;
   vm.runInThisContext(source, { filename: scriptPath });
   await globalThis.pageInit;
   await new Promise((resolve) => setImmediate(resolve));
   const pack = document.querySelector("#pack");
   pack.value = "pack";
-
-  const duplicateCard = document.querySelector("#capture-pending-items").children[1];
-  await document.querySelector("#capture-selection-mode-button").dispatch("click");
-  await duplicateCard.dispatch("click");
-  const selectedByCardClick = duplicateCard.classList.contains("selected");
-  await duplicateCard.dispatch("click");
-  const deselectedByCardClick = !duplicateCard.classList.contains("selected");
-  const duplicateIgnoreButton = duplicateCard.children[1].children[0];
-  await duplicateIgnoreButton.dispatch("click");
-  await document.querySelector("#capture-confirm-cancel").dispatch("click");
-  const ignoreButtonDidNotSelect = !duplicateCard.classList.contains("selected");
 
    const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
   const successButton = getDeleteButton();
@@ -293,9 +284,6 @@ async function runPage(scriptPath) {
     reindexNotice,
     pageTwoRendered,
     pendingVisibleOnPageTwo: document.querySelector("#capture-pending-items").children.length > 1,
-    selectedByCardClick,
-    deselectedByCardClick,
-    ignoreButtonDidNotSelect,
     workspacePages,
   };
 }
@@ -312,10 +300,9 @@ async function runPage(scriptPath) {
 
 
 class CaptureIndexRuntimeTests(unittest.TestCase):
-    def test_delete_and_reindex_runtime_states_for_both_page_copies(self):
+    def test_delete_reindex_ignore_all_and_pagination_runtime_states(self):
         scripts = [
-            str(ROOT / "pages" / "semantic" / "script.js"),
-            str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
+            str(ROOT / "pages" / "a_manage" / "capture-index.js"),
         ]
         result = subprocess.run(
             ["node", "-e", NODE_RUNTIME_HARNESS, *scripts],
@@ -356,9 +343,6 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["ignoreFailureRestored"])
             self.assertTrue(payload["pageTwoRendered"])
             self.assertTrue(payload["pendingVisibleOnPageTwo"])
-            self.assertTrue(payload["selectedByCardClick"])
-            self.assertTrue(payload["deselectedByCardClick"])
-            self.assertTrue(payload["ignoreButtonDidNotSelect"])
             self.assertEqual(payload["workspacePages"][-1], "2")
 
 

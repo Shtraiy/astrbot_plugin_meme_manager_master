@@ -2,218 +2,97 @@ import unittest
 from pathlib import Path
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).resolve().parents[1]
+PAGE = ROOT / "pages" / "a_manage"
 
 
 class CaptureIndexPageTests(unittest.TestCase):
-    def test_capture_index_page_is_available(self):
-        page = ROOT / "pages" / "semantic" / "index.html"
-        self.assertTrue(page.is_file())
-        source = page.read_text(encoding="utf-8")
-        self.assertIn("表情索引", source)
-        self.assertIn("capture-indexed-items", source)
-        self.assertIn("capture-pending-items", source)
-        self.assertIn("capture-reindex-button", source)
-        self.assertIn("capture-ignore-duplicates-button", source)
-        self.assertIn("capture-category-filters", source)
-        self.assertIn("sections-stack", source)
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (PAGE / "index.html").read_text(encoding="utf-8")
+        cls.script = (PAGE / "capture-index.js").read_text(encoding="utf-8")
+        cls.style = (PAGE / "capture-index.css").read_text(encoding="utf-8")
 
-    def test_nested_capture_index_page_has_the_same_vertical_workspace_contract(self):
-        page = ROOT / "pages" / "a_manage" / "semantic" / "index.html"
-        source = page.read_text(encoding="utf-8")
-        script = page.with_name("script.js").read_text(encoding="utf-8")
-        style = page.with_name("style.css").read_text(encoding="utf-8")
-        self.assertIn("capture-reindex-button", source)
-        self.assertIn("capture-category-filters", source)
-        self.assertIn("sections-stack", source)
-        self.assertIn('size: "preview"', script)
-        self.assertIn('apiPost("capture/reindex"', script)
-        self.assertIn('apiPost("capture/duplicates/ignore"', script)
-        self.assertIn(".sections-stack", style)
-
-    def test_reindex_button_is_not_silently_disabled_by_model_index_state(self):
-        for script_path in (
-            ROOT / "pages" / "semantic" / "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+    def test_capture_index_view_is_embedded_in_the_single_shell(self):
+        self.assertIn('data-view="index"', self.html)
+        for identifier in (
+            "capture-indexed-items",
+            "capture-pending-items",
+            "capture-reindex-button",
+            "capture-ignore-duplicates-button",
+            "capture-category-filters",
+            "sections-stack",
         ):
-            script = script_path.read_text(encoding="utf-8")
-            self.assertNotIn(
-                'reindexButton.disabled = state.status === "running";',
-                script,
-            )
-            self.assertIn("正在重索引表情文件", script)
+            self.assertIn(identifier, self.html)
 
-    def test_reindex_progress_contract_exists_in_both_page_copies(self):
-        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
-            source = (page_dir / "index.html").read_text(encoding="utf-8")
-            script = (page_dir / "script.js").read_text(encoding="utf-8")
-            style = (page_dir / "style.css").read_text(encoding="utf-8")
-            self.assertIn("capture-reindex-progress", source)
-            self.assertIn("capture-reindex-progress-bar", source)
-            self.assertIn('apiGet("capture/reindex/status"', script)
-            self.assertIn("setTimeout", script)
-            self.assertIn("reindex-progress", style)
+    def test_reindex_and_index_progress_contract_is_preserved(self):
+        self.assertIn("capture-reindex-progress", self.html)
+        self.assertIn("capture-reindex-progress-bar", self.html)
+        self.assertIn('apiGet("capture/reindex/status"', self.script)
+        self.assertIn('apiGet("capture/index/status"', self.script)
+        self.assertIn('apiPost("capture/reindex"', self.script)
+        self.assertIn('apiPost("capture/index"', self.script)
+        self.assertIn("setTimeout", self.script)
+        self.assertIn(".reindex-progress[hidden]", self.style)
+        self.assertNotIn('reindexButton.disabled = state.status === "running";', self.script)
 
-    def test_reindex_progress_hidden_state_is_not_rendered_by_display_rule(self):
-        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
-            style = (page_dir / "style.css").read_text(encoding="utf-8")
-            self.assertIn(".reindex-progress[hidden]", style)
+    def test_capture_routes_do_not_use_retired_semantic_endpoints(self):
+        self.assertIn('"capture/workspace"', self.script)
+        self.assertIn('"capture/index"', self.script)
+        self.assertNotIn('"semantic/capture-workspace"', self.script)
+        self.assertNotIn('"semantic/capture-index"', self.script)
 
-    def test_index_polling_does_not_rebuild_thumbnail_cards(self):
-        for script_path in (
-            ROOT / "pages" / "semantic" / "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+    def test_cards_keep_preview_delete_and_duplicate_ignore_actions(self):
+        self.assertIn('size: "preview"', self.script)
+        self.assertIn('size: "original"', self.script)
+        self.assertIn("deleteIndexedItem", self.script)
+        self.assertIn('apiPost("emoji/delete"', self.script)
+        self.assertIn('apiPost("capture/duplicates/ignore"', self.script)
+        self.assertIn('className = "card-preview"', self.script)
+        self.assertIn('className = "card-delete"', self.script)
+        self.assertIn('className = "card-ignore"', self.script)
+
+    def test_duplicate_batch_selection_ui_is_removed_but_ignore_all_remains(self):
+        for identifier in (
+            "capture-selection-mode-button",
+            "capture-select-visible-duplicates-button",
+            "capture-ignore-selected-button",
+            "selectedDuplicateDigests",
         ):
-            script = script_path.read_text(encoding="utf-8")
-            self.assertIn('apiGet("capture/index/status"', script)
-            self.assertIn("const data = await loadWorkspace();", script)
+            self.assertNotIn(identifier, self.html + self.script)
+        self.assertIn("capture-ignore-duplicates-button", self.html)
+        self.assertIn("new Set((digests || [])", self.script)
 
-    def test_reindex_progress_is_outside_the_resource_toolbar(self):
-        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
-            source = (page_dir / "index.html").read_text(encoding="utf-8")
-            toolbar_end = source.index("</section>", source.index('class="toolbar panel"'))
-            progress_row = source.index('class="capture-progress-row"')
-            self.assertGreater(progress_row, toolbar_end)
+    def test_pagination_belongs_to_indexed_panel_and_pending_items_are_unpaginated(self):
+        indexed = self.html.index('id="capture-indexed-items"')
+        pagination = self.html.index('id="capture-pagination"')
+        pending = self.html.index('id="capture-pending-panel"')
+        self.assertLess(indexed, pagination)
+        self.assertLess(pagination, pending)
+        self.assertIn("params.page = currentPage", self.script)
+        self.assertIn("Number(indexed.total || 0)", self.script)
+        self.assertNotIn("pagination.pending.total", self.script)
 
-    def test_manual_index_polls_until_the_backend_task_finishes(self):
-        for script_path in (
-            ROOT / "pages" / "semantic" / "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
-        ):
-            script = script_path.read_text(encoding="utf-8")
-            self.assertIn('apiPost("capture/index"', script)
-            self.assertIn("pollIndexStatus", script)
-            self.assertIn('apiGet("capture/index/status"', script)
-            self.assertIn("const data = await loadWorkspace();", script)
-            self.assertIn('setTimeout(() => void pollIndexStatus(), 500)', script)
-            self.assertIn('["queued", "running"]', script)
+    def test_duplicate_ignore_syncs_metadata_without_rebuilding_all_cards(self):
+        self.assertIn("removeCardsForItems", self.script)
+        self.assertIn("card.dataset.sha256", self.script)
+        self.assertIn("loadWorkspace({ renderItems: false })", self.script)
+        self.assertIn("renderWorkspace(data, { renderItems });", self.script)
 
-    def test_progress_page_assets_use_a_cache_busting_script_version(self):
-        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
-            source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertRegex(source, r'<script type="module" src="\./script\.js\?v=[^"]+"')
-
-    def test_capture_index_page_uses_non_semantic_capture_routes(self):
-        source = (ROOT / "pages" / "semantic" / "script.js").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('"capture/workspace"', source)
-        self.assertIn('"capture/index"', source)
-        self.assertNotIn('"semantic/capture-workspace"', source)
-        self.assertNotIn('"semantic/capture-index"', source)
-
-    def test_index_cards_have_pack_local_delete_actions_in_both_pages(self):
-        for script_path in (
-            ROOT / "pages" / "semantic" / "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
-        ):
-            script = script_path.read_text(encoding="utf-8")
-            self.assertIn("deleteIndexedItem", script)
-            self.assertIn('apiPost("emoji/delete"', script)
-            self.assertIn("managed_pack_id: packSelect.value", script)
-            self.assertIn('className = "card-preview"', script)
-            self.assertIn('className = "card-delete"', script)
-            self.assertIn('document.createElement("article")', script)
-            self.assertNotIn('const card = document.createElement("button")', script)
-
-    def test_duplicate_batch_ignore_controls_exist_in_both_pages(self):
-        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
-            source = (page_dir / "index.html").read_text(encoding="utf-8")
-            script = (page_dir / "script.js").read_text(encoding="utf-8")
-            self.assertIn("capture-selection-mode-button", source)
-            self.assertIn("capture-select-visible-duplicates-button", source)
-            self.assertIn("capture-ignore-selected-button", source)
-            self.assertIn("selectedDuplicateDigests", script)
-            self.assertIn("selectVisibleDuplicates", script)
-            self.assertIn("ignoreSelectedDuplicates", script)
-
-    def test_pagination_and_unique_tag_card_contract_exists_in_both_pages(self):
-        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
-            source = (page_dir / "index.html").read_text(encoding="utf-8")
-            script = (page_dir / "script.js").read_text(encoding="utf-8")
-            style = (page_dir / "style.css").read_text(encoding="utf-8")
-            self.assertIn("capture-pagination", source)
-            self.assertIn("capture-pagination-prev", source)
-            self.assertIn("capture-pagination-next", source)
-            self.assertIn("pagination", script)
-            self.assertIn('params.page = currentPage', script)
-            self.assertIn("card-tags", script)
-            self.assertIn("card.selected", style)
-            self.assertNotIn("card-select", script)
-            self.assertNotIn("card-select", style)
-            self.assertIn("max-height", style)
-
-    def test_mutations_remove_cards_and_sync_metadata_without_full_rerender(self):
-        for script_path in (
-            ROOT / "pages" / "semantic" / "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
-        ):
-            script = script_path.read_text(encoding="utf-8")
-            self.assertIn("removeCardsForItems", script)
-            self.assertIn("data-sha256", script)
-            self.assertIn("loadWorkspace({ renderItems: false })", script)
-            self.assertIn("renderWorkspace(data, { renderItems });", script)
-
-    def test_batch_ignore_deduplicates_sha256_before_posting(self):
-        for script_path in (
-            ROOT / "pages" / "semantic" / "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
-        ):
-            script = script_path.read_text(encoding="utf-8")
-            self.assertIn("new Set(selectedDuplicateDigests)", script)
-            self.assertIn('apiPost("capture/duplicates/ignore"', script)
-
-    def test_interaction_assets_use_a_fresh_cache_busting_version(self):
-        expected_script_versions = {
-            ROOT / "pages" / "semantic": "20260810-capture-workspace-1",
-            ROOT / "pages" / "a_manage" / "semantic": "20260811-sandbox-nav-fix-1",
-        }
-        for page_dir, script_version in expected_script_versions.items():
-            source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn('style.css?v=20260810-capture-workspace-1', source)
-            self.assertIn(f'script.js?v={script_version}', source)
-            self.assertNotIn("20260803-", source)
-
-    def test_delete_control_is_a_corner_icon_with_success_feedback(self):
-        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
-            script = (page_dir / "script.js").read_text(encoding="utf-8")
-            style = (page_dir / "style.css").read_text(encoding="utf-8")
-            self.assertIn("card-delete-icon", script)
-            self.assertIn('button.setAttribute("aria-busy", "true")', script)
-            self.assertIn("已删除", script)
-            self.assertIn("position: relative", style)
-            self.assertIn(".card-actions { position: absolute", style)
-            self.assertIn(".card-delete-icon", style)
-            self.assertIn("@media (prefers-reduced-motion: reduce)", style)
-
-    def test_index_actions_use_an_embedded_confirmation_dialog(self):
-        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
-            source = (page_dir / "index.html").read_text(encoding="utf-8")
-            script = (page_dir / "script.js").read_text(encoding="utf-8")
-            self.assertIn("capture-confirm-mask", source)
-            self.assertIn("capture-confirm-cancel", source)
-            self.assertIn("capture-confirm-confirm", source)
-            self.assertIn("requestConfirmation", script)
-            self.assertNotIn("window.confirm(", script)
-
-    def test_reindex_error_state_stops_polling_without_refreshing_workspace(self):
-        for script_path in (
-            ROOT / "pages" / "semantic" / "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
-        ):
-            script = script_path.read_text(encoding="utf-8")
-            self.assertIn('if (state.status === "error")', script)
-            self.assertIn('showError(new Error(state.message', script)
-            self.assertIn('if (state.status === "completed")', script)
+    def test_index_actions_use_the_embedded_confirmation_dialog(self):
+        self.assertIn("capture-confirm-mask", self.html)
+        self.assertIn("capture-confirm-cancel", self.html)
+        self.assertIn("capture-confirm-confirm", self.html)
+        self.assertIn("requestConfirmation", self.script)
+        self.assertNotIn("window.confirm(", self.script)
 
     def test_index_stats_render_dynamic_values_without_inner_html(self):
-        for script_path in (
-            ROOT / "pages" / "semantic" / "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
-        ):
-            script = script_path.read_text(encoding="utf-8")
-            self.assertNotIn("item.innerHTML", script)
-            self.assertIn("valueElement.textContent", script)
+        self.assertNotIn("item.innerHTML", self.script)
+        self.assertIn("valueElement.textContent", self.script)
+
+    def test_capture_view_assets_have_fresh_cache_busters(self):
+        self.assertIn("capture-index.css?v=20260811-spa-cleanup-1", self.html)
+        self.assertIn("capture-index.js?v=20260811-spa-cleanup-1", self.html)
 
 
 if __name__ == "__main__":

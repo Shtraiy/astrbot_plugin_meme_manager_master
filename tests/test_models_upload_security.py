@@ -57,8 +57,10 @@ class Upload:
     filename = "smoke.png"
     stream = io.BytesIO(payload.getvalue())
 with tempfile.TemporaryDirectory() as root:
-    result = add_emoji_to_category("happy", Upload(), Path(root))
+    memes_dir = Path(root) / "memes"
+    result = add_emoji_to_category("happy", Upload(), memes_dir)
     assert Path(result["path"]).is_file()
+    assert Path(result["path"]).parent == memes_dir
 assert "astrbot" not in sys.modules
 '''
         completed = subprocess.run(
@@ -72,34 +74,38 @@ assert "astrbot" not in sys.modules
 
     def test_rejects_fake_image_without_creating_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
+            memes_dir = Path(temp_dir) / "memes"
             with self.assertRaises(ValueError):
                 models.add_emoji_to_category(
                     "happy",
                     Upload("fake.png", b"not an image"),
-                    Path(temp_dir),
+                    memes_dir,
                 )
             self.assertEqual(list(Path(temp_dir).rglob("*")), [])
 
     def test_rejects_upload_larger_than_limit(self):
         with tempfile.TemporaryDirectory() as temp_dir:
+            memes_dir = Path(temp_dir) / "memes"
             oversized = b"0" * (models.MAX_UPLOAD_IMAGE_BYTES + 1)
             with self.assertRaises(ValueError):
                 models.add_emoji_to_category(
                     "happy",
                     Upload("large.png", oversized),
-                    Path(temp_dir),
+                    memes_dir,
                 )
             self.assertEqual(list(Path(temp_dir).rglob("*")), [])
 
     def test_valid_image_is_saved_with_no_temp_file_left(self):
         with tempfile.TemporaryDirectory() as temp_dir:
+            memes_dir = Path(temp_dir) / "memes"
             result = models.add_emoji_to_category(
                 "happy",
                 Upload("valid.png", png_bytes()),
-                Path(temp_dir),
+                memes_dir,
             )
             saved = Path(result["path"])
             self.assertTrue(saved.is_file())
+            self.assertEqual(saved.parent, memes_dir)
             self.assertEqual(saved.read_bytes(), png_bytes())
             self.assertFalse(any(path.name.endswith(".tmp") for path in saved.parent.iterdir()))
 

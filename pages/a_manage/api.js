@@ -1,32 +1,6 @@
 window.MemeManagerUI = window.MemeManagerUI || {};
 window.MemeManagerUI.api = window.MemeManagerUI.api || {};
 
-window.MemeManagerUI.api.applySecureNavLinks = function () {
-  const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
-  const currentParams = new URLSearchParams(window.location.search);
-  document.querySelectorAll("a[data-nav-page]").forEach((link) => {
-    const pageName = link.getAttribute("data-nav-page");
-    if (!allowedPages.has(pageName)) {
-      return;
-    }
-    const nextUrl = new URL(link.href, window.location.href);
-    const navView = link.getAttribute("data-nav-view") || "";
-    if (navView) {
-      nextUrl.searchParams.set("view", navView);
-    } else {
-      nextUrl.searchParams.delete("view");
-    }
-    const managedPackId = currentParams.get("managed_pack_id");
-    if (managedPackId) {
-      nextUrl.searchParams.set("managed_pack_id", managedPackId);
-    } else {
-      nextUrl.searchParams.delete("managed_pack_id");
-    }
-    link.removeAttribute("target");
-    link.href = nextUrl.toString();
-  });
-};
-
 window.MemeManagerUI.api.getSelectedPackId = function () {
   return String(
     window.MemeManagerUI.state.activeManagePackId ||

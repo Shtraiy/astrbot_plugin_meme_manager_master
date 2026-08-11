@@ -8,10 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 class IndexedEmojiThumbnailCardsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.script = (ROOT / "pages" / "semantic" / "script.js").read_text(
+        cls.script = (ROOT / "pages" / "a_manage" / "capture-index.js").read_text(
             encoding="utf-8"
         )
-        cls.style = (ROOT / "pages" / "semantic" / "style.css").read_text(
+        cls.style = (ROOT / "pages" / "a_manage" / "capture-index.css").read_text(
             encoding="utf-8"
         )
 
