@@ -19,12 +19,14 @@
 
 - 已整理项执行“删除并拉黑”；普通待分类项执行“忽略、删除并拉黑”；重复项执行“忽略并拉黑但保留已有图片”。普通表情管理页原有删除语义保持不变。
 - 批量选择时，点击任意已选卡片的处置按钮会批量处理同一区域的选择：已整理与待处理互不混入；移除冗余的“统一处理”工具栏按钮，未选卡片仍保持单项处置。
+- 表情索引工作台现在会在当前页面内复用已经加载的缩略图；刷新记录、忽略或删除后的重绘、筛选以及返回已浏览分页时不再整批重复加载，只有首次出现的新图片需要请求。缓存随资源包切换、成功重索引或页面重新加载安全失效。
 
 ### 验证
 
-- `python -m unittest discover -s tests -v`：325 项通过，1 项既有兼容性用例跳过。
+- `python -m unittest tests.test_capture_index_runtime tests.test_capture_index_page -v`：25 项通过。
+- `python -m unittest discover -s tests -v`：328 项通过，1 项既有兼容性用例跳过。
 - `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 和 `git diff --check`：通过。
-- 自动化页面回归已覆盖删除后补齐、页码回退、跨页选择和部分失败保留；当前环境无法访问局域网 AstrBot WebUI，长页面滚动与真实浏览器交互仍需人工复核。
+- 自动化页面回归已覆盖删除后补齐、页码回退、跨页选择、部分失败保留与缩略图缓存边界/失效；当前环境无法访问局域网 AstrBot WebUI，长页面滚动与真实浏览器交互仍需人工复核。
 
 ## [v2.1.4] - 2026-08-11
 
