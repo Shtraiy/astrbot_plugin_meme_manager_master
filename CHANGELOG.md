@@ -19,6 +19,12 @@
 
 - 已整理项执行“删除并拉黑”；普通待分类项执行“忽略、删除并拉黑”；重复项执行“忽略并拉黑但保留已有图片”。普通表情管理页原有删除语义保持不变。
 
+### 验证
+
+- `python -m unittest discover -s tests -v`：325 项通过，1 项既有兼容性用例跳过。
+- `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 和 `git diff --check`：通过。
+- 自动化页面回归已覆盖删除后补齐、页码回退、跨页选择和部分失败保留；当前环境无法访问局域网 AstrBot WebUI，长页面滚动与真实浏览器交互仍需人工复核。
+
 ## [v2.1.4] - 2026-08-11
 
 ### 修复
