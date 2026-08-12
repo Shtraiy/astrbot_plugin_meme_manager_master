@@ -24,7 +24,7 @@
 ### 验证
 
 - `python -m unittest tests.test_capture_index_runtime tests.test_capture_index_page -v`：25 项通过。
-- `python -m unittest discover -s tests -v`：328 项通过，1 项既有兼容性用例跳过。
+- `python -m unittest discover -s tests -v`：运行 328 项，1 项既有兼容性用例跳过。
 - `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 和 `git diff --check`：通过。
 - 自动化页面回归已覆盖删除后补齐、页码回退、跨页选择、部分失败保留与缩略图缓存边界/失效；当前环境无法访问局域网 AstrBot WebUI，长页面滚动与真实浏览器交互仍需人工复核。
 
