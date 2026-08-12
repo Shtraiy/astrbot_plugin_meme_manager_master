@@ -950,6 +950,140 @@ async function runStaleReindexFailureScenario(scriptPath) {
   };
 }
 
+async function runStaleCompletedWorkspaceScenario(scriptPath) {
+  const oldItem = {
+    filename: "old.png", tag: "happy", category: "happy",
+    relative_path: "memes/old.png", indexed: true,
+  };
+  const newItem = {
+    filename: "new.png", tag: "happy", category: "happy",
+    relative_path: "memes/new.png", indexed: true,
+  };
+  let workspaceACalls = 0;
+  let reindexStarted = false;
+  let resolveCompletedWorkspace;
+  const thumbnailCalls = new Map();
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") {
+        if (params.pack_id === "other") {
+          const data = workspace([newItem], []);
+          data.library_index.message = "B 工作区已加载";
+          return data;
+        }
+        workspaceACalls += 1;
+        if (workspaceACalls === 1) return workspace([oldItem], []);
+        return new Promise((resolve) => { resolveCompletedWorkspace = resolve; });
+      }
+      if (endpoint === "capture/reindex/status") {
+        return reindexStarted
+          ? { status: "completed", processed: 1, total: 1, message: "A 重索引已完成" }
+          : { status: "idle", processed: 0, total: 0, message: "尚未重索引" };
+      }
+      if (endpoint === "capture/index/status") return { status: "idle" };
+      if (endpoint === "meme_image_data") {
+        const key = `${params.managed_pack_id}:${params.filename}`;
+        thumbnailCalls.set(key, (thumbnailCalls.get(key) || 0) + 1);
+        return { data_url: `data:image/png;base64,${Buffer.from(key).toString("base64")}` };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost(endpoint) {
+      if (endpoint === "capture/reindex") {
+        reindexStarted = true;
+        return { status: "running", processed: 0, total: 1, message: "A 正在重索引" };
+      }
+      return { status: "ok" };
+    },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  const reindexAction = document.querySelector("#capture-reindex-button").dispatch("click");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await reindexAction;
+  await settle();
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  const noticeAfterSwitch = document.querySelector("#notice").textContent;
+  resolveCompletedWorkspace(workspace([oldItem], []));
+  await settle();
+  const visibleFilename = document.querySelector("#capture-indexed-items").children[0]?.dataset?.filename;
+  return {
+    staleCompletedWorkspaceDidNotOverwriteNewPack:
+      visibleFilename === "new.png" &&
+      document.querySelector("#notice").textContent === noticeAfterSwitch &&
+      !thumbnailCalls.has("other:old.png"),
+  };
+}
+
+async function runStaleReindexPostScenario(scriptPath, shouldReject) {
+  const item = {
+    filename: "post-race.png", tag: "happy", category: "happy",
+    relative_path: "memes/post-race.png", indexed: true,
+  };
+  let resolveReindexPost;
+  let rejectReindexPost;
+  let postedPackId = "";
+  let otherStatusCalls = 0;
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") {
+        const data = workspace([item], []);
+        data.library_index.message = params.pack_id === "other" ? "B 工作区已加载" : "A 工作区已加载";
+        return data;
+      }
+      if (endpoint === "capture/reindex/status") {
+        if (params.pack_id === "other") otherStatusCalls += 1;
+        return { status: "idle", processed: 0, total: 0, message: "尚未重索引" };
+      }
+      if (endpoint === "capture/index/status") return { status: "idle" };
+      if (endpoint === "meme_image_data") {
+        return { data_url: "data:image/png;base64,UE9TVFJBQ0U=" };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost(endpoint, body) {
+      if (endpoint !== "capture/reindex") return { status: "ok" };
+      postedPackId = body.pack_id;
+      return new Promise((resolve, reject) => {
+        resolveReindexPost = resolve;
+        rejectReindexPost = reject;
+      });
+    },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  const action = document.querySelector("#capture-reindex-button").dispatch("click");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await settle();
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  const noticeAfterSwitch = document.querySelector("#notice").textContent;
+  if (shouldReject) {
+    rejectReindexPost(new Error("A 重索引启动失败"));
+  } else {
+    resolveReindexPost({ status: "running", processed: 0, total: 1, message: "A 正在重索引" });
+  }
+  await action;
+  await settle();
+  return {
+    postedPackId,
+    unaffected:
+      document.querySelector("#notice").textContent === noticeAfterSwitch &&
+      document.querySelector("#capture-reindex-progress").hidden &&
+      document.querySelector("#capture-reindex-button").getAttribute("aria-busy") === "false" &&
+      otherStatusCalls === 0,
+  };
+}
+
 async function runPackSwitchScenario(scriptPath) {
   const item = {
     filename: "shared.png", tag: "happy", category: "happy",
@@ -1038,6 +1172,9 @@ async function runStaleRequestScenario(scriptPath) {
       ...(await runObservedReindexScenario(scriptPath)),
       ...(await runStaleReindexStatusScenario(scriptPath)),
       ...(await runStaleReindexFailureScenario(scriptPath)),
+      ...(await runStaleCompletedWorkspaceScenario(scriptPath)),
+      staleReindexPostResolve: await runStaleReindexPostScenario(scriptPath, false),
+      staleReindexPostReject: await runStaleReindexPostScenario(scriptPath, true),
       ...(await runPackSwitchScenario(scriptPath)),
       ...(await runStaleRequestScenario(scriptPath)),
     };
@@ -1181,20 +1318,30 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payloads = json.loads(result.stdout)
-        for payload in payloads.values():
-            self.assertTrue(payload["successfulIndexedDeleteEvicted"])
-            self.assertTrue(payload["indexedDeleteKeptOtherEntry"])
-            self.assertTrue(payload["successfulPendingDeleteEvicted"])
-            self.assertTrue(payload["pendingDeleteKeptOtherEntry"])
-            self.assertTrue(payload["failedDeleteRetained"])
-            self.assertTrue(payload["duplicateIgnoreRetained"])
-            self.assertTrue(payload["initialCompletedKeptCache"])
-            self.assertTrue(payload["activeReindexClearedCache"])
-            self.assertTrue(payload["observedRunningThenCompletedClearedCache"])
-            self.assertTrue(payload["staleReindexStatusDidNotAffectNewPack"])
-            self.assertTrue(payload["staleReindexFailureDidNotAffectNewPack"])
-            self.assertTrue(payload["packSwitchClearedCache"])
-            self.assertTrue(payload["staleRequestDidNotRepopulateCache"])
+        expected_behaviors = (
+            "successfulIndexedDeleteEvicted",
+            "indexedDeleteKeptOtherEntry",
+            "successfulPendingDeleteEvicted",
+            "pendingDeleteKeptOtherEntry",
+            "failedDeleteRetained",
+            "duplicateIgnoreRetained",
+            "initialCompletedKeptCache",
+            "activeReindexClearedCache",
+            "observedRunningThenCompletedClearedCache",
+            "staleReindexStatusDidNotAffectNewPack",
+            "staleReindexFailureDidNotAffectNewPack",
+            "staleCompletedWorkspaceDidNotOverwriteNewPack",
+            "packSwitchClearedCache",
+            "staleRequestDidNotRepopulateCache",
+        )
+        for script, payload in payloads.items():
+            for behavior in expected_behaviors:
+                with self.subTest(script=script, behavior=behavior):
+                    self.assertTrue(payload[behavior])
+            for outcome in ("staleReindexPostResolve", "staleReindexPostReject"):
+                with self.subTest(script=script, behavior=outcome):
+                    self.assertEqual(payload[outcome]["postedPackId"], "pack")
+                    self.assertTrue(payload[outcome]["unaffected"])
 
 
 if __name__ == "__main__":

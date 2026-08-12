@@ -48,6 +48,7 @@ async function initCaptureIndexPage() {
   const failedDisposals = new Map();
   let mutationInProgress = false;
   let currentPage = 1;
+  let workspaceRequestGeneration = 0;
   const THUMBNAIL_CACHE_MAX_ENTRIES = 512;
   const THUMBNAIL_CACHE_MAX_BYTES = 64 * 1024 * 1024;
   const thumbnailCache = new Map();
@@ -170,6 +171,7 @@ async function initCaptureIndexPage() {
         reindexButton.setAttribute("aria-busy", "false");
         if (shouldClearThumbnails) clearThumbnailCache();
         const refreshed = await loadWorkspace();
+        if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
         if (refreshed) {
           notice.textContent = state.message || "重索引已完成";
           notice.classList.remove("error");
@@ -780,21 +782,25 @@ async function initCaptureIndexPage() {
   }
 
   async function loadWorkspace({ preserveSelection = false } = {}) {
-    if (!packSelect.value) return;
+    const packId = packSelect.value;
+    if (!packId) return;
+    const generation = ++workspaceRequestGeneration;
     if (!preserveSelection) {
       selectionMode = false;
       selectedItems.clear();
       failedDisposals.clear();
     }
     try {
-      const params = { pack_id: packSelect.value };
+      const params = { pack_id: packId };
       if (selectedCategory) params.category = selectedCategory;
       params.page = currentPage;
       const data = await apiGet("capture/workspace", params);
+      if (generation !== workspaceRequestGeneration || packSelect.value !== packId) return;
       renderWorkspace(data);
       updateSelectionUi();
       return data;
     } catch (error) {
+      if (generation !== workspaceRequestGeneration || packSelect.value !== packId) return;
       showError(error);
     }
   }
@@ -869,17 +875,20 @@ async function initCaptureIndexPage() {
       "将旧分类目录迁移到平铺目录，并按 meme_<哈希> 重建标签索引。继续吗？",
       "重索引表情目录",
     ))) return;
-    reindexPollGeneration += 1;
+    const reindexPackId = packSelect.value;
+    const generation = ++reindexPollGeneration;
     reindexing = true;
     reindexButton.disabled = true;
     reindexButton.setAttribute("aria-busy", "true");
     notice.classList.remove("error");
     notice.textContent = "正在重索引表情文件，请稍候……";
     try {
-      const result = await apiPost("capture/reindex", { pack_id: packSelect.value });
+      const result = await apiPost("capture/reindex", { pack_id: reindexPackId });
+      if (generation !== reindexPollGeneration || packSelect.value !== reindexPackId) return;
       renderReindexProgress(result);
-      void pollReindexStatus();
+      void pollReindexStatus(generation);
     } catch (error) {
+      if (generation !== reindexPollGeneration || packSelect.value !== reindexPackId) return;
       reindexing = false;
       reindexButton.disabled = false;
       reindexButton.setAttribute("aria-busy", "false");
