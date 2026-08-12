@@ -20,7 +20,6 @@ async function initCaptureIndexPage() {
   const selectIndexedPageButton = document.querySelector("#capture-select-indexed-page-button");
   const selectPendingButton = document.querySelector("#capture-select-pending-button");
   const clearSelectionButton = document.querySelector("#capture-clear-selection-button");
-  const disposeSelectedButton = document.querySelector("#capture-dispose-selected-button");
   const selectionSummary = document.querySelector("#capture-selection-summary");
   const indexedHeading = document.querySelector("#capture-indexed-heading");
   const categoryFilters = document.querySelector("#capture-category-filters");
@@ -331,11 +330,6 @@ async function initCaptureIndexPage() {
       clearSelectionButton.hidden = !selectionMode;
       clearSelectionButton.disabled = mutationInProgress || selectedItems.size === 0;
     }
-    if (disposeSelectedButton) {
-      disposeSelectedButton.hidden = !selectionMode;
-      disposeSelectedButton.disabled = mutationInProgress || selectedItems.size === 0;
-      disposeSelectedButton.setAttribute("aria-busy", String(mutationInProgress));
-    }
     document.querySelectorAll(".card[data-selection-key]").forEach((card) => {
       const selected = selectionMode && selectedItems.has(card.dataset.selectionKey || "");
       card.classList.toggle("selection-mode", selectionMode);
@@ -371,6 +365,16 @@ async function initCaptureIndexPage() {
     if (selectedItems.has(key)) selectedItems.delete(key);
     else selectedItems.set(key, item);
     updateSelectionUi();
+  }
+
+  function disposalItemsForAction(item) {
+    const key = selectionKey(item);
+    if (!selectionMode || !key || !selectedItems.has(key)) return [item];
+    const indexedAction = item.kind === "indexed";
+    const matching = [...selectedItems.values()].filter((selected) =>
+      indexedAction ? selected.kind === "indexed" : selected.kind !== "indexed"
+    );
+    return matching.length ? matching : [item];
   }
 
   async function goToIndexedPage(page) {
@@ -467,11 +471,6 @@ async function initCaptureIndexPage() {
     }
   }
 
-  async function disposeSelectedItems() {
-    if (!selectedItems.size || mutationInProgress) return;
-    await disposeCaptureItems([...selectedItems.values()], disposeSelectedButton);
-  }
-
   function renderCard(item, target) {
     const disposal = selectionItem(item);
     const disposalKey = selectionKey(disposal);
@@ -551,7 +550,7 @@ async function initCaptureIndexPage() {
     }
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      void disposeCaptureItems([disposal], deleteButton);
+      void disposeCaptureItems(disposalItemsForAction(disposal), deleteButton);
     });
     actions.append(deleteButton);
     card.append(previewButton, actions);
@@ -725,9 +724,6 @@ async function initCaptureIndexPage() {
   clearSelectionButton?.addEventListener("click", () => {
     selectedItems.clear();
     updateSelectionUi();
-  });
-  disposeSelectedButton?.addEventListener("click", () => {
-    void disposeSelectedItems();
   });
   indexButton.addEventListener("click", async () => {
     if (indexing || !packSelect.value) return;

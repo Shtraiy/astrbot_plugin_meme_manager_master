@@ -14,7 +14,7 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn("capture-indexed-items", source)
         self.assertIn("capture-pending-items", source)
         self.assertIn("capture-reindex-button", source)
-        self.assertIn("capture-dispose-selected-button", source)
+        self.assertNotIn("capture-dispose-selected-button", source)
         self.assertIn("capture-category-filters", source)
         self.assertIn("sections-stack", source)
 
@@ -125,7 +125,7 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn('document.createElement("article")', script)
             self.assertNotIn('const card = document.createElement("button")', script)
 
-    def test_unified_batch_controls_exist_in_both_pages(self):
+    def test_contextual_batch_controls_exist_in_both_pages(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")
             script = (page_dir / "script.js").read_text(encoding="utf-8")
@@ -133,10 +133,11 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("capture-select-indexed-page-button", source)
             self.assertIn("capture-select-pending-button", source)
             self.assertIn("capture-clear-selection-button", source)
-            self.assertIn("capture-dispose-selected-button", source)
+            self.assertNotIn("capture-dispose-selected-button", source)
             self.assertIn("selectedItems", script)
             self.assertIn("toggleVisibleSelection", script)
-            self.assertIn("disposeSelectedItems", script)
+            self.assertIn("disposalItemsForAction", script)
+            self.assertNotIn("disposeSelectedItems", script)
 
     def test_pagination_and_unique_tag_card_contract_exists_in_both_pages(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -175,8 +176,8 @@ class CaptureIndexPageTests(unittest.TestCase):
 
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         expected_script_versions = {
-            ROOT / "pages" / "semantic": "20260812-unified-disposal-1",
-            ROOT / "pages" / "a_manage" / "semantic": "20260812-unified-disposal-1",
+            ROOT / "pages" / "semantic": "20260812-contextual-batch-1",
+            ROOT / "pages" / "a_manage" / "semantic": "20260812-contextual-batch-1",
         }
         for page_dir, script_version in expected_script_versions.items():
             source = (page_dir / "index.html").read_text(encoding="utf-8")

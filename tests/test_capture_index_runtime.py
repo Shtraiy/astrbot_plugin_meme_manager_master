@@ -85,7 +85,7 @@ function makeDocument() {
     "capture-reindex-progress-count", "capture-reindex-progress-bar",
     "capture-index-button", "capture-selection-mode-button", "capture-indexed-heading",
     "capture-select-indexed-page-button", "capture-select-pending-button",
-    "capture-clear-selection-button", "capture-dispose-selected-button", "capture-selection-summary",
+    "capture-clear-selection-button", "capture-selection-summary",
     "capture-category-filters", "preview-mask",
     "capture-pagination", "capture-pagination-prev", "capture-pagination-pages",
     "capture-pagination-next", "capture-pagination-summary",
@@ -197,15 +197,14 @@ async function runPage(scriptPath) {
           item.kind === "duplicate" ? `duplicate:${item.sha256}` : `${item.kind}:${item.filename}`,
           item,
         ])).values()];
-        const failed = disposePartially
-          ? uniqueItems.filter((item) => item.kind === "indexed").map((item) => ({
-              ...item,
-              blacklisted: true,
-              reason: "删除失败：locked",
-            }))
+        const failedItem = disposePartially
+          ? uniqueItems.find((item) => item.kind === "indexed")
+          : null;
+        const failed = failedItem
+          ? [{ ...failedItem, blacklisted: true, reason: "删除失败：locked" }]
           : [];
-        const succeeded = disposePartially
-          ? uniqueItems.filter((item) => item.kind !== "indexed")
+        const succeeded = failedItem
+          ? uniqueItems.filter((item) => item !== failedItem)
           : uniqueItems;
         for (const item of succeeded) {
           if (item.kind === "indexed") indexedAll = indexedAll.filter((entry) => entry.filename !== item.filename);
@@ -323,23 +322,55 @@ async function runPage(scriptPath) {
   await document.querySelector("#capture-selection-mode-button").dispatch("click");
   await document.querySelector("#capture-select-pending-button").dispatch("click");
   await document.querySelector("#capture-indexed-items").children[0].children[0].dispatch("click");
-  disposePartially = true;
-  const batchAction = document.querySelector("#capture-dispose-selected-button").dispatch("click");
+  await document.querySelector("#capture-indexed-items").children[1].children[0].dispatch("click");
+
+  const unselectedIndexedAction = document.querySelector("#capture-indexed-items").children[2].children[1].children[0].dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
   await document.querySelector("#capture-confirm-confirm").dispatch("click");
-  await batchAction;
+  await unselectedIndexedAction;
   await new Promise((resolve) => setImmediate(resolve));
-  const disposeCalls = calls.filter((call) => call.endpoint === "capture/items/dispose");
-  const batchPayload = disposeCalls[disposeCalls.length - 1].body;
+  let disposeCalls = calls.filter((call) => call.endpoint === "capture/items/dispose");
+  const unselectedIndexedPayload = disposeCalls[disposeCalls.length - 1].body;
+  const selectionsPreservedAfterUnselectedAction =
+    document.querySelector("#capture-selection-summary").textContent.includes("已整理 2 张") &&
+    document.querySelector("#capture-selection-summary").textContent.includes("待处理 2 张");
+
+  disposePartially = true;
+  const indexedBatchAction = document.querySelector("#capture-indexed-items").children[0].children[1].children[0].dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await indexedBatchAction;
+  await new Promise((resolve) => setImmediate(resolve));
+  disposeCalls = calls.filter((call) => call.endpoint === "capture/items/dispose");
+  const indexedBatchPayload = disposeCalls[disposeCalls.length - 1].body;
+  const pendingSelectionPreservedAfterIndexedBatch = document.querySelector("#capture-selection-summary").textContent.includes("待处理 2 张");
   const partialFailureKeptSelected = document.querySelector("#capture-selection-summary").textContent.includes("已整理 1 张");
   const partialFailureMarkedCard = document.querySelector("#capture-indexed-items").children[0].className.includes("disposal-failed");
+  const partialFailureCardStayedSelected = document.querySelector("#capture-indexed-items").children[0].classList.contains("selected");
+
+  disposePartially = false;
+  const pendingBatchAction = document.querySelector("#capture-pending-items").children[0].children[1].children[0].dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await pendingBatchAction;
+  await new Promise((resolve) => setImmediate(resolve));
+  disposeCalls = calls.filter((call) => call.endpoint === "capture/items/dispose");
+  const pendingBatchPayload = disposeCalls[disposeCalls.length - 1].body;
+  const indexedSelectionPreservedAfterPendingBatch = document.querySelector("#capture-selection-summary").textContent.includes("已整理 1 张");
+  const pendingSelectionClearedAfterPendingBatch = document.querySelector("#capture-selection-summary").textContent.includes("待处理 0 张");
   return {
     deletePayload,
     clampPayload,
     successNotice,
     failureRestored,
     ignorePayload,
-    batchPayload,
+    unselectedIndexedPayload,
+    selectionsPreservedAfterUnselectedAction,
+    indexedBatchPayload,
+    pendingBatchPayload,
+    pendingSelectionPreservedAfterIndexedBatch,
+    indexedSelectionPreservedAfterPendingBatch,
+    pendingSelectionClearedAfterPendingBatch,
     ignoredWithoutIndexedDelete,
     indexPayload,
     indexStatusCalls,
@@ -353,6 +384,7 @@ async function runPage(scriptPath) {
     crossPageSelectionPreserved,
     partialFailureKeptSelected,
     partialFailureMarkedCard,
+    partialFailureCardStayedSelected,
     selectedByCardClick,
     deselectedByCardClick,
     ignoreButtonDidNotSelect,
@@ -414,11 +446,32 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
                     "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 }],
             )
-            self.assertEqual(payload["batchPayload"]["pack_id"], "pack")
+            self.assertEqual(payload["indexedBatchPayload"]["pack_id"], "pack")
             self.assertEqual(
-                {item["kind"] for item in payload["batchPayload"]["items"]},
-                {"indexed", "pending", "duplicate"},
+                payload["unselectedIndexedPayload"]["items"],
+                [{"kind": "indexed", "filename": "meme_04.png"}],
             )
+            self.assertTrue(payload["selectionsPreservedAfterUnselectedAction"])
+            self.assertEqual(
+                {item["kind"] for item in payload["indexedBatchPayload"]["items"]},
+                {"indexed"},
+            )
+            self.assertEqual(
+                {item["filename"] for item in payload["indexedBatchPayload"]["items"]},
+                {"meme_02.png", "meme_03.png"},
+            )
+            self.assertEqual(payload["pendingBatchPayload"]["pack_id"], "pack")
+            self.assertEqual(
+                {item["kind"] for item in payload["pendingBatchPayload"]["items"]},
+                {"pending", "duplicate"},
+            )
+            self.assertNotIn(
+                "indexed",
+                {item["kind"] for item in payload["pendingBatchPayload"]["items"]},
+            )
+            self.assertTrue(payload["pendingSelectionPreservedAfterIndexedBatch"])
+            self.assertTrue(payload["indexedSelectionPreservedAfterPendingBatch"])
+            self.assertTrue(payload["pendingSelectionClearedAfterPendingBatch"])
             self.assertTrue(payload["ignoredWithoutIndexedDelete"])
             self.assertTrue(payload["refilledAfterDelete"])
             self.assertTrue(payload["clampedAfterDelete"])
@@ -426,6 +479,7 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["crossPageSelectionPreserved"])
             self.assertTrue(payload["partialFailureKeptSelected"])
             self.assertTrue(payload["partialFailureMarkedCard"])
+            self.assertTrue(payload["partialFailureCardStayedSelected"])
             self.assertTrue(payload["selectedByCardClick"])
             self.assertTrue(payload["deselectedByCardClick"])
             self.assertTrue(payload["ignoreButtonDidNotSelect"])
