@@ -608,6 +608,448 @@ async function runThumbnailCacheBoundaries(scriptPath, mutations = {}) {
 '''
 
 
+NODE_CACHE_INVALIDATION_HARNESS = NODE_RUNTIME_HARNESS.split("async function runPage(scriptPath) {", 1)[0] + r'''
+function settle() {
+  return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+}
+
+async function loadScript(scriptPath, pageApi, windowOverrides = {}) {
+  const document = makeDocument();
+  globalThis.document = document;
+  globalThis.window = { AstrBotPluginPage: pageApi, setTimeout, clearTimeout, ...windowOverrides };
+  const source = fs.readFileSync(scriptPath, "utf8").replace(
+    "void initCaptureIndexPage();",
+    "globalThis.pageInit = initCaptureIndexPage();",
+  );
+  vm.runInThisContext(source, { filename: scriptPath });
+  await globalThis.pageInit;
+  await settle();
+  return document;
+}
+
+function workspace(indexedItems, pendingItems) {
+  const duplicateDigests = [...new Set(
+    pendingItems.filter((item) => item.duplicate).map((item) => item.sha256),
+  )];
+  return {
+    summary: {
+      indexed: indexedItems.length,
+      pending: pendingItems.filter((item) => !item.duplicate).length,
+      duplicate: pendingItems.filter((item) => item.duplicate).length,
+      complete_folders: 0,
+      folder_total: 1,
+    },
+    folders: [{ category: "happy", tag: "happy", indexed: indexedItems.length, total: indexedItems.length, complete: true }],
+    indexed_items: indexedItems,
+    pending_items: pendingItems,
+    pagination: {
+      page: 1,
+      indexed: { total: indexedItems.length, total_pages: 1 },
+      pending: { total: pendingItems.length, total_pages: 1 },
+    },
+    duplicate_digests: duplicateDigests,
+    library_index: { status: "idle", active_pack: true, message: "目录索引已加载" },
+  };
+}
+
+async function confirmCardAction(document, button) {
+  const action = button.dispatch("click");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await action;
+  await settle();
+}
+
+async function runDisposalInvalidationScenario(scriptPath) {
+  const indexedItem = {
+    filename: "indexed.png", tag: "happy", category: "happy",
+    relative_path: "memes/indexed.png", indexed: true,
+  };
+  const pendingItem = {
+    filename: "pending.png", tag: "happy", category: "happy",
+    relative_path: "memes/pending.png", indexed: false,
+  };
+  const duplicateDigest = "a".repeat(64);
+  const duplicateItem = {
+    filename: "duplicate-old.png", tag: "happy", category: "happy",
+    relative_path: "memes/duplicate-old.png", indexed: false, duplicate: true,
+    sha256: duplicateDigest,
+  };
+  let indexedItems = [indexedItem];
+  let pendingItems = [pendingItem, duplicateItem];
+  let failNextDisposal = false;
+  let switchPackDuringNextDisposal = true;
+  let document;
+  const thumbnailCalls = new Map();
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") return workspace(indexedItems, pendingItems);
+      if (endpoint === "capture/reindex/status") {
+        return { status: "idle", processed: 0, total: 0, message: "尚未重索引" };
+      }
+      if (endpoint === "capture/index/status") {
+        return { status: "idle", processed: 0, total: 0, message: "尚未索引" };
+      }
+      if (endpoint === "meme_image_data") {
+        const key = `${params.managed_pack_id}:${params.filename}`;
+        thumbnailCalls.set(key, (thumbnailCalls.get(key) || 0) + 1);
+        return { data_url: `data:image/png;base64,${Buffer.from(key).toString("base64")}` };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost(endpoint, body) {
+      if (endpoint !== "capture/items/dispose") return { status: "ok" };
+      const item = body.items[0];
+      if (failNextDisposal) {
+        failNextDisposal = false;
+        return {
+          message: "处理失败", succeeded: [], failed: [{ ...item, reason: "locked" }],
+          disposed_count: 0, failed_count: 1, blacklisted_count: 1,
+        };
+      }
+      if (item.kind === "indexed") {
+        indexedItems = indexedItems.filter((entry) => entry.filename !== item.filename);
+      } else if (item.kind === "pending") {
+        pendingItems = pendingItems.filter((entry) => entry.filename !== item.filename);
+      } else if (item.kind === "duplicate") {
+        pendingItems = pendingItems.filter((entry) => entry.sha256 !== item.sha256);
+      }
+      if (switchPackDuringNextDisposal) {
+        switchPackDuringNextDisposal = false;
+        document.querySelector("#pack").value = "other";
+      }
+      return {
+        message: "统一处理完成", succeeded: [item], failed: [],
+        disposed_count: 1, failed_count: 0, blacklisted_count: 1,
+      };
+    },
+  };
+  document = await loadScript(scriptPath, pageApi);
+
+  await confirmCardAction(
+    document,
+    document.querySelector("#capture-indexed-items").children[0].children[1].children[0],
+  );
+  const indexedBeforeProbe = thumbnailCalls.get("pack:indexed.png") || 0;
+  const pendingBeforeIndexedProbe = thumbnailCalls.get("pack:pending.png") || 0;
+  indexedItems = [indexedItem];
+  document.querySelector("#pack").value = "pack";
+  await document.querySelector("#capture-refresh-button").dispatch("click");
+  await settle();
+  const successfulIndexedDeleteEvicted =
+    thumbnailCalls.get("pack:indexed.png") === indexedBeforeProbe + 1;
+  const indexedDeleteKeptOtherEntry =
+    thumbnailCalls.get("pack:pending.png") === pendingBeforeIndexedProbe;
+
+  await confirmCardAction(
+    document,
+    document.querySelector("#capture-pending-items").children[0].children[1].children[0],
+  );
+  const pendingBeforeProbe = thumbnailCalls.get("pack:pending.png") || 0;
+  const indexedBeforePendingProbe = thumbnailCalls.get("pack:indexed.png") || 0;
+  pendingItems.unshift(pendingItem);
+  await document.querySelector("#capture-refresh-button").dispatch("click");
+  await settle();
+  const successfulPendingDeleteEvicted =
+    thumbnailCalls.get("pack:pending.png") === pendingBeforeProbe + 1;
+  const pendingDeleteKeptOtherEntry =
+    thumbnailCalls.get("pack:indexed.png") === indexedBeforePendingProbe;
+
+  failNextDisposal = true;
+  const failedBefore = thumbnailCalls.get("pack:indexed.png") || 0;
+  await confirmCardAction(
+    document,
+    document.querySelector("#capture-indexed-items").children[0].children[1].children[0],
+  );
+  const failedDeleteRetained = thumbnailCalls.get("pack:indexed.png") === failedBefore;
+
+  const duplicateBefore = [...thumbnailCalls.values()].reduce((total, count) => total + count, 0);
+  const duplicateCard = document.querySelector("#capture-pending-items").children[1];
+  await confirmCardAction(document, duplicateCard.children[1].children[0]);
+  pendingItems.push({
+    ...duplicateItem,
+    filename: "duplicate-new.png",
+    relative_path: "memes/duplicate-new.png",
+  });
+  await document.querySelector("#capture-refresh-button").dispatch("click");
+  await settle();
+  const duplicateAfter = [...thumbnailCalls.values()].reduce((total, count) => total + count, 0);
+  const duplicateIgnoreRetained = duplicateAfter === duplicateBefore;
+
+  return {
+    successfulIndexedDeleteEvicted,
+    indexedDeleteKeptOtherEntry,
+    successfulPendingDeleteEvicted,
+    pendingDeleteKeptOtherEntry,
+    failedDeleteRetained,
+    duplicateIgnoreRetained,
+  };
+}
+
+async function runReindexInvalidationScenario(scriptPath) {
+  const item = {
+    filename: "reindex.png", tag: "happy", category: "happy",
+    relative_path: "memes/reindex.png", indexed: true,
+  };
+  let reindexStarted = false;
+  let thumbnailCalls = 0;
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }] };
+      if (endpoint === "capture/workspace") return workspace([item], []);
+      if (endpoint === "capture/reindex/status") {
+        return { status: "completed", processed: 1, total: 1, message: reindexStarted ? "重索引已完成" : "历史重索引已完成" };
+      }
+      if (endpoint === "capture/index/status") return { status: "idle" };
+      if (endpoint === "meme_image_data") {
+        thumbnailCalls += 1;
+        return { data_url: "data:image/png;base64,UkVJTkRFWCI=" };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost(endpoint) {
+      if (endpoint === "capture/reindex") {
+        reindexStarted = true;
+        return { status: "running", processed: 0, total: 1, message: "正在重索引" };
+      }
+      return { status: "ok" };
+    },
+  };
+  const immediateTimeout = (callback) => setImmediate(callback);
+  const document = await loadScript(
+    scriptPath,
+    pageApi,
+    { setTimeout: immediateTimeout, clearTimeout: clearImmediate },
+  );
+  const initialCompletedKeptCache = thumbnailCalls === 1;
+  const beforeReindex = thumbnailCalls;
+  const reindexAction = document.querySelector("#capture-reindex-button").dispatch("click");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await reindexAction;
+  await settle();
+  const activeReindexClearedCache = thumbnailCalls === beforeReindex + 1;
+  return { initialCompletedKeptCache, activeReindexClearedCache };
+}
+
+async function runObservedReindexScenario(scriptPath) {
+  const item = {
+    filename: "observed.png", tag: "happy", category: "happy",
+    relative_path: "memes/observed.png", indexed: true,
+  };
+  let statusCalls = 0;
+  let thumbnailCalls = 0;
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }] };
+      if (endpoint === "capture/workspace") return workspace([item], []);
+      if (endpoint === "capture/reindex/status") {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? { status: "running", processed: 0, total: 1, message: "正在重索引" }
+          : { status: "completed", processed: 1, total: 1, message: "重索引已完成" };
+      }
+      if (endpoint === "capture/index/status") return { status: "idle" };
+      if (endpoint === "meme_image_data") {
+        thumbnailCalls += 1;
+        return { data_url: "data:image/png;base64,T0JTRVJWRUQ=" };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost() { return { status: "ok" }; },
+  };
+  const immediateTimeout = (callback) => setImmediate(callback);
+  await loadScript(scriptPath, pageApi, { setTimeout: immediateTimeout, clearTimeout: clearImmediate });
+  await settle();
+  return { observedRunningThenCompletedClearedCache: thumbnailCalls === 2 };
+}
+
+async function runStaleReindexStatusScenario(scriptPath) {
+  const item = {
+    filename: "status-race.png", tag: "happy", category: "happy",
+    relative_path: "memes/status-race.png", indexed: true,
+  };
+  let resolveOldPackStatus;
+  let thumbnailCalls = 0;
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") return workspace([item], []);
+      if (endpoint === "capture/reindex/status") {
+        if (params.pack_id === "pack") {
+          return new Promise((resolve) => { resolveOldPackStatus = resolve; });
+        }
+        return { status: "completed", processed: 1, total: 1, message: "历史重索引已完成" };
+      }
+      if (endpoint === "capture/index/status") return { status: "idle" };
+      if (endpoint === "meme_image_data") {
+        thumbnailCalls += 1;
+        return { data_url: "data:image/png;base64,U1RBVFVTUkFDRQ==" };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost() { return { status: "ok" }; },
+  };
+  const immediateTimeout = (callback) => setImmediate(callback);
+  const document = await loadScript(
+    scriptPath,
+    pageApi,
+    { setTimeout: immediateTimeout, clearTimeout: clearImmediate },
+  );
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  const afterSwitch = thumbnailCalls;
+  resolveOldPackStatus({ status: "running", processed: 0, total: 1, message: "旧包仍在重索引" });
+  await settle();
+  return { staleReindexStatusDidNotAffectNewPack: thumbnailCalls === afterSwitch };
+}
+
+async function runStaleReindexFailureScenario(scriptPath) {
+  const item = {
+    filename: "status-error-race.png", tag: "happy", category: "happy",
+    relative_path: "memes/status-error-race.png", indexed: true,
+  };
+  let rejectOldPackStatus;
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") return workspace([item], []);
+      if (endpoint === "capture/reindex/status") {
+        if (params.pack_id === "pack") {
+          return new Promise((resolve, reject) => { rejectOldPackStatus = reject; });
+        }
+        return { status: "idle", processed: 0, total: 0, message: "新包尚未重索引" };
+      }
+      if (endpoint === "capture/index/status") return { status: "idle" };
+      if (endpoint === "meme_image_data") {
+        return { data_url: "data:image/png;base64,U1RBVFVTRVJST1I=" };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost() { return { status: "ok" }; },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  const noticeBeforeReject = document.querySelector("#notice").textContent;
+  rejectOldPackStatus(new Error("旧包状态请求失败"));
+  await settle();
+  return {
+    staleReindexFailureDidNotAffectNewPack:
+      document.querySelector("#notice").textContent === noticeBeforeReject,
+  };
+}
+
+async function runPackSwitchScenario(scriptPath) {
+  const item = {
+    filename: "shared.png", tag: "happy", category: "happy",
+    relative_path: "memes/shared.png", indexed: true,
+  };
+  const thumbnailCalls = new Map();
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") return workspace([item], []);
+      if (endpoint === "capture/reindex/status") return { status: "idle" };
+      if (endpoint === "capture/index/status") return { status: "idle" };
+      if (endpoint === "meme_image_data") {
+        const packId = String(params.managed_pack_id);
+        thumbnailCalls.set(packId, (thumbnailCalls.get(packId) || 0) + 1);
+        return { data_url: `data:image/png;base64,${Buffer.from(packId).toString("base64")}` };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost() { return { status: "ok" }; },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  pack.value = "pack";
+  await pack.dispatch("change");
+  await settle();
+  return { packSwitchClearedCache: thumbnailCalls.get("pack") === 2 };
+}
+
+async function runStaleRequestScenario(scriptPath) {
+  let item = {
+    filename: "initial.png", tag: "happy", category: "happy",
+    relative_path: "memes/initial.png", indexed: true,
+  };
+  let resolveDeferredThumbnail;
+  let deferredPackRequests = 0;
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") return workspace([item], []);
+      if (endpoint === "capture/reindex/status") return { status: "idle" };
+      if (endpoint === "capture/index/status") return { status: "idle" };
+      if (endpoint === "meme_image_data") {
+        if (params.filename === "deferred.png" && params.managed_pack_id === "pack") {
+          deferredPackRequests += 1;
+          if (deferredPackRequests === 1) {
+            return new Promise((resolve) => { resolveDeferredThumbnail = resolve; });
+          }
+        }
+        return { data_url: `data:image/png;base64,${Buffer.from(String(params.managed_pack_id)).toString("base64")}` };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost() { return { status: "ok" }; },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  item = {
+    filename: "deferred.png", tag: "happy", category: "happy",
+    relative_path: "memes/deferred.png", indexed: true,
+  };
+  await document.querySelector("#capture-refresh-button").dispatch("click");
+  await settle();
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  resolveDeferredThumbnail({ data_url: "data:image/png;base64,REVG" });
+  await settle();
+  pack.value = "pack";
+  await pack.dispatch("change");
+  await settle();
+  return { staleRequestDidNotRepopulateCache: deferredPackRequests === 2 };
+}
+
+(async () => {
+  const results = {};
+  for (const scriptPath of process.argv.slice(1)) {
+    results[scriptPath] = {
+      ...(await runDisposalInvalidationScenario(scriptPath)),
+      ...(await runReindexInvalidationScenario(scriptPath)),
+      ...(await runObservedReindexScenario(scriptPath)),
+      ...(await runStaleReindexStatusScenario(scriptPath)),
+      ...(await runStaleReindexFailureScenario(scriptPath)),
+      ...(await runPackSwitchScenario(scriptPath)),
+      ...(await runStaleRequestScenario(scriptPath)),
+    };
+  }
+  process.stdout.write(JSON.stringify(results));
+})().catch((error) => {
+  process.stderr.write(error.stack || String(error));
+  process.exitCode = 1;
+});
+'''
+
+
 class CaptureIndexRuntimeTests(unittest.TestCase):
     def test_delete_and_reindex_runtime_states_for_both_page_copies(self):
         scripts = [
@@ -722,6 +1164,37 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["invalidDataUrlIsNotCached"])
         self.assertFalse(payloads["mutatedReadDoesNotRefreshLru"]["entryLruEviction"])
         self.assertFalse(payloads["mutatedAcceptInvalidDataUrl"]["invalidDataUrlIsNotCached"])
+
+    def test_thumbnail_cache_invalidation_for_both_page_copies(self):
+        scripts = [
+            str(ROOT / "pages" / "semantic" / "script.js"),
+            str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
+        ]
+        result = subprocess.run(
+            ["node", "-e", NODE_CACHE_INVALIDATION_HARNESS, *scripts],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payloads = json.loads(result.stdout)
+        for payload in payloads.values():
+            self.assertTrue(payload["successfulIndexedDeleteEvicted"])
+            self.assertTrue(payload["indexedDeleteKeptOtherEntry"])
+            self.assertTrue(payload["successfulPendingDeleteEvicted"])
+            self.assertTrue(payload["pendingDeleteKeptOtherEntry"])
+            self.assertTrue(payload["failedDeleteRetained"])
+            self.assertTrue(payload["duplicateIgnoreRetained"])
+            self.assertTrue(payload["initialCompletedKeptCache"])
+            self.assertTrue(payload["activeReindexClearedCache"])
+            self.assertTrue(payload["observedRunningThenCompletedClearedCache"])
+            self.assertTrue(payload["staleReindexStatusDidNotAffectNewPack"])
+            self.assertTrue(payload["staleReindexFailureDidNotAffectNewPack"])
+            self.assertTrue(payload["packSwitchClearedCache"])
+            self.assertTrue(payload["staleRequestDidNotRepopulateCache"])
 
 
 if __name__ == "__main__":

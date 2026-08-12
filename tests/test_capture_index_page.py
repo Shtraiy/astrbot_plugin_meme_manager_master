@@ -176,14 +176,28 @@ class CaptureIndexPageTests(unittest.TestCase):
 
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         expected_script_versions = {
-            ROOT / "pages" / "semantic": "20260812-contextual-batch-1",
-            ROOT / "pages" / "a_manage" / "semantic": "20260812-contextual-batch-1",
+            ROOT / "pages" / "semantic": "20260812-thumbnail-cache-1",
+            ROOT / "pages" / "a_manage" / "semantic": "20260812-thumbnail-cache-1",
         }
         for page_dir, script_version in expected_script_versions.items():
             source = (page_dir / "index.html").read_text(encoding="utf-8")
             self.assertIn('style.css?v=20260812-unified-disposal-1', source)
             self.assertIn(f'script.js?v={script_version}', source)
             self.assertNotIn("20260803-", source)
+
+    def test_thumbnail_cache_contract_and_asset_version_match(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            script = (page_dir / "script.js").read_text(encoding="utf-8")
+            self.assertIn("THUMBNAIL_CACHE_MAX_ENTRIES = 512", script)
+            self.assertIn("THUMBNAIL_CACHE_MAX_BYTES = 64 * 1024 * 1024", script)
+            self.assertIn("dataUrl.length * 2", script)
+            self.assertIn("thumbnailRequests", script)
+            self.assertIn("if (shouldClearThumbnails) clearThumbnailCache();", script)
+            self.assertIn("evictThumbnailFile", script)
+            self.assertIn('if (item.kind !== "duplicate")', script)
+            self.assertIn('size: "original"', script)
+            self.assertIn('script.js?v=20260812-thumbnail-cache-1', source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):

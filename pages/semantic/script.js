@@ -38,6 +38,7 @@ async function initCaptureIndexPage() {
   let selectedCategory = "";
   let reindexing = false;
   let reindexPollTimer = null;
+  let reindexPollGeneration = 0;
   let indexing = false;
   let indexPollTimer = null;
   let pendingConfirmation = null;
@@ -142,16 +143,18 @@ async function initCaptureIndexPage() {
     reindexProgressBar.value = processed;
   }
 
-  async function pollReindexStatus() {
-    if (!packSelect.value) return;
+  async function pollReindexStatus(generation = reindexPollGeneration) {
+    const packId = packSelect.value;
+    if (!packId) return;
     try {
-      const state = await apiGet("capture/reindex/status", { pack_id: packSelect.value });
+      const state = await apiGet("capture/reindex/status", { pack_id: packId });
+      if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
       renderReindexProgress(state);
       if (state.status === "running") {
         reindexing = true;
         reindexButton.disabled = true;
         reindexButton.setAttribute("aria-busy", "true");
-        reindexPollTimer = window.setTimeout(() => void pollReindexStatus(), 500);
+        reindexPollTimer = window.setTimeout(() => void pollReindexStatus(generation), 500);
         return;
       }
       if (state.status === "error") {
@@ -162,9 +165,11 @@ async function initCaptureIndexPage() {
         return;
       }
       if (state.status === "completed") {
+        const shouldClearThumbnails = reindexing;
         reindexing = false;
         reindexButton.disabled = false;
         reindexButton.setAttribute("aria-busy", "false");
+        if (shouldClearThumbnails) clearThumbnailCache();
         const refreshed = await loadWorkspace();
         if (refreshed) {
           notice.textContent = state.message || "重索引已完成";
@@ -176,6 +181,7 @@ async function initCaptureIndexPage() {
       reindexButton.disabled = false;
       reindexButton.setAttribute("aria-busy", "false");
     } catch (error) {
+      if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
       reindexing = false;
       reindexButton.disabled = false;
       reindexButton.setAttribute("aria-busy", "false");
@@ -551,15 +557,19 @@ async function initCaptureIndexPage() {
     ].filter(Boolean).join("\n");
     if (!(await requestConfirmation(confirmation, "统一处理表情"))) return;
 
+    const disposalPackId = packSelect.value;
     button?.setAttribute("aria-busy", "true");
     mutationInProgress = true;
     updateSelectionUi();
     try {
       const result = await apiPost("capture/items/dispose", {
-        pack_id: packSelect.value,
+        pack_id: disposalPackId,
         items: disposalItems,
       });
       (result.succeeded || []).forEach((item) => {
+        if (item.kind !== "duplicate") {
+          evictThumbnailFile(disposalPackId, String(item.filename || ""));
+        }
         const key = selectionKey(item);
         selectedItems.delete(key);
         failedDisposals.delete(key);
@@ -810,6 +820,8 @@ async function initCaptureIndexPage() {
   }
 
   packSelect.addEventListener("change", () => {
+    reindexPollGeneration += 1;
+    clearThumbnailCache();
     stopReindexPolling();
     stopIndexPolling();
     selectedCategory = "";
@@ -866,6 +878,7 @@ async function initCaptureIndexPage() {
       "将旧分类目录迁移到平铺目录，并按 meme_<哈希> 重建标签索引。继续吗？",
       "重索引表情目录",
     ))) return;
+    reindexPollGeneration += 1;
     reindexing = true;
     reindexButton.disabled = true;
     reindexButton.setAttribute("aria-busy", "true");
