@@ -94,6 +94,13 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         capability="catalog_index",
     ),
     WebRouteSpec(
+        "capture/items/dispose",
+        "_api_capture_dispose_items",
+        ("POST",),
+        "删除或忽略捕获表情并加入黑名单",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
         "capture/reindex",
         "_api_capture_reindex",
         ("POST",),

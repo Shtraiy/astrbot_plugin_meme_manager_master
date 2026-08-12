@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>表情索引</title>
-    <link rel="stylesheet" href="./style.css?v=20260810-capture-workspace-1" />
+    <link rel="stylesheet" href="./style.css?v=20260812-unified-disposal-1" />
   </head>
   <body>
     <header class="page-header">
@@ -29,15 +29,16 @@
           <button id="capture-reindex-button" type="button">重索引</button>
         </div>
         <div class="selection-control" aria-live="polite">
-          <button id="capture-selection-mode-button" type="button" aria-pressed="false">&#24320;&#21551;&#25209;&#37327;&#36873;&#25321;</button>
-          <span id="capture-selection-summary">&#26410;&#24320;&#21551;&#25209;&#37327;&#36873;&#25321;</span>
-          <button id="capture-select-visible-duplicates-button" type="button" hidden>&#36873;&#25321;&#24403;&#21069;&#35270;&#22270;&#20840;&#37096;&#37325;&#22797;&#39033;</button>
-          <button id="capture-ignore-selected-button" type="button" class="primary" hidden disabled>&#24573;&#30053;&#24050;&#36873;</button>
+          <button id="capture-selection-mode-button" type="button" aria-pressed="false">开启批量选择</button>
+          <span id="capture-selection-summary">未开启批量选择</span>
+          <button id="capture-select-indexed-page-button" type="button" hidden>选择当前页已整理项</button>
+          <button id="capture-select-pending-button" type="button" hidden>选择当前视图待处理项</button>
+          <button id="capture-clear-selection-button" type="button" hidden disabled>清空选择</button>
+          <button id="capture-dispose-selected-button" type="button" class="primary" hidden disabled>统一处理</button>
         </div>
         <button id="capture-index-button" type="button" class="primary">
           分类索引待处理项
         </button>
-        <button id="capture-ignore-duplicates-button" type="button">全部忽略重复记录</button>
       </section>
 
       <div class="capture-progress-row">
@@ -56,16 +57,22 @@
       <section id="capture-category-filters" class="category-filters" aria-label="按分类查看"></section>
 
       <section class="sections-stack">
-        <article class="panel column">
+        <article class="panel column" aria-labelledby="capture-indexed-heading">
           <div class="column-heading">
             <div>
               <span class="kicker">近期分类索引</span>
-              <h2>已经整理好的表情</h2>
+              <h2 id="capture-indexed-heading" tabindex="-1">已经整理好的表情</h2>
             </div>
             <span id="capture-indexed-count" class="badge">0</span>
           </div>
           <div id="capture-indexed-items" class="cards"></div>
         </article>
+        <nav id="capture-pagination" class="capture-pagination panel" aria-label="已整理表情分页" hidden>
+          <button id="capture-pagination-prev" type="button">上一页</button>
+          <div id="capture-pagination-pages" class="capture-pagination-pages"></div>
+          <button id="capture-pagination-next" type="button">下一页</button>
+          <span id="capture-pagination-summary" class="capture-pagination-summary"></span>
+        </nav>
         <article class="panel column pending-column">
           <div class="column-heading">
             <div>
@@ -77,12 +84,6 @@
           <div id="capture-pending-items" class="cards"></div>
         </article>
       </section>
-      <nav id="capture-pagination" class="capture-pagination panel" aria-label="表情索引分页" hidden>
-        <button id="capture-pagination-prev" type="button">上一页</button>
-        <div id="capture-pagination-pages" class="capture-pagination-pages"></div>
-        <button id="capture-pagination-next" type="button">下一页</button>
-        <span id="capture-pagination-summary" class="capture-pagination-summary"></span>
-      </nav>
     </main>
 
     <div id="capture-confirm-mask" class="capture-confirm-mask hidden" aria-hidden="true">
@@ -107,6 +108,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260810-capture-workspace-1"></script>
+    <script type="module" src="./script.js?v=20260812-unified-disposal-1"></script>
   </body>
 </html>

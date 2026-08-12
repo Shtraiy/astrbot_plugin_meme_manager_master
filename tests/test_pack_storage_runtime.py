@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,10 +13,102 @@ from storage import MemeStore, is_safe_category_segment, scan_pack_emojis
 
 install_package_alias()
 
-from meme_manager_master.backend.pack_storage import _count_images  # noqa: E402
+from meme_manager_master.backend import pack_storage  # noqa: E402
+from meme_manager_master.backend.pack_storage import (  # noqa: E402
+    _count_images,
+    export_runtime_backup,
+    import_runtime_backup,
+)
+from meme_manager_master.capture_blacklist import CaptureBlacklist  # noqa: E402
 
 
 class PackStorageRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def _runtime_paths(root: Path) -> dict:
+        return {
+            "PLUGIN_DATA_DIR": root,
+            "PACKS_DIR": root / "packs",
+            "REGISTRY_PATH": root / "registry.json",
+            "SELECTION_RULES_PATH": root / "selection_rules.json",
+            "COMMUNITY_CACHE_PATH": root / "community_cache.json",
+            "CAPTURE_BLACKLIST_PATH": root / "capture_blacklist.json",
+            "TEMP_DIR": root / "temp",
+            "BACKUP_DIR": root / "backup",
+        }
+
+    @staticmethod
+    def _write_runtime_zip(path: Path, blacklist: dict | None) -> None:
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(
+                "runtime_backup/registry.json",
+                json.dumps({"schema_version": 1, "installed_packs": []}),
+            )
+            if blacklist is not None:
+                archive.writestr(
+                    "runtime_backup/capture_blacklist.json",
+                    json.dumps(blacklist),
+                )
+
+    def test_runtime_backup_exports_capture_blacklist(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "runtime"
+            root.mkdir()
+            digest = "a" * 64
+            CaptureBlacklist(root).add({digest})
+            paths = self._runtime_paths(root)
+            with patch.multiple(pack_storage, **paths):
+                result = export_runtime_backup()
+
+            with zipfile.ZipFile(result["archive_path"]) as archive:
+                payload = json.loads(archive.read("capture_blacklist.json"))
+            self.assertEqual(payload["sha256s"], [digest])
+
+    def test_runtime_restore_merges_new_blacklist_and_preserves_old_backups(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "runtime"
+            root.mkdir()
+            current_digest = "a" * 64
+            backup_digest = "b" * 64
+            CaptureBlacklist(root).add({current_digest})
+            new_backup = root / "new.zip"
+            self._write_runtime_zip(
+                new_backup,
+                {"schema_version": 1, "sha256s": [backup_digest]},
+            )
+            paths = self._runtime_paths(root)
+            with patch.multiple(pack_storage, **paths):
+                import_runtime_backup(new_backup)
+            self.assertEqual(
+                CaptureBlacklist(root).load(),
+                {current_digest, backup_digest},
+            )
+
+            old_backup = root / "old.zip"
+            self._write_runtime_zip(old_backup, None)
+            with patch.multiple(pack_storage, **paths):
+                import_runtime_backup(old_backup)
+            self.assertEqual(
+                CaptureBlacklist(root).load(),
+                {current_digest, backup_digest},
+            )
+
+    def test_runtime_restore_rejects_corrupt_blacklist_before_mutation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "runtime"
+            root.mkdir()
+            current_digest = "a" * 64
+            CaptureBlacklist(root).add({current_digest})
+            backup = root / "corrupt.zip"
+            self._write_runtime_zip(
+                backup,
+                {"schema_version": 1, "sha256s": ["invalid"]},
+            )
+            paths = self._runtime_paths(root)
+            with patch.multiple(pack_storage, **paths):
+                with self.assertRaises(ValueError):
+                    import_runtime_backup(backup)
+            self.assertEqual(CaptureBlacklist(root).load(), {current_digest})
+
     def test_pack_image_count_includes_flat_meme_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             memes_dir = Path(temp_dir) / "memes"

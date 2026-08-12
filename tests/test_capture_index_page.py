@@ -14,7 +14,7 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn("capture-indexed-items", source)
         self.assertIn("capture-pending-items", source)
         self.assertIn("capture-reindex-button", source)
-        self.assertIn("capture-ignore-duplicates-button", source)
+        self.assertIn("capture-dispose-selected-button", source)
         self.assertIn("capture-category-filters", source)
         self.assertIn("sections-stack", source)
 
@@ -28,8 +28,17 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn("sections-stack", source)
         self.assertIn('size: "preview"', script)
         self.assertIn('apiPost("capture/reindex"', script)
-        self.assertIn('apiPost("capture/duplicates/ignore"', script)
+        self.assertIn('apiPost("capture/items/dispose"', script)
         self.assertIn(".sections-stack", style)
+
+    def test_indexed_pagination_sits_between_indexed_and_pending_sections(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            indexed = source.index('id="capture-indexed-items"')
+            pagination = source.index('id="capture-pagination"')
+            pending = source.index('id="capture-pending-items"')
+            self.assertLess(indexed, pagination)
+            self.assertLess(pagination, pending)
 
     def test_reindex_button_is_not_silently_disabled_by_model_index_state(self):
         for script_path in (
@@ -108,24 +117,26 @@ class CaptureIndexPageTests(unittest.TestCase):
             ROOT / "pages" / "a_manage" / "semantic" / "script.js",
         ):
             script = script_path.read_text(encoding="utf-8")
-            self.assertIn("deleteIndexedItem", script)
-            self.assertIn('apiPost("emoji/delete"', script)
-            self.assertIn("managed_pack_id: packSelect.value", script)
+            self.assertIn("disposeCaptureItems", script)
+            self.assertIn('apiPost("capture/items/dispose"', script)
+            self.assertNotIn('apiPost("emoji/delete"', script)
             self.assertIn('className = "card-preview"', script)
             self.assertIn('className = "card-delete"', script)
             self.assertIn('document.createElement("article")', script)
             self.assertNotIn('const card = document.createElement("button")', script)
 
-    def test_duplicate_batch_ignore_controls_exist_in_both_pages(self):
+    def test_unified_batch_controls_exist_in_both_pages(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
             source = (page_dir / "index.html").read_text(encoding="utf-8")
             script = (page_dir / "script.js").read_text(encoding="utf-8")
             self.assertIn("capture-selection-mode-button", source)
-            self.assertIn("capture-select-visible-duplicates-button", source)
-            self.assertIn("capture-ignore-selected-button", source)
-            self.assertIn("selectedDuplicateDigests", script)
-            self.assertIn("selectVisibleDuplicates", script)
-            self.assertIn("ignoreSelectedDuplicates", script)
+            self.assertIn("capture-select-indexed-page-button", source)
+            self.assertIn("capture-select-pending-button", source)
+            self.assertIn("capture-clear-selection-button", source)
+            self.assertIn("capture-dispose-selected-button", source)
+            self.assertIn("selectedItems", script)
+            self.assertIn("toggleVisibleSelection", script)
+            self.assertIn("disposeSelectedItems", script)
 
     def test_pagination_and_unique_tag_card_contract_exists_in_both_pages(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -143,34 +154,33 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertNotIn("card-select", style)
             self.assertIn("max-height", style)
 
-    def test_mutations_remove_cards_and_sync_metadata_without_full_rerender(self):
+    def test_mutations_refetch_and_rerender_cards_to_fill_current_page(self):
         for script_path in (
             ROOT / "pages" / "semantic" / "script.js",
             ROOT / "pages" / "a_manage" / "semantic" / "script.js",
         ):
             script = script_path.read_text(encoding="utf-8")
-            self.assertIn("removeCardsForItems", script)
-            self.assertIn("data-sha256", script)
-            self.assertIn("loadWorkspace({ renderItems: false })", script)
-            self.assertIn("renderWorkspace(data, { renderItems });", script)
+            self.assertNotIn("removeCardsForItems", script)
+            self.assertNotIn("loadWorkspace({ renderItems: false })", script)
+            self.assertIn("await loadWorkspace({ preserveSelection: true })", script)
 
-    def test_batch_ignore_deduplicates_sha256_before_posting(self):
+    def test_batch_disposal_deduplicates_items_before_posting(self):
         for script_path in (
             ROOT / "pages" / "semantic" / "script.js",
             ROOT / "pages" / "a_manage" / "semantic" / "script.js",
         ):
             script = script_path.read_text(encoding="utf-8")
-            self.assertIn("new Set(selectedDuplicateDigests)", script)
-            self.assertIn('apiPost("capture/duplicates/ignore"', script)
+            self.assertIn("new Map", script)
+            self.assertIn('apiPost("capture/items/dispose"', script)
 
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         expected_script_versions = {
-            ROOT / "pages" / "semantic": "20260810-capture-workspace-1",
-            ROOT / "pages" / "a_manage" / "semantic": "20260811-sandbox-nav-fix-1",
+            ROOT / "pages" / "semantic": "20260812-unified-disposal-1",
+            ROOT / "pages" / "a_manage" / "semantic": "20260812-unified-disposal-1",
         }
         for page_dir, script_version in expected_script_versions.items():
             source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn('style.css?v=20260810-capture-workspace-1', source)
+            self.assertIn('style.css?v=20260812-unified-disposal-1', source)
             self.assertIn(f'script.js?v={script_version}', source)
             self.assertNotIn("20260803-", source)
 
@@ -179,8 +189,8 @@ class CaptureIndexPageTests(unittest.TestCase):
             script = (page_dir / "script.js").read_text(encoding="utf-8")
             style = (page_dir / "style.css").read_text(encoding="utf-8")
             self.assertIn("card-delete-icon", script)
-            self.assertIn('button.setAttribute("aria-busy", "true")', script)
-            self.assertIn("已删除", script)
+            self.assertIn('button?.setAttribute("aria-busy", "true")', script)
+            self.assertIn("统一处理完成", script)
             self.assertIn("position: relative", style)
             self.assertIn(".card-actions { position: absolute", style)
             self.assertIn(".card-delete-icon", style)

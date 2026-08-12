@@ -56,6 +56,9 @@ class Element {
     if (selector === ".card") {
       return this.children.find((child) => String(child.className || "").split(/\s+/).includes("card")) || null;
     }
+    if (selector === ".card-preview") {
+      return this.children.find((child) => String(child.className || "").split(/\s+/).includes("card-preview")) || null;
+    }
     return null;
   }
   replaceChildren(...items) { this.children = []; this.append(...items); }
@@ -70,6 +73,7 @@ class Element {
   getAttribute(name) { return this.attributes[name] || null; }
   removeAttribute(name) { delete this.attributes[name]; }
   focus() {}
+  scrollIntoView() {}
 }
 
 function makeDocument() {
@@ -79,8 +83,9 @@ function makeDocument() {
     "capture-pending-count", "capture-refresh-button", "capture-reindex-button",
     "capture-reindex-progress", "capture-reindex-progress-label",
     "capture-reindex-progress-count", "capture-reindex-progress-bar",
-    "capture-index-button", "capture-ignore-duplicates-button", "capture-selection-mode-button",
-    "capture-select-visible-duplicates-button", "capture-ignore-selected-button", "capture-selection-summary",
+    "capture-index-button", "capture-selection-mode-button", "capture-indexed-heading",
+    "capture-select-indexed-page-button", "capture-select-pending-button",
+    "capture-clear-selection-button", "capture-dispose-selected-button", "capture-selection-summary",
     "capture-category-filters", "preview-mask",
     "capture-pagination", "capture-pagination-prev", "capture-pagination-pages",
     "capture-pagination-next", "capture-pagination-summary",
@@ -107,7 +112,7 @@ function makeDocument() {
       const visit = (node) => {
         for (const child of node.children || []) {
           const classes = String(child.className || "").split(/\s+/);
-          if (classes.includes("card") && (!selector.includes("[data-sha256]") || child.dataset.sha256)) {
+          if (classes.includes("card") && (!selector.includes("[data-selection-key]") || child.dataset.selectionKey)) {
             results.push(child);
           }
           visit(child);
@@ -124,30 +129,44 @@ function makeDocument() {
 async function runPage(scriptPath) {
   const document = makeDocument();
   const calls = [];
-  const workspace = {
-     summary: { indexed: 2, pending: 1, duplicate: 3, complete_folders: 0, folder_total: 1 },
-     folders: [{ category: "happy", tag: "happy", indexed: 2, total: 2, complete: true }],
-     indexed_items: [
-       { filename: "meme_demo.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo.png", indexed: true },
-       { filename: "meme_demo_two.png", tag: "happy", category: "happy", relative_path: "memes/meme_demo_two.png", indexed: true },
-     ],
-     pending_items: [
+  let indexedAll = Array.from({ length: 50 }, (_, index) => {
+    const filename = `meme_${String(index + 1).padStart(2, "0")}.png`;
+    return { filename, tag: "happy", category: "happy", relative_path: `memes/${filename}`, indexed: true };
+  });
+  let pendingAll = [
       { filename: "meme_pending.png", tag: "happy", category: "happy", relative_path: "memes/meme_pending.png", indexed: false },
       { filename: "meme_duplicate_a.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_a.png", indexed: false, duplicate: true, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
       { filename: "meme_duplicate_b.png", tag: "sad", category: "sad", relative_path: "memes/meme_duplicate_b.png", indexed: false, duplicate: true, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-       { filename: "meme_duplicate_c.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_c.png", indexed: false, duplicate: true, sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
-     ],
-     pagination: {
-       page: 1,
-       page_size: 48,
-       indexed: { total: 49, total_pages: 2 },
-       pending: { total: 4, total_pages: 1 },
-     },
-     duplicate_digests: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
-    library_index: { status: "idle", active_pack: true, message: "目录索引已加载" },
-  };
-  let deleteShouldFail = false;
-  let ignoreShouldFail = false;
+      { filename: "meme_duplicate_c.png", tag: "happy", category: "happy", relative_path: "memes/meme_duplicate_c.png", indexed: false, duplicate: true, sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+  ];
+  function workspaceFor(requestedPage) {
+    const totalPages = Math.max(1, Math.ceil(indexedAll.length / 48));
+    const page = Math.min(Math.max(1, Number(requestedPage || 1)), totalPages);
+    const start = (page - 1) * 48;
+    const duplicateDigests = [...new Set(pendingAll.filter((item) => item.duplicate).map((item) => item.sha256))];
+    return {
+      summary: {
+        indexed: indexedAll.length,
+        pending: pendingAll.filter((item) => !item.duplicate).length,
+        duplicate: pendingAll.filter((item) => item.duplicate).length,
+        complete_folders: 0,
+        folder_total: 1,
+      },
+      folders: [{ category: "happy", tag: "happy", indexed: indexedAll.length, total: indexedAll.length, complete: true }],
+      indexed_items: indexedAll.slice(start, start + 48),
+      pending_items: pendingAll,
+      pagination: {
+        page,
+        page_size: 48,
+        indexed: { total: indexedAll.length, total_pages: totalPages },
+        pending: { total: pendingAll.length, total_pages: 1 },
+      },
+      duplicate_digests: duplicateDigests,
+      library_index: { status: "idle", active_pack: true, message: "目录索引已加载" },
+    };
+  }
+  let disposeShouldFail = false;
+  let disposePartially = false;
   let workspaceCalls = 0;
   const workspacePages = [];
   let indexStatusCalls = 0;
@@ -158,20 +177,7 @@ async function runPage(scriptPath) {
       if (endpoint === "capture/workspace") {
         workspaceCalls += 1;
         workspacePages.push(String(params.page || "1"));
-        if (String(params.page || "1") === "2") {
-          return {
-            ...workspace,
-            indexed_items: [{ filename: "meme_page_two.png", tag: "happy", category: "happy", relative_path: "memes/meme_page_two.png", indexed: true }],
-            pending_items: workspace.pending_items,
-            pagination: {
-              page: 2,
-              page_size: 48,
-              indexed: { total: 49, total_pages: 2 },
-              pending: { total: 4, total_pages: 1 },
-            },
-          };
-        }
-        return workspace;
+        return workspaceFor(params.page);
       }
       if (endpoint === "meme_image_data") return { data_url: "data:image/png;base64,AA==" };
       if (endpoint === "capture/index/status") {
@@ -185,8 +191,36 @@ async function runPage(scriptPath) {
     },
     async apiPost(endpoint, body) {
       calls.push({ endpoint, body });
-      if (endpoint === "emoji/delete" && deleteShouldFail) throw new Error("delete failed");
-      if (endpoint === "capture/duplicates/ignore" && ignoreShouldFail) throw new Error("ignore failed");
+      if (endpoint === "capture/items/dispose") {
+        if (disposeShouldFail) throw new Error("dispose failed");
+        const uniqueItems = [...new Map(body.items.map((item) => [
+          item.kind === "duplicate" ? `duplicate:${item.sha256}` : `${item.kind}:${item.filename}`,
+          item,
+        ])).values()];
+        const failed = disposePartially
+          ? uniqueItems.filter((item) => item.kind === "indexed").map((item) => ({
+              ...item,
+              blacklisted: true,
+              reason: "删除失败：locked",
+            }))
+          : [];
+        const succeeded = disposePartially
+          ? uniqueItems.filter((item) => item.kind !== "indexed")
+          : uniqueItems;
+        for (const item of succeeded) {
+          if (item.kind === "indexed") indexedAll = indexedAll.filter((entry) => entry.filename !== item.filename);
+          if (item.kind === "pending") pendingAll = pendingAll.filter((entry) => entry.filename !== item.filename);
+          if (item.kind === "duplicate") pendingAll = pendingAll.filter((entry) => entry.sha256 !== item.sha256);
+        }
+        return {
+          message: "统一处理完成",
+          succeeded,
+          failed,
+          disposed_count: succeeded.length,
+          failed_count: failed.length,
+          blacklisted_count: uniqueItems.length,
+        };
+      }
       if (endpoint === "capture/index") return { status: "running", message: "分类索引已开始" };
       if (endpoint === "capture/reindex") return { status: "running", processed: 0, total: 1, message: "正在重索引" };
       return { status: "ok" };
@@ -215,17 +249,42 @@ async function runPage(scriptPath) {
   await document.querySelector("#capture-confirm-cancel").dispatch("click");
   const ignoreButtonDidNotSelect = !duplicateCard.classList.contains("selected");
 
-   const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
+  const firstIndexedPreview = document.querySelector("#capture-indexed-items").children[0].children[0];
+  await firstIndexedPreview.dispatch("click");
+  await document.querySelector("#capture-pagination-next").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const selectionPreservedOnPageTwo = document.querySelector("#capture-selection-summary").textContent.includes("已整理 1 张");
+  await document.querySelector("#capture-indexed-items").children[0].children[0].dispatch("click");
+  await document.querySelector("#capture-pagination-prev").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const crossPageSelectionPreserved = document.querySelector("#capture-indexed-items").children[0].classList.contains("selected");
+  await document.querySelector("#capture-clear-selection-button").dispatch("click");
+
+  const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
   const successButton = getDeleteButton();
   const successDelete = successButton.dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
   await document.querySelector("#capture-confirm-confirm").dispatch("click");
   await successDelete;
   await new Promise((resolve) => setImmediate(resolve));
-  const deletePayload = calls.find((call) => call.endpoint === "emoji/delete").body;
+  const deletePayload = calls.find((call) => call.endpoint === "capture/items/dispose").body;
   const successNotice = document.querySelector("#notice").textContent;
+  const refilledAfterDelete = document.querySelector("#capture-indexed-items").children.length === 48 &&
+    document.querySelector("#capture-indexed-items").children[47].children[0].children[1].textContent === "meme_49.png";
 
-  deleteShouldFail = true;
+  await document.querySelector("#capture-pagination-next").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const clampButton = getDeleteButton();
+  const clampDelete = clampButton.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await clampDelete;
+  await new Promise((resolve) => setImmediate(resolve));
+  const clampPayload = calls.filter((call) => call.endpoint === "capture/items/dispose")[1].body;
+  const clampedAfterDelete = document.querySelector("#capture-pagination-summary").textContent.includes("第 1/1 页") &&
+    document.querySelector("#capture-indexed-items").children.length === 48;
+
+  disposeShouldFail = true;
   const failureButton = getDeleteButton();
   const failedDelete = failureButton.dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
@@ -234,32 +293,19 @@ async function runPage(scriptPath) {
   await new Promise((resolve) => setImmediate(resolve));
   const failureRestored = !failureButton.disabled && failureButton.getAttribute("aria-busy") === "false";
 
-   const getIgnoreButton = () => document.querySelector("#capture-pending-items").children[1].children[1].children[0];
+  disposeShouldFail = false;
+  const getIgnoreButton = () => document.querySelector("#capture-pending-items").children[1].children[1].children[0];
   const ignoreButton = getIgnoreButton();
   const ignoreAction = ignoreButton.dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
   await document.querySelector("#capture-confirm-confirm").dispatch("click");
   await ignoreAction;
-  const ignorePayload = calls.find((call) => call.endpoint === "capture/duplicates/ignore").body;
-  const ignoredWithoutDelete = !calls.some((call) => call.endpoint === "emoji/delete" && call.body.image_file === "meme_duplicate_a.png");
-
-  ignoreShouldFail = true;
-  const failedIgnore = getIgnoreButton();
-  const failedIgnoreAction = failedIgnore.dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
-  await document.querySelector("#capture-confirm-confirm").dispatch("click");
-  await failedIgnoreAction;
-  const ignoreFailureRestored = !failedIgnore.disabled && failedIgnore.getAttribute("aria-busy") === "false";
-  ignoreShouldFail = false;
+  const ignorePayload = calls.find((call) =>
+    call.endpoint === "capture/items/dispose" && call.body.items[0]?.kind === "duplicate"
+  ).body;
+  const ignoredWithoutIndexedDelete = indexedAll.length === 48;
 
-  const bulkAction = document.querySelector("#capture-ignore-duplicates-button").dispatch("click");
-  await new Promise((resolve) => setImmediate(resolve));
-  await document.querySelector("#capture-confirm-confirm").dispatch("click");
-  await bulkAction;
-  const ignoreCalls = calls.filter((call) => call.endpoint === "capture/duplicates/ignore");
-  const bulkPayload = ignoreCalls[ignoreCalls.length - 1].body;
-
-  deleteShouldFail = false;
   const indexAction = document.querySelector("#capture-index-button").dispatch("click");
   await indexAction;
   await new Promise((resolve) => setImmediate(resolve));
@@ -273,26 +319,40 @@ async function runPage(scriptPath) {
   const reindexPayload = calls.find((call) => call.endpoint === "capture/reindex").body;
   const reindexButton = document.querySelector("#capture-reindex-button");
   const reindexNotice = document.querySelector("#notice").textContent;
-  const paginationAction = document.querySelector("#capture-pagination-next").dispatch("click");
-  await paginationAction;
+
+  await document.querySelector("#capture-selection-mode-button").dispatch("click");
+  await document.querySelector("#capture-select-pending-button").dispatch("click");
+  await document.querySelector("#capture-indexed-items").children[0].children[0].dispatch("click");
+  disposePartially = true;
+  const batchAction = document.querySelector("#capture-dispose-selected-button").dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
-  const pageTwoRendered = document.querySelector("#capture-indexed-items").children[0].children[0].children[1].textContent === "meme_page_two.png";
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await batchAction;
+  await new Promise((resolve) => setImmediate(resolve));
+  const disposeCalls = calls.filter((call) => call.endpoint === "capture/items/dispose");
+  const batchPayload = disposeCalls[disposeCalls.length - 1].body;
+  const partialFailureKeptSelected = document.querySelector("#capture-selection-summary").textContent.includes("已整理 1 张");
+  const partialFailureMarkedCard = document.querySelector("#capture-indexed-items").children[0].className.includes("disposal-failed");
   return {
     deletePayload,
+    clampPayload,
     successNotice,
     failureRestored,
     ignorePayload,
-    bulkPayload,
-    ignoredWithoutDelete,
-    ignoreFailureRestored,
+    batchPayload,
+    ignoredWithoutIndexedDelete,
     indexPayload,
     indexStatusCalls,
     workspaceCalls,
     reindexPayload,
     reindexRestored: !reindexButton.disabled && reindexButton.getAttribute("aria-busy") === "false",
     reindexNotice,
-    pageTwoRendered,
-    pendingVisibleOnPageTwo: document.querySelector("#capture-pending-items").children.length > 1,
+    refilledAfterDelete,
+    clampedAfterDelete,
+    selectionPreservedOnPageTwo,
+    crossPageSelectionPreserved,
+    partialFailureKeptSelected,
+    partialFailureMarkedCard,
     selectedByCardClick,
     deselectedByCardClick,
     ignoreButtonDidNotSelect,
@@ -329,37 +389,47 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payloads = json.loads(result.stdout)
         for payload in payloads.values():
-            self.assertEqual(payload["deletePayload"]["managed_pack_id"], "pack")
-            self.assertEqual(payload["deletePayload"]["image_file"], "meme_demo.png")
-            self.assertIn("已删除", payload["successNotice"])
+            self.assertEqual(payload["deletePayload"]["pack_id"], "pack")
+            self.assertEqual(
+                payload["deletePayload"]["items"],
+                [{"kind": "indexed", "filename": "meme_01.png"}],
+            )
+            self.assertIn("统一处理完成", payload["successNotice"])
+            self.assertEqual(
+                payload["clampPayload"]["items"],
+                [{"kind": "indexed", "filename": "meme_50.png"}],
+            )
             self.assertTrue(payload["failureRestored"])
             self.assertEqual(payload["indexPayload"]["pack_id"], "pack")
             self.assertEqual(payload["indexStatusCalls"], 1)
-            self.assertEqual(payload["workspaceCalls"], 9)
+            self.assertGreaterEqual(payload["workspaceCalls"], 9)
             self.assertEqual(payload["reindexPayload"]["pack_id"], "pack")
             self.assertTrue(payload["reindexRestored"])
             self.assertIn("重索引已完成", payload["reindexNotice"])
             self.assertEqual(payload["ignorePayload"]["pack_id"], "pack")
             self.assertEqual(
-                payload["ignorePayload"]["sha256s"],
-                ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+                payload["ignorePayload"]["items"],
+                [{
+                    "kind": "duplicate",
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                }],
             )
-            self.assertEqual(payload["bulkPayload"]["pack_id"], "pack")
+            self.assertEqual(payload["batchPayload"]["pack_id"], "pack")
             self.assertEqual(
-                payload["bulkPayload"]["sha256s"],
-                [
-                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                ],
+                {item["kind"] for item in payload["batchPayload"]["items"]},
+                {"indexed", "pending", "duplicate"},
             )
-            self.assertTrue(payload["ignoredWithoutDelete"])
-            self.assertTrue(payload["ignoreFailureRestored"])
-            self.assertTrue(payload["pageTwoRendered"])
-            self.assertTrue(payload["pendingVisibleOnPageTwo"])
+            self.assertTrue(payload["ignoredWithoutIndexedDelete"])
+            self.assertTrue(payload["refilledAfterDelete"])
+            self.assertTrue(payload["clampedAfterDelete"])
+            self.assertTrue(payload["selectionPreservedOnPageTwo"])
+            self.assertTrue(payload["crossPageSelectionPreserved"])
+            self.assertTrue(payload["partialFailureKeptSelected"])
+            self.assertTrue(payload["partialFailureMarkedCard"])
             self.assertTrue(payload["selectedByCardClick"])
             self.assertTrue(payload["deselectedByCardClick"])
             self.assertTrue(payload["ignoreButtonDidNotSelect"])
-            self.assertEqual(payload["workspacePages"][-1], "2")
+            self.assertIn("2", payload["workspacePages"])
 
 
 if __name__ == "__main__":

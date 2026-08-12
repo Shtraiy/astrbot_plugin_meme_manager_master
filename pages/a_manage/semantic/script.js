@@ -16,11 +16,13 @@ async function initCaptureIndexPage() {
   const reindexProgressCount = document.querySelector("#capture-reindex-progress-count");
   const reindexProgressBar = document.querySelector("#capture-reindex-progress-bar");
   const indexButton = document.querySelector("#capture-index-button");
-  const ignoreDuplicatesButton = document.querySelector("#capture-ignore-duplicates-button");
   const selectionModeButton = document.querySelector("#capture-selection-mode-button");
-  const selectVisibleDuplicatesButton = document.querySelector("#capture-select-visible-duplicates-button");
-  const ignoreSelectedButton = document.querySelector("#capture-ignore-selected-button");
+  const selectIndexedPageButton = document.querySelector("#capture-select-indexed-page-button");
+  const selectPendingButton = document.querySelector("#capture-select-pending-button");
+  const clearSelectionButton = document.querySelector("#capture-clear-selection-button");
+  const disposeSelectedButton = document.querySelector("#capture-dispose-selected-button");
   const selectionSummary = document.querySelector("#capture-selection-summary");
+  const indexedHeading = document.querySelector("#capture-indexed-heading");
   const categoryFilters = document.querySelector("#capture-category-filters");
   const pagination = document.querySelector("#capture-pagination");
   const paginationPrev = document.querySelector("#capture-pagination-prev");
@@ -42,7 +44,8 @@ async function initCaptureIndexPage() {
   let pendingConfirmation = null;
   let currentWorkspace = null;
   let selectionMode = false;
-  const selectedDuplicateDigests = new Set();
+  const selectedItems = new Map();
+  const failedDisposals = new Map();
   let mutationInProgress = false;
   let currentPage = 1;
 
@@ -264,13 +267,42 @@ async function initCaptureIndexPage() {
     return /^[0-9a-f]{64}$/.test(digest) ? digest : "";
   }
 
-  function getVisibleDuplicateDigests() {
-    return uniqueDuplicateDigests(currentWorkspace?.pending_items || []);
+  function selectionItem(item) {
+    if (item?.duplicate) {
+      const sha256 = normalizeDigest(item.sha256);
+      return sha256 ? { kind: "duplicate", sha256 } : null;
+    }
+    const filename = String(item?.filename || "").trim();
+    if (!filename) return null;
+    return { kind: item.indexed ? "indexed" : "pending", filename };
+  }
+
+  function selectionKey(item) {
+    if (!item || !["indexed", "pending", "duplicate"].includes(item.kind)) return "";
+    if (item.kind === "duplicate") {
+      const digest = normalizeDigest(item.sha256);
+      return digest ? `duplicate:${digest}` : "";
+    }
+    const filename = String(item.filename || "").trim();
+    return filename ? `${item.kind}:${filename}` : "";
+  }
+
+  function visibleSelectionItems(kind) {
+    const source = kind === "indexed"
+      ? (currentWorkspace?.indexed_items || [])
+      : (currentWorkspace?.pending_items || []);
+    return source.map(selectionItem).filter(Boolean);
+  }
+
+  function allSelected(items) {
+    return items.length > 0 && items.every((item) => selectedItems.has(selectionKey(item)));
   }
 
   function updateSelectionUi() {
-    const visibleDigests = getVisibleDuplicateDigests();
-    const allVisibleSelected = visibleDigests.length > 0 && visibleDigests.every((digest) => selectedDuplicateDigests.has(digest));
+    const indexedVisible = visibleSelectionItems("indexed");
+    const pendingVisible = visibleSelectionItems("pending");
+    const indexedSelected = [...selectedItems.values()].filter((item) => item.kind === "indexed").length;
+    const pendingSelected = selectedItems.size - indexedSelected;
     if (selectionModeButton) {
       selectionModeButton.textContent = selectionMode ? "退出批量选择" : "开启批量选择";
       selectionModeButton.setAttribute("aria-pressed", String(selectionMode));
@@ -278,62 +310,82 @@ async function initCaptureIndexPage() {
     }
     if (selectionSummary) {
       selectionSummary.textContent = selectionMode
-        ? `已选择 ${selectedDuplicateDigests.size} 项重复记录`
+        ? `已整理 ${indexedSelected} 张，待处理 ${pendingSelected} 张`
         : "未开启批量选择";
     }
-    if (selectVisibleDuplicatesButton) {
-      selectVisibleDuplicatesButton.hidden = !selectionMode;
-      selectVisibleDuplicatesButton.disabled = mutationInProgress || !visibleDigests.length;
-      selectVisibleDuplicatesButton.textContent = allVisibleSelected
-        ? "取消选择当前重复项"
-        : "选择当前视图全部重复项";
+    if (selectIndexedPageButton) {
+      selectIndexedPageButton.hidden = !selectionMode;
+      selectIndexedPageButton.disabled = mutationInProgress || !indexedVisible.length;
+      selectIndexedPageButton.textContent = allSelected(indexedVisible)
+        ? "取消当前页已整理项"
+        : "选择当前页已整理项";
     }
-    if (ignoreSelectedButton) {
-      ignoreSelectedButton.hidden = !selectionMode;
-      ignoreSelectedButton.disabled = mutationInProgress || selectedDuplicateDigests.size === 0;
-      ignoreSelectedButton.setAttribute("aria-busy", String(mutationInProgress));
+    if (selectPendingButton) {
+      selectPendingButton.hidden = !selectionMode;
+      selectPendingButton.disabled = mutationInProgress || !pendingVisible.length;
+      selectPendingButton.textContent = allSelected(pendingVisible)
+        ? "取消当前视图待处理项"
+        : "选择当前视图待处理项";
     }
-    document.querySelectorAll(".card[data-sha256]").forEach((card) => {
-      const digest = normalizeDigest(card.dataset.sha256);
-      const selected = selectionMode && digest && selectedDuplicateDigests.has(digest);
+    if (clearSelectionButton) {
+      clearSelectionButton.hidden = !selectionMode;
+      clearSelectionButton.disabled = mutationInProgress || selectedItems.size === 0;
+    }
+    if (disposeSelectedButton) {
+      disposeSelectedButton.hidden = !selectionMode;
+      disposeSelectedButton.disabled = mutationInProgress || selectedItems.size === 0;
+      disposeSelectedButton.setAttribute("aria-busy", String(mutationInProgress));
+    }
+    document.querySelectorAll(".card[data-selection-key]").forEach((card) => {
+      const selected = selectionMode && selectedItems.has(card.dataset.selectionKey || "");
       card.classList.toggle("selection-mode", selectionMode);
       card.classList.toggle("selected", selected);
+      card.querySelector(".card-preview")?.setAttribute("aria-pressed", String(Boolean(selected)));
+    });
+    document.querySelectorAll(".card-actions button").forEach((button) => {
+      button.disabled = mutationInProgress;
     });
     renderPagination(currentWorkspace?.pagination);
   }
 
   function setSelectionMode(enabled) {
     selectionMode = Boolean(enabled);
-    if (!selectionMode) selectedDuplicateDigests.clear();
+    if (!selectionMode) selectedItems.clear();
     updateSelectionUi();
   }
 
-  function toggleVisibleDuplicateSelection() {
-    const visibleDigests = getVisibleDuplicateDigests();
-    const selectedSnapshot = new Set(selectedDuplicateDigests);
-    const allVisibleSelected = visibleDigests.length > 0 && visibleDigests.every((digest) => selectedSnapshot.has(digest));
-    visibleDigests.forEach((digest) => {
-      if (allVisibleSelected) selectedDuplicateDigests.delete(digest);
-      else selectedDuplicateDigests.add(digest);
+  function toggleVisibleSelection(items) {
+    const selectable = items.filter((item) => selectionKey(item));
+    const remove = allSelected(selectable);
+    selectable.forEach((item) => {
+      const key = selectionKey(item);
+      if (remove) selectedItems.delete(key);
+      else selectedItems.set(key, item);
     });
     updateSelectionUi();
   }
 
-  function toggleDuplicateSelection(digest) {
-    const normalized = normalizeDigest(digest);
-    if (!normalized) return;
-    if (selectedDuplicateDigests.has(normalized)) selectedDuplicateDigests.delete(normalized);
-    else selectedDuplicateDigests.add(normalized);
+  function toggleItemSelection(item) {
+    const key = selectionKey(item);
+    if (!key) return;
+    if (selectedItems.has(key)) selectedItems.delete(key);
+    else selectedItems.set(key, item);
     updateSelectionUi();
+  }
+
+  async function goToIndexedPage(page) {
+    currentPage = page;
+    await loadWorkspace({ preserveSelection: true });
+    indexedHeading?.focus?.({ preventScroll: true });
+    indexedHeading?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }
 
   function renderPagination(paginationData = {}) {
     const indexed = paginationData.indexed || {};
-    const indexedTotalPages = Math.max(1, Number(indexed.total_pages || 1));
-    const totalPages = indexedTotalPages;
+    const totalPages = Math.max(1, Number(indexed.total_pages || 1));
     currentPage = Math.min(Math.max(1, Number(paginationData.page || currentPage)), totalPages);
     if (!pagination || !paginationPages || !paginationSummary) return;
-    pagination.hidden = totalPages <= 1;
+    pagination.hidden = Number(indexed.total || 0) === 0;
     paginationPages.replaceChildren();
     if (pagination.hidden) return;
 
@@ -359,168 +411,76 @@ async function initCaptureIndexPage() {
       button.setAttribute("aria-current", page === currentPage ? "page" : "false");
       button.disabled = page === currentPage || mutationInProgress;
       button.addEventListener("click", () => {
-        currentPage = page;
-        void loadWorkspace({ preserveSelection: true });
+        void goToIndexedPage(page);
       });
       paginationPages.append(button);
       previousPage = page;
     });
-    const pending = paginationData.pending || {};
-    paginationSummary.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${(Number(indexed.total || 0) + Number(pending.total || 0))} 张`;
+    paginationSummary.textContent = `第 ${currentPage}/${totalPages} 页 · 已整理共 ${Number(indexed.total || 0)} 张`;
   }
 
-  function itemMatchesRemoval(item, { sha256s = [], locations = [] } = {}) {
-    const digestSet = new Set(sha256s.map(normalizeDigest).filter(Boolean));
-    const locationSet = new Set(locations.map(({ category, filename }) => `${category}\u0000${filename}`));
-    return (digestSet.size > 0 && digestSet.has(normalizeDigest(item?.sha256))) ||
-      locationSet.has(`${item?.category || item?.tag || ""}\u0000${item?.filename || ""}`);
-  }
-
-  function removeItemsFromWorkspace(removal) {
-    if (!currentWorkspace) return;
-    const indexedItemsBefore = currentWorkspace.indexed_items || [];
-    const pendingItemsBefore = currentWorkspace.pending_items || [];
-    const indexedItems = indexedItemsBefore.filter((item) => !itemMatchesRemoval(item, removal));
-    const pendingItems = pendingItemsBefore.filter((item) => !itemMatchesRemoval(item, removal));
-    const removedIndexed = indexedItemsBefore.length - indexedItems.length;
-    const removedPending = pendingItemsBefore.length - pendingItems.length;
-    const removedDuplicate = pendingItemsBefore.filter(
-      (item) => item.duplicate && itemMatchesRemoval(item, removal),
-    ).length;
-    const summary = { ...(currentWorkspace.summary || {}) };
-    summary.indexed = Math.max(0, Number(summary.indexed || 0) - removedIndexed);
-    summary.pending = Math.max(0, Number(summary.pending || 0) - Math.max(0, removedPending - removedDuplicate));
-    summary.duplicate = Math.max(0, Number(summary.duplicate || 0) - removedDuplicate);
-    const removedDigests = new Set((removal.sha256s || []).map(normalizeDigest).filter(Boolean));
-    currentWorkspace = {
-      ...currentWorkspace,
-      indexed_items: indexedItems,
-      pending_items: pendingItems,
-      duplicate_digests: (currentWorkspace.duplicate_digests || []).filter(
-        (digest) => !removedDigests.has(normalizeDigest(digest)),
-      ),
-      summary,
-    };
-  }
-
-  function removeCardsForItems(removal) {
-    document.querySelectorAll(".card").forEach((card) => {
-      const item = {
-        category: card.dataset.category,
-        filename: card.dataset.filename,
-        sha256: card.dataset.sha256,
-      };
-      if (itemMatchesRemoval(item, removal)) card.remove();
+  async function disposeCaptureItems(items, button) {
+    const uniqueItems = new Map();
+    (items || []).forEach((item) => {
+      const key = selectionKey(item);
+      if (key) uniqueItems.set(key, item);
     });
-    for (const [target, message] of [
-      [indexedItems, "暂无已完成的偷取索引"],
-      [pendingItems, "当前没有待处理偷取图片"],
-    ]) {
-      if (!target.querySelector(".card")) renderEmpty(target, message);
-    }
-  }
+    if (!uniqueItems.size || !packSelect.value || mutationInProgress) return;
+    const disposalItems = [...uniqueItems.values()];
+    const indexedTotal = disposalItems.filter((item) => item.kind === "indexed").length;
+    const pendingTotal = disposalItems.length - indexedTotal;
+    const confirmation = [
+      indexedTotal ? `已整理 ${indexedTotal} 张：删除文件并永久拉黑。` : "",
+      pendingTotal ? `待处理 ${pendingTotal} 张：忽略并永久拉黑；普通项删除文件，重复项保留已有图片。` : "",
+    ].filter(Boolean).join("\n");
+    if (!(await requestConfirmation(confirmation, "统一处理表情"))) return;
 
-  async function syncWorkspaceMetadata() {
-    return loadWorkspace({ renderItems: false });
-  }
-
-  async function deleteIndexedItem(item, card, button) {
-    const location = getImageLocation(item);
-    if (!location) return;
-    if (!(await requestConfirmation(
-      `确认永久删除 ${location.filename}？此操作不可恢复。`,
-      "永久删除图片",
-    ))) return;
-    button.disabled = true;
-    button.setAttribute("aria-busy", "true");
+    button?.setAttribute("aria-busy", "true");
     mutationInProgress = true;
     updateSelectionUi();
     try {
-      await apiPost("emoji/delete", {
-        managed_pack_id: location.managed_pack_id,
-        category: location.category,
-        image_file: location.filename,
-      });
-      const removal = { locations: [location] };
-      removeItemsFromWorkspace(removal);
-      removeCardsForItems(removal);
-      const refreshed = await syncWorkspaceMetadata();
-      if (refreshed) {
-        notice.textContent = `已删除 ${location.filename}`;
-        notice.classList.remove("error");
-      } else {
-        button.disabled = false;
-        button.setAttribute("aria-busy", "false");
-      }
-    } catch (error) {
-      button.disabled = false;
-      button.setAttribute("aria-busy", "false");
-      showError(error);
-    } finally {
-      mutationInProgress = false;
-      updateSelectionUi();
-    }
-  }
-
-  function uniqueDuplicateDigests(items) {
-    return [...new Set((items || [])
-      .filter((item) => item?.duplicate && /^[0-9a-f]{64}$/i.test(String(item.sha256 || "")))
-      .map((item) => String(item.sha256).toLowerCase()))];
-  }
-
-  async function ignoreDuplicateRecords(digests, button) {
-    const uniqueDigests = [...new Set((digests || [])
-      .map((digest) => String(digest || "").trim().toLowerCase())
-      .filter((digest) => /^[0-9a-f]{64}$/.test(digest)))];
-    if (!uniqueDigests.length || !packSelect.value) {
-      showError(new Error("没有可忽略的重复记录"));
-      return;
-    }
-    if (!(await requestConfirmation(
-      `将忽略这张图片的全部重复记录，共 ${uniqueDigests.length} 个图片指纹；不会删除图片。`,
-      "忽略重复记录",
-    ))) return;
-    button.disabled = true;
-    button.setAttribute("aria-busy", "true");
-    mutationInProgress = true;
-    updateSelectionUi();
-    try {
-      const result = await apiPost("capture/duplicates/ignore", {
+      const result = await apiPost("capture/items/dispose", {
         pack_id: packSelect.value,
-        sha256s: uniqueDigests,
+        items: disposalItems,
       });
-      const removal = { sha256s: uniqueDigests };
-      removeItemsFromWorkspace(removal);
-      removeCardsForItems(removal);
-      uniqueDigests.forEach((digest) => selectedDuplicateDigests.delete(digest));
-      const refreshed = await syncWorkspaceMetadata();
-      if (refreshed) {
-        notice.textContent = result.message || "已忽略重复记录";
-        notice.classList.remove("error");
-      } else {
-        button.disabled = false;
-        button.setAttribute("aria-busy", "false");
-      }
+      (result.succeeded || []).forEach((item) => {
+        const key = selectionKey(item);
+        selectedItems.delete(key);
+        failedDisposals.delete(key);
+      });
+      (result.failed || []).forEach((item) => {
+        const key = selectionKey(item);
+        if (key) failedDisposals.set(key, item);
+      });
+      await loadWorkspace({ preserveSelection: true });
+      const failedCount = Number(result.failed_count || 0);
+      notice.textContent = failedCount
+        ? `已处理 ${Number(result.disposed_count || 0)} 项，${failedCount} 项失败；失败项仍保持选中。`
+        : result.message || "统一处理完成";
+      notice.classList.toggle("error", failedCount > 0);
     } catch (error) {
-      button.disabled = false;
-      button.setAttribute("aria-busy", "false");
       showError(error);
     } finally {
       mutationInProgress = false;
+      button?.setAttribute("aria-busy", "false");
       updateSelectionUi();
     }
   }
 
-  async function ignoreSelectedDuplicates() {
-    if (mutationInProgress || selectedDuplicateDigests.size === 0) return;
-    await ignoreDuplicateRecords([...selectedDuplicateDigests], ignoreSelectedButton);
+  async function disposeSelectedItems() {
+    if (!selectedItems.size || mutationInProgress) return;
+    await disposeCaptureItems([...selectedItems.values()], disposeSelectedButton);
   }
 
   function renderCard(item, target) {
+    const disposal = selectionItem(item);
+    const disposalKey = selectionKey(disposal);
+    const failed = failedDisposals.get(disposalKey);
     const card = document.createElement("article");
-    card.className = `card thumbnail-loading${item.duplicate ? " duplicate" : ""}`;
+    card.className = `card thumbnail-loading${item.duplicate ? " duplicate" : ""}${failed ? " disposal-failed" : ""}`;
     card.dataset.category = item.category || item.tag || "";
     card.dataset.filename = item.filename || "";
+    card.dataset.selectionKey = disposalKey;
     const digest = normalizeDigest(item.sha256);
     if (item.duplicate && digest) card.dataset.sha256 = digest;
 
@@ -529,6 +489,7 @@ async function initCaptureIndexPage() {
     previewButton.type = "button";
     previewButton.className = "card-preview";
     previewButton.setAttribute("aria-label", `预览 ${item.filename || "图片"}`);
+    previewButton.setAttribute("aria-pressed", "false");
     const thumbnail = document.createElement("span");
     thumbnail.className = "card-thumbnail";
     thumbnail.setAttribute("aria-hidden", "true");
@@ -559,11 +520,11 @@ async function initCaptureIndexPage() {
     });
     const meta = document.createElement("span");
     meta.className = "card-status";
-    meta.textContent = `${
-      item.duplicate ? "重复待去重" : item.indexed ? "已索引" : "待分类"
-    }`;
+    meta.textContent = failed?.blacklisted
+      ? "已拦截、删除失败"
+      : item.duplicate ? "重复待去重" : item.indexed ? "已索引" : "待分类";
     const description = document.createElement("small");
-    description.textContent = item.description || "点击查看图片";
+    description.textContent = failed?.reason || item.description || "点击查看图片";
     previewButton.append(thumbnail, title, tagList, meta, description);
     const actions = document.createElement("div");
     actions.className = "card-actions";
@@ -571,34 +532,34 @@ async function initCaptureIndexPage() {
     deleteButton.type = "button";
     if (item.duplicate) {
       deleteButton.className = "card-ignore";
-      deleteButton.textContent = "忽略";
-      deleteButton.setAttribute("aria-label", `忽略 ${item.filename || "图片"} 的全部重复记录`);
-      deleteButton.title = "忽略该图片的全部重复记录，不会删除图片";
-      deleteButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void ignoreDuplicateRecords([item.sha256], deleteButton);
-      });
-    } else {
+      deleteButton.textContent = "忽略并拉黑";
+      deleteButton.setAttribute("aria-label", `忽略并拉黑 ${item.filename || "图片"} 的重复记录`);
+      deleteButton.title = "忽略并永久拉黑；仅隐藏重复记录，保留已有图片";
+    } else if (item.indexed) {
       deleteButton.className = "card-delete";
-    deleteButton.innerHTML = `
-      <svg class="card-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-.7 10.4A2.8 2.8 0 0 1 14.5 22h-5a2.8 2.8 0 0 1-2.8-2.6L6 9Zm3 2v7h2v-7H9Zm4 0v7h2v-7h-2Z" />
-      </svg>`;
-    deleteButton.setAttribute("aria-label", `永久删除 ${item.filename || "图片"}`);
-    deleteButton.title = "永久删除图片";
+      deleteButton.innerHTML = `
+        <svg class="card-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-.7 10.4A2.8 2.8 0 0 1 14.5 22h-5a2.8 2.8 0 0 1-2.8-2.6L6 9Zm3 2v7h2v-7H9Zm4 0v7h2v-7h-2Z" />
+        </svg><span>删除并拉黑</span>`;
+      deleteButton.setAttribute("aria-label", `删除并拉黑 ${item.filename || "图片"}`);
+      deleteButton.title = "删除文件并加入永久黑名单";
+    } else {
+      deleteButton.className = "card-ignore";
+      deleteButton.textContent = "忽略并拉黑";
+      deleteButton.setAttribute("aria-label", `忽略并拉黑 ${item.filename || "图片"}`);
+      deleteButton.title = "忽略并永久拉黑；同时删除未分类文件";
+    }
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      void deleteIndexedItem(item, card, deleteButton);
+      void disposeCaptureItems([disposal], deleteButton);
     });
-    }
     actions.append(deleteButton);
     card.append(previewButton, actions);
     target.append(card);
     card.addEventListener("click", (event) => {
       if (event.target !== card) return;
-      const selectionDigest = normalizeDigest(card.dataset.sha256);
-      if (selectionMode && selectionDigest) {
-        toggleDuplicateSelection(selectionDigest);
+      if (selectionMode && disposal) {
+        toggleItemSelection(disposal);
         return;
       }
       if (card.classList.contains("thumbnail-error")) {
@@ -608,9 +569,8 @@ async function initCaptureIndexPage() {
       }
     });
     previewButton.addEventListener("click", () => {
-      const selectionDigest = normalizeDigest(card.dataset.sha256);
-      if (selectionMode && selectionDigest) {
-        toggleDuplicateSelection(selectionDigest);
+      if (selectionMode && disposal) {
+        toggleItemSelection(disposal);
         return;
       }
       if (card.classList.contains("thumbnail-error")) {
@@ -622,7 +582,7 @@ async function initCaptureIndexPage() {
     void loadThumbnail(item, image, card);
   }
 
-  function renderWorkspace(data, { renderItems = true } = {}) {
+  function renderWorkspace(data) {
     currentWorkspace = data;
     currentPage = Number(data.pagination?.page || currentPage);
     const stats = data.summary || {};
@@ -679,14 +639,12 @@ async function initCaptureIndexPage() {
     const pending = data.pending_items || [];
     indexedCount.textContent = `${stats.indexed || 0} 张`;
     pendingCount.textContent = `${(stats.pending || 0) + (stats.duplicate || 0)} 条`;
-    if (renderItems) {
-      indexedItems.replaceChildren();
-      pendingItems.replaceChildren();
-      if (indexed.length) indexed.forEach((item) => renderCard(item, indexedItems));
-      else renderEmpty(indexedItems, "暂无已完成的偷取索引");
-      if (pending.length) pending.forEach((item) => renderCard(item, pendingItems));
-      else renderEmpty(pendingItems, "当前没有待处理偷取图片");
-    }
+    indexedItems.replaceChildren();
+    pendingItems.replaceChildren();
+    if (indexed.length) indexed.forEach((item) => renderCard(item, indexedItems));
+    else renderEmpty(indexedItems, "暂无已完成的偷取索引");
+    if (pending.length) pending.forEach((item) => renderCard(item, pendingItems));
+    else renderEmpty(pendingItems, "当前没有待处理偷取图片");
     renderPagination(data.pagination);
 
     const state = data.library_index || {};
@@ -695,34 +653,25 @@ async function initCaptureIndexPage() {
       indexInProgress || !state.active_pack || !(stats.pending || stats.duplicate);
     indexButton.textContent = indexInProgress ? "分类索引中……" : "分类索引待处理项";
     reindexButton.disabled = reindexing;
-    const bulkDigests = selectedCategory
-      ? uniqueDuplicateDigests(pending)
-      : (data.duplicate_digests || []).filter((digest) => /^[0-9a-f]{64}$/i.test(String(digest)));
-    ignoreDuplicatesButton.disabled = !state.active_pack || !bulkDigests.length;
-    ignoreDuplicatesButton.setAttribute("aria-busy", "false");
     notice.textContent = indexing && state.status === "idle"
       ? "已提交分类索引，正在启动……"
       : state.message || "目录索引已加载";
     notice.classList.remove("error");
   }
 
-  async function loadWorkspace({ renderItems = true, preserveSelection = false } = {}) {
+  async function loadWorkspace({ preserveSelection = false } = {}) {
     if (!packSelect.value) return;
-    if (renderItems && !preserveSelection) {
+    if (!preserveSelection) {
       selectionMode = false;
-      selectedDuplicateDigests.clear();
+      selectedItems.clear();
+      failedDisposals.clear();
     }
     try {
-      const requestedPage = currentPage;
       const params = { pack_id: packSelect.value };
       if (selectedCategory) params.category = selectedCategory;
       params.page = currentPage;
       const data = await apiGet("capture/workspace", params);
-      renderWorkspace(data, { renderItems });
-      if (Number(data.pagination?.page || requestedPage) !== requestedPage) {
-        currentPage = Number(data.pagination.page);
-        return loadWorkspace({ renderItems: true, preserveSelection: true });
-      }
+      renderWorkspace(data);
       updateSelectionUi();
       return data;
     } catch (error) {
@@ -757,22 +706,29 @@ async function initCaptureIndexPage() {
   refreshButton.addEventListener("click", () => void loadWorkspace());
   paginationPrev?.addEventListener("click", () => {
     if (currentPage > 1) {
-      currentPage -= 1;
-      void loadWorkspace({ preserveSelection: true });
+      void goToIndexedPage(currentPage - 1);
     }
   });
   paginationNext?.addEventListener("click", () => {
     const totalPages = Math.max(1, Number(currentWorkspace?.pagination?.indexed?.total_pages || 1));
     if (currentPage < totalPages) {
-      currentPage += 1;
-      void loadWorkspace({ preserveSelection: true });
+      void goToIndexedPage(currentPage + 1);
     }
   });
   selectionModeButton?.addEventListener("click", () => setSelectionMode(!selectionMode));
-  selectVisibleDuplicatesButton?.addEventListener("click", () => {
-    if (!mutationInProgress) toggleVisibleDuplicateSelection();
+  selectIndexedPageButton?.addEventListener("click", () => {
+    if (!mutationInProgress) toggleVisibleSelection(visibleSelectionItems("indexed"));
   });
-  ignoreSelectedButton?.addEventListener("click", () => void ignoreSelectedDuplicates());
+  selectPendingButton?.addEventListener("click", () => {
+    if (!mutationInProgress) toggleVisibleSelection(visibleSelectionItems("pending"));
+  });
+  clearSelectionButton?.addEventListener("click", () => {
+    selectedItems.clear();
+    updateSelectionUi();
+  });
+  disposeSelectedButton?.addEventListener("click", () => {
+    void disposeSelectedItems();
+  });
   indexButton.addEventListener("click", async () => {
     if (indexing || !packSelect.value) return;
     indexing = true;
@@ -787,14 +743,6 @@ async function initCaptureIndexPage() {
       await loadWorkspace();
       showError(error);
     }
-  });
-  ignoreDuplicatesButton.addEventListener("click", () => {
-    if (mutationInProgress) return;
-    const pending = currentWorkspace?.pending_items || [];
-    const digests = selectedCategory
-      ? uniqueDuplicateDigests(pending)
-      : (currentWorkspace?.duplicate_digests || []);
-    void ignoreDuplicateRecords(digests, ignoreDuplicatesButton);
   });
   reindexButton.addEventListener("click", async () => {
     if (!packSelect.value) return;

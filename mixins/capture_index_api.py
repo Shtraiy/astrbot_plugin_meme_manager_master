@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from pathlib import Path
 
@@ -9,16 +10,16 @@ from quart import jsonify, request
 from astrbot.api import logger
 
 from ..capture_activity import (
-    MAX_CAPTURE_ACTIVITY_ITEMS,
     load_capture_activity,
     mark_capture_events_ignored,
 )
 from ..config import PACKS_DIR, get_active_pack_paths
 from ..backend.tagging import canonical_tag
-from ..storage import MemeStore
+from ..storage import IMAGE_EXTENSIONS, MemeStore
 
 
 CAPTURE_WORKSPACE_PAGE_SIZE = 48
+CAPTURE_DISPOSE_LIMIT = 500
 
 
 class CaptureIndexAPIMixin:
@@ -347,7 +348,7 @@ class CaptureIndexAPIMixin:
             raw_digests = data.get("sha256s")
             if not isinstance(raw_digests, list) or not raw_digests:
                 return jsonify({"message": "图片指纹列表不能为空"}), 400
-            if len(raw_digests) > MAX_CAPTURE_ACTIVITY_ITEMS:
+            if len(raw_digests) > CAPTURE_DISPOSE_LIMIT:
                 return jsonify({"message": "图片指纹列表过大"}), 400
             digests: set[str] = set()
             for value in raw_digests:
@@ -364,13 +365,186 @@ class CaptureIndexAPIMixin:
                     jsonify({"message": "请先将该资源包设为当前运行资源包后再忽略重复记录"}),
                     409,
                 )
+            blacklisted_count = self.capture_blacklist.add(digests)
             ignored = mark_capture_events_ignored(pack_dir, digests=digests)
-            return jsonify({"message": "已忽略重复记录", "ignored": ignored})
+            return jsonify({
+                "message": "已忽略重复记录并加入黑名单",
+                "ignored": ignored,
+                "blacklisted_count": blacklisted_count,
+            })
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"message": str(exc)}), 400
         except Exception as exc:
             logger.error("忽略重复捕获记录失败: %s", exc, exc_info=True)
             return jsonify({"message": "忽略重复捕获记录失败"}), 500
+
+    @staticmethod
+    def _capture_dispose_filename(value: object) -> str:
+        filename = str(value or "").strip()
+        if (
+            not filename
+            or Path(filename).name != filename
+            or Path(filename).suffix.lower() not in IMAGE_EXTENSIONS
+        ):
+            raise ValueError("图片文件名无效")
+        return filename
+
+    def _prepare_capture_disposals(
+        self, pack_dir: Path, items: list[dict]
+    ) -> tuple[list[dict], list[dict]]:
+        store = MemeStore(pack_dir)
+        catalog_by_filename = {
+            str(entry.get("filename")): entry
+            for entry in store.load_catalog().get("items", [])
+            if isinstance(entry, dict) and entry.get("filename")
+        }
+        duplicate_digests = {
+            str(event.get("sha256") or "").lower()
+            for event in load_capture_activity(pack_dir).get("events", [])
+            if isinstance(event, dict) and event.get("status") == "duplicate"
+        }
+        prepared: list[dict] = []
+        failed: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for item in items:
+            kind = str(item.get("kind") or "").strip().lower()
+            if kind == "duplicate":
+                digest = str(item.get("sha256") or "").strip().lower()
+                if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                    raise ValueError("图片指纹无效")
+                identity = (kind, digest)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                if digest not in duplicate_digests:
+                    failed.append({
+                        "kind": kind,
+                        "sha256": digest,
+                        "reason": "重复记录不存在或已处理",
+                    })
+                    continue
+                prepared.append({"kind": kind, "sha256": digest})
+                continue
+
+            if kind not in {"indexed", "pending"}:
+                raise ValueError("处置类型无效")
+            filename = self._capture_dispose_filename(item.get("filename"))
+            identity = (kind, filename)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            entry = catalog_by_filename.get(filename)
+            path = store.memes_dir / filename
+            expected_indexed = kind == "indexed"
+            if entry is None or not path.is_file() or bool(entry.get("indexed")) != expected_indexed:
+                failed.append({"kind": kind, "filename": filename, "reason": "图片不存在或状态已变化"})
+                continue
+            prepared.append({
+                "kind": kind,
+                "filename": filename,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            })
+        return prepared, failed
+
+    @staticmethod
+    def _dispose_capture_items(
+        pack_dir: Path, prepared: list[dict], failed: list[dict]
+    ) -> list[dict]:
+        store = MemeStore(pack_dir)
+        succeeded: list[dict] = []
+        deleted_names: set[str] = set()
+        for item in prepared:
+            kind = item["kind"]
+            if kind == "duplicate":
+                ignored = mark_capture_events_ignored(pack_dir, digests={item["sha256"]})
+                if ignored:
+                    succeeded.append(dict(item))
+                else:
+                    failed.append({
+                        **item,
+                        "blacklisted": True,
+                        "reason": "重复记录不存在或已处理",
+                    })
+                continue
+            path = store.memes_dir / item["filename"]
+            try:
+                path.unlink()
+            except OSError as exc:
+                failed.append({
+                    **item,
+                    "blacklisted": True,
+                    "reason": f"删除失败：{exc}",
+                })
+                continue
+            deleted_names.add(item["filename"])
+            if kind == "pending":
+                mark_capture_events_ignored(
+                    pack_dir,
+                    digests={item["sha256"]},
+                    statuses={"pending", "duplicate"},
+                )
+            succeeded.append(dict(item))
+        if deleted_names:
+            catalog = store.load_catalog()
+            metadata = {
+                key: value
+                for key, value in catalog.items()
+                if key not in {"version", "updated_at", "items", "category"}
+            }
+            store.write_catalog(
+                [
+                    entry
+                    for entry in catalog.get("items", [])
+                    if isinstance(entry, dict) and entry.get("filename") not in deleted_names
+                ],
+                metadata,
+            )
+        return succeeded
+
+    async def _api_capture_dispose_items(self):
+        try:
+            data = await request.get_json() or {}
+            if not isinstance(data, dict):
+                return jsonify({"message": "请求体无效"}), 400
+            pack_id = self._capture_pack_id(data)
+            items = data.get("items")
+            if not isinstance(items, list) or not items:
+                return jsonify({"message": "处置项目不能为空"}), 400
+            if len(items) > CAPTURE_DISPOSE_LIMIT:
+                return jsonify({"message": "处置项目过多"}), 400
+            if not all(isinstance(item, dict) for item in items):
+                return jsonify({"message": "处置项目无效"}), 400
+            pack_dir = (PACKS_DIR / pack_id).resolve()
+
+            def mutate():
+                prepared, failed = self._prepare_capture_disposals(pack_dir, items)
+                try:
+                    blacklisted_count = self.capture_blacklist.add(
+                        {item["sha256"] for item in prepared}
+                    )
+                except Exception as exc:
+                    raise RuntimeError("写入捕获黑名单失败") from exc
+                succeeded = self._dispose_capture_items(pack_dir, prepared, failed)
+                return {
+                    "message": "统一处理完成",
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "disposed_count": len(succeeded),
+                    "failed_count": len(failed),
+                    "blacklisted_count": blacklisted_count,
+                }
+
+            return jsonify(await self.catalog_index_service.run_locked_pack_mutation(
+                pack_id, "统一处置捕获表情", mutate
+            ))
+        except (FileNotFoundError, ValueError) as exc:
+            return jsonify({"message": str(exc)}), 400
+        except RuntimeError as exc:
+            status = 500 if "黑名单" in str(exc) else 409
+            return jsonify({"message": str(exc)}), status
+        except Exception as exc:
+            logger.error("统一处置捕获表情失败: %s", exc, exc_info=True)
+            return jsonify({"message": "统一处置捕获表情失败"}), 500
 
     async def _api_capture_index_status(self):
         try:

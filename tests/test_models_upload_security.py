@@ -57,7 +57,7 @@ class Upload:
     filename = "smoke.png"
     stream = io.BytesIO(payload.getvalue())
 with tempfile.TemporaryDirectory() as root:
-    result = add_emoji_to_category("happy", Upload(), Path(root))
+    result = add_emoji_to_category("happy", Upload(), Path(root) / "memes")
     assert Path(result["path"]).is_file()
 assert "astrbot" not in sys.modules
 '''
@@ -76,7 +76,7 @@ assert "astrbot" not in sys.modules
                 models.add_emoji_to_category(
                     "happy",
                     Upload("fake.png", b"not an image"),
-                    Path(temp_dir),
+                    Path(temp_dir) / "memes",
                 )
             self.assertEqual(list(Path(temp_dir).rglob("*")), [])
 
@@ -87,7 +87,7 @@ assert "astrbot" not in sys.modules
                 models.add_emoji_to_category(
                     "happy",
                     Upload("large.png", oversized),
-                    Path(temp_dir),
+                    Path(temp_dir) / "memes",
                 )
             self.assertEqual(list(Path(temp_dir).rglob("*")), [])
 
@@ -96,7 +96,7 @@ assert "astrbot" not in sys.modules
             result = models.add_emoji_to_category(
                 "happy",
                 Upload("valid.png", png_bytes()),
-                Path(temp_dir),
+                Path(temp_dir) / "memes",
             )
             saved = Path(result["path"])
             self.assertTrue(saved.is_file())

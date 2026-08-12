@@ -40,7 +40,8 @@ if "quart" not in sys.modules:
     sys.modules["werkzeug.utils"] = utils
     sys.modules["requests"] = types.ModuleType("requests")
 
-from capture_activity import mark_capture_events_ignored, record_capture_event
+from capture_activity import load_capture_activity, mark_capture_events_ignored, record_capture_event
+from capture_blacklist import CaptureBlacklist
 from meme_manager_master.mixins import capture_index_api
 from meme_manager_master.mixins.capture_index_api import CaptureIndexAPIMixin
 from meme_manager_master.backend.catalog_index_service import CatalogIndexService
@@ -224,6 +225,7 @@ class IgnoreDuplicateApiTests(unittest.IsolatedAsyncioTestCase):
             catalog_before = store.load_catalog("happy")
             instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
             instance.store = store
+            instance.capture_blacklist = CaptureBlacklist(Path(temp_dir) / "plugin-data")
             instance._capture_pack_id = CaptureIndexAPIMixin._capture_pack_id.__get__(instance)
 
             class Request:
@@ -239,13 +241,17 @@ class IgnoreDuplicateApiTests(unittest.IsolatedAsyncioTestCase):
             ):
                 response = await instance._api_capture_ignore_duplicates()
 
-            self.assertEqual(response, {"message": "已忽略重复记录", "ignored": 2})
+            self.assertEqual(
+                response,
+                {"message": "已忽略重复记录并加入黑名单", "ignored": 2, "blacklisted_count": 1},
+            )
             self.assertTrue(image.is_file())
             self.assertEqual(store.load_catalog("happy"), catalog_before)
             self.assertEqual(
                 {event["status"] for event in capture_index_api.load_capture_activity(pack_dir)["events"]},
                 {"ignored"},
             )
+            self.assertTrue(instance.capture_blacklist.contains(digest))
 
     async def test_ignore_endpoint_rejects_invalid_digest_and_inactive_pack(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -253,6 +259,7 @@ class IgnoreDuplicateApiTests(unittest.IsolatedAsyncioTestCase):
             pack_dir.mkdir()
             instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
             instance.store = MemeStore(pack_dir)
+            instance.capture_blacklist = CaptureBlacklist(Path(temp_dir) / "plugin-data")
             instance._capture_pack_id = CaptureIndexAPIMixin._capture_pack_id.__get__(instance)
 
             class Request:
@@ -284,6 +291,179 @@ class IgnoreDuplicateApiTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(response[1], 409)
 
+
+class DisposeCaptureItemsTests(unittest.IsolatedAsyncioTestCase):
+    def _fixture(self, temporary: str):
+        packs_dir = Path(temporary) / "packs"
+        pack_dir = packs_dir / "pack"
+        store = MemeStore(pack_dir)
+        indexed = store.save_image(b"indexed", "happy", ".png").path
+        pending = store.save_image(b"pending", "sad", ".png").path
+        duplicate = store.save_image(b"existing duplicate", "happy", ".png").path
+        catalog = store.load_catalog()
+        for item in catalog["items"]:
+            item["indexed"] = item["filename"] != pending.name
+        store.write_catalog(catalog["items"])
+        pending_digest = store.image_digest(pending)
+        duplicate_digest = store.image_digest(duplicate)
+        record_capture_event(
+            pack_dir,
+            category="sad",
+            filename=pending.name,
+            digest=pending_digest,
+            status="pending",
+        )
+        record_capture_event(
+            pack_dir,
+            category="happy",
+            filename=duplicate.name,
+            digest=duplicate_digest,
+            status="duplicate",
+        )
+        instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+        instance.store = store
+        instance.catalog_index_service = CatalogIndexService(packs_dir.parent)
+        instance.capture_blacklist = CaptureBlacklist(Path(temporary) / "plugin-data")
+        return instance, packs_dir, store, indexed, pending, duplicate, duplicate_digest
+
+    async def test_dispose_endpoint_deletes_indexed_and_pending_but_keeps_duplicate_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance, packs_dir, store, indexed, pending, duplicate, duplicate_digest = self._fixture(temporary)
+            instance.catalog_index_service = CatalogIndexService(packs_dir.parent)
+            instance._capture_pack_id = lambda data=None: "pack"
+
+            class Request:
+                async def get_json(self):
+                    return {
+                        "pack_id": "pack",
+                        "items": [
+                            {"kind": "indexed", "filename": indexed.name},
+                            {"kind": "pending", "filename": pending.name},
+                            {"kind": "duplicate", "sha256": duplicate_digest},
+                        ],
+                    }
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", packs_dir),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                response = await instance._api_capture_dispose_items()
+
+            self.assertEqual(response["disposed_count"], 3)
+            self.assertEqual(response["failed"], [])
+            self.assertFalse(indexed.exists())
+            self.assertFalse(pending.exists())
+            self.assertTrue(duplicate.exists())
+            self.assertNotIn(indexed.name, {item["filename"] for item in store.load_catalog()["items"]})
+            self.assertNotIn(pending.name, {item["filename"] for item in store.load_catalog()["items"]})
+            statuses = {event["sha256"]: event["status"] for event in load_capture_activity(store.root)["events"]}
+            self.assertEqual(statuses[store.image_digest(duplicate)], "ignored")
+            self.assertEqual(set(instance.capture_blacklist.load()), {
+                capture_index_api.hashlib.sha256(b"indexed").hexdigest(),
+                capture_index_api.hashlib.sha256(b"pending").hexdigest(),
+                duplicate_digest,
+            })
+
+    async def test_blacklist_write_failure_prevents_all_disposal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance, packs_dir, _store, indexed, pending, duplicate, _digest = self._fixture(temporary)
+            instance._capture_pack_id = lambda data=None: "pack"
+
+            class FailingBlacklist:
+                def add(self, _digests):
+                    raise OSError("disk full")
+
+            instance.capture_blacklist = FailingBlacklist()
+
+            class Request:
+                async def get_json(self):
+                    return {"pack_id": "pack", "items": [{"kind": "indexed", "filename": indexed.name}]}
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", packs_dir),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                response = await instance._api_capture_dispose_items()
+
+            self.assertEqual(response[1], 500)
+            self.assertIn("黑名单", response[0]["message"])
+            self.assertTrue(indexed.exists())
+            self.assertTrue(pending.exists())
+            self.assertTrue(duplicate.exists())
+
+    async def test_delete_failure_is_reported_as_blacklisted_and_retry_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance, packs_dir, _store, indexed, _pending, _duplicate, _digest = self._fixture(temporary)
+            instance._capture_pack_id = lambda data=None: "pack"
+
+            class Request:
+                async def get_json(self):
+                    return {
+                        "pack_id": "pack",
+                        "items": [{"kind": "indexed", "filename": indexed.name}],
+                    }
+
+            original_unlink = Path.unlink
+
+            def fail_indexed_unlink(path, *args, **kwargs):
+                if path == indexed:
+                    raise OSError("locked")
+                return original_unlink(path, *args, **kwargs)
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", packs_dir),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+                patch.object(Path, "unlink", fail_indexed_unlink),
+            ):
+                response = await instance._api_capture_dispose_items()
+
+            self.assertEqual(response["disposed_count"], 0)
+            self.assertEqual(response["failed_count"], 1)
+            self.assertTrue(response["failed"][0]["blacklisted"])
+            self.assertTrue(indexed.exists())
+            self.assertTrue(instance.capture_blacklist.contains(
+                capture_index_api.hashlib.sha256(b"indexed").hexdigest()
+            ))
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", packs_dir),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                first = await instance._api_capture_dispose_items()
+                second = await instance._api_capture_dispose_items()
+
+            self.assertEqual(first["disposed_count"], 1)
+            self.assertEqual(second["disposed_count"], 0)
+            self.assertEqual(second["failed_count"], 1)
+
+    async def test_dispose_endpoint_rejects_invalid_items_and_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance, packs_dir, _store, _indexed, _pending, _duplicate, _digest = self._fixture(temporary)
+            instance._capture_pack_id = lambda data=None: "pack"
+            payloads = [
+                {"pack_id": "pack", "items": [{"kind": "pending", "filename": "../escape.png"}]},
+                {"pack_id": "pack", "items": [{"kind": "unknown", "filename": "x.png"}]},
+                {"pack_id": "pack", "items": [{"kind": "duplicate", "sha256": "a" * 64}] * 501},
+            ]
+
+            for payload in payloads:
+                class Request:
+                    async def get_json(self):
+                        return payload
+
+                with (
+                    patch.object(capture_index_api, "PACKS_DIR", packs_dir),
+                    patch.object(capture_index_api, "request", Request()),
+                    patch.object(capture_index_api, "jsonify", side_effect=lambda value: value),
+                ):
+                    response = await instance._api_capture_dispose_items()
+                self.assertEqual(response[1], 400)
+
+class ReindexPackTests(unittest.TestCase):
     def test_reindex_pack_updates_filenames_without_model_work(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pack_dir = Path(temp_dir) / "pack"

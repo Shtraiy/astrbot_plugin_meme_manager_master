@@ -121,16 +121,21 @@ def mark_capture_events_ignored(
     *,
     digests: set[str],
     ignored_at: int | None = None,
+    statuses: set[str] | None = None,
 ) -> int:
-    """Hide duplicate activity records for the supplied image digests."""
+    """Hide matching capture activity records for the supplied image digests."""
     if not digests:
         return 0
     with _lock_for(pack_dir):
         data = load_capture_activity(pack_dir)
         changed = 0
         timestamp = int(ignored_at or time.time())
+        allowed_statuses = statuses or {"duplicate"}
         for event in data["events"]:
-            if event.get("status") != "duplicate" or event.get("sha256") not in digests:
+            if (
+                event.get("status") not in allowed_statuses
+                or event.get("sha256") not in digests
+            ):
                 continue
             event["status"] = "ignored"
             event["ignored_at"] = timestamp

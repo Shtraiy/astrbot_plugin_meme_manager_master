@@ -15,6 +15,7 @@ import requests
 from .atomic_io import atomic_write_json
 from ..config import (
     BACKUP_DIR,
+    CAPTURE_BLACKLIST_PATH,
     COMMUNITY_CACHE_PATH,
     DEFAULT_CATEGORY_DESCRIPTIONS,
     DEFAULT_PACK_ID,
@@ -26,6 +27,7 @@ from ..config import (
     SELECTION_RULES_PATH,
     TEMP_DIR,
 )
+from ..capture_blacklist import CaptureBlacklist
 from .pack_protocol import (
     PACK_EXPORT_MODES,
     PACK_TRANSFER_FORMAT,
@@ -67,6 +69,7 @@ ARCHIVE_JSON_SIZE_LIMITS = {
     "registry.json": 4 * 1024 * 1024,
     "selection_rules.json": 4 * 1024 * 1024,
     "community_cache.json": 8 * 1024 * 1024,
+    "capture_blacklist.json": 64 * 1024 * 1024,
     "memes_data.json": 16 * 1024 * 1024,
     "semantic_metadata.json": 256 * 1024 * 1024,
     "index_manifest.json": 256 * 1024 * 1024,
@@ -1762,6 +1765,9 @@ def export_runtime_backup(
             shutil.copy2(SELECTION_RULES_PATH, snapshot_root / "selection_rules.json")
         if COMMUNITY_CACHE_PATH.is_file():
             shutil.copy2(COMMUNITY_CACHE_PATH, snapshot_root / "community_cache.json")
+        if CAPTURE_BLACKLIST_PATH.is_file():
+            CaptureBlacklist(PLUGIN_DATA_DIR).load()
+            shutil.copy2(CAPTURE_BLACKLIST_PATH, snapshot_root / "capture_blacklist.json")
         if PACKS_DIR.is_dir():
             if operation_guard:
                 for pack_dir in PACKS_DIR.iterdir():
@@ -1823,9 +1829,18 @@ def import_runtime_backup(
         backup_registry = backup_root / "registry.json"
         backup_rules = backup_root / "selection_rules.json"
         backup_community = backup_root / "community_cache.json"
+        backup_blacklist_path = backup_root / "capture_blacklist.json"
 
         if not backup_packs_dir.is_dir() and not backup_registry.is_file():
             raise ValueError("备份包中没有可恢复的数据")
+
+        current_blacklist = CaptureBlacklist(PLUGIN_DATA_DIR).load()
+        backup_blacklist = (
+            CaptureBlacklist(backup_root).load()
+            if backup_blacklist_path.is_file()
+            else set()
+        )
+        merged_blacklist = current_blacklist | backup_blacklist
 
         prepared_packs = extract_root / "prepared_packs"
         prepared_packs.mkdir()
@@ -1988,6 +2003,11 @@ def import_runtime_backup(
             if COMMUNITY_CACHE_PATH.is_file()
             else None
         )
+        blacklist_snapshot = (
+            CAPTURE_BLACKLIST_PATH.read_bytes()
+            if CAPTURE_BLACKLIST_PATH.is_file()
+            else None
+        )
         semantic_indexes_dir = PLUGIN_DATA_DIR / "semantic_indexes"
         old_packs_dir = extract_root / "old_runtime_packs"
         old_indexes_dir = extract_root / "old_runtime_indexes"
@@ -2029,6 +2049,8 @@ def import_runtime_backup(
                 _save_selection_rules(rules_payload)
             if community_payload is not None:
                 _save_json(COMMUNITY_CACHE_PATH, community_payload)
+            if backup_blacklist_path.is_file():
+                CaptureBlacklist(PLUGIN_DATA_DIR).add(merged_blacklist)
         except Exception:
             if packs_swapped:
                 shutil.rmtree(PACKS_DIR, ignore_errors=True)
@@ -2050,6 +2072,7 @@ def import_runtime_backup(
             _restore_file_snapshot(REGISTRY_PATH, registry_snapshot)
             _restore_file_snapshot(SELECTION_RULES_PATH, rules_snapshot)
             _restore_file_snapshot(COMMUNITY_CACHE_PATH, community_snapshot)
+            _restore_file_snapshot(CAPTURE_BLACKLIST_PATH, blacklist_snapshot)
             raise
 
         return {

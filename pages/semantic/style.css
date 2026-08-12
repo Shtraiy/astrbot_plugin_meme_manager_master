@@ -96,19 +96,23 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .card-actions { position: absolute; top: 16px; right: 16px; z-index: 2; }
 .card.selection-mode { cursor: pointer; }
 .card.selected { border-color: #2f80ed; background: #edf5ff; box-shadow: 0 8px 20px rgba(47, 128, 237, .22); }
+.card.disposal-failed { border-color: #d96c56; background: #fff4f0; }
+.card-preview[aria-pressed="true"] { outline: 3px solid rgba(47, 128, 237, .35); outline-offset: 2px; }
+.card-preview:focus-visible, .card-actions button:focus-visible, .selection-control button:focus-visible, .capture-pagination button:focus-visible { outline: 3px solid rgba(47, 128, 237, .45); outline-offset: 2px; }
 .card-ignore { padding: 6px 9px; border-color: #d7c18d; background: #fff8e7; color: #8d6728; font-size: 12px; }
 .card-delete {
-  display: grid;
-  place-items: center;
-  width: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   height: 32px;
-  padding: 0;
+  padding: 0 8px;
   color: #a33f3f;
   border-color: rgba(228, 181, 181, .9);
   background: rgba(255, 247, 247, .94);
 }
 .card-delete:disabled { cursor: wait; opacity: .55; }
 .card-delete-icon { width: 16px; height: 16px; fill: currentColor; }
+.card-delete span { font-size: 12px; white-space: nowrap; }
 .card-thumbnail {
   position: relative;
   display: grid;
@@ -158,8 +162,9 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .capture-confirm-card { width: min(100%, 420px); padding: 24px; border: 1px solid #d7e4e0; border-radius: 18px; background: #fff; box-shadow: 0 18px 60px #0004; }
 .capture-confirm-card h2 { margin: 4px 0 10px; color: #173b3a; font-size: 22px; }
 .capture-confirm-card > p:not(.kicker) { margin: 0; color: #5e7075; line-height: 1.6; }
+.capture-confirm-card #capture-confirm-description { white-space: pre-line; }
 .capture-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
-.capture-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 18px; padding: 12px 16px; }
+.capture-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; padding: 12px 16px; }
 .capture-pagination[hidden] { display: none; }
 .capture-pagination-pages { display: flex; align-items: center; gap: 4px; }
 .capture-pagination button { min-width: 34px; padding: 7px 10px; font-size: 12px; }
@@ -169,6 +174,9 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .capture-pagination-ellipsis { color: #8a9aa0; padding: 0 2px; }
 @media (max-width: 760px) {
   .page-header, .toolbar { align-items: stretch; flex-direction: column; }
+  .selection-control { align-items: stretch; }
+  .selection-control span { flex-basis: 100%; white-space: normal; }
+  .selection-control button { flex: 1 1 160px; }
   .summary { grid-template-columns: 1fr; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .card { min-height: 190px; padding: 8px; }

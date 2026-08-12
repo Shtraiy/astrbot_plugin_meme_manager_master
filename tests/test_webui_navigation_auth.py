@@ -199,16 +199,16 @@ class WebUINavigationAuthTests(unittest.TestCase):
 
     def test_a_manage_navigation_scripts_have_fresh_cache_busters(self):
         pages = {
-            ROOT / "pages" / "a_manage" / "index.html": "api.js",
-            ROOT / "pages" / "a_manage" / "catalog" / "index.html": "script.js",
-            ROOT / "pages" / "a_manage" / "settings" / "index.html": "script.js",
-            ROOT / "pages" / "a_manage" / "semantic" / "index.html": "script.js",
+            ROOT / "pages" / "a_manage" / "index.html": ("api.js", "20260811-sandbox-nav-fix-1"),
+            ROOT / "pages" / "a_manage" / "catalog" / "index.html": ("script.js", "20260811-sandbox-nav-fix-1"),
+            ROOT / "pages" / "a_manage" / "settings" / "index.html": ("script.js", "20260811-sandbox-nav-fix-1"),
+            ROOT / "pages" / "a_manage" / "semantic" / "index.html": ("script.js", "20260812-unified-disposal-1"),
         }
 
-        for path, script_name in pages.items():
+        for path, (script_name, version) in pages.items():
             source = path.read_text(encoding="utf-8")
             self.assertIn(
-                f'{script_name}?v=20260811-sandbox-nav-fix-1',
+                f'{script_name}?v={version}',
                 source,
                 str(path),
             )

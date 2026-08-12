@@ -10,6 +10,7 @@ WebUI and direct filesystem write primitives.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from typing import Any, Callable
 
@@ -60,6 +61,7 @@ class CapturePipeline:
         should_skip: Callable[[dict], bool],
         catalog_entry_builder: Callable[..., dict],
         bind_saved_result: Callable[..., None],
+        capture_blacklist: Any | None = None,
     ):
         self.store = store
         self.config = config
@@ -73,6 +75,7 @@ class CapturePipeline:
         self._should_skip = should_skip
         self._catalog_entry_builder = catalog_entry_builder
         self._bind_saved_result = bind_saved_result
+        self._capture_blacklist = capture_blacklist
 
     def _duplicate_threshold(self) -> int | None:
         if not self.config.perceptual_dedupe_enabled:
@@ -110,6 +113,16 @@ class CapturePipeline:
                 if payload is None:
                     statuses[index] = "unavailable"
                     continue
+                digest = hashlib.sha256(payload.content).hexdigest()
+                if self._capture_blacklist is not None:
+                    try:
+                        if self._capture_blacklist.contains(digest):
+                            statuses[index] = "blacklisted"
+                            continue
+                    except ValueError as exc:
+                        logger.error("[meme_manager_master] 捕获黑名单不可用，拒绝保存图片: %s", exc)
+                        statuses[index] = "blacklisted"
+                        continue
                 threshold = self._duplicate_threshold()
                 if any(
                     self.store.is_similar(payload.content, previous.content, threshold)
@@ -214,12 +227,21 @@ class CapturePipeline:
                     tags = normalize_tags([category, scene.get("tags"), vision.get("tags")])
                     payload = payload_by_index[index]
                     async with self._save_lock:
-                        result = self.store.save_image(
-                            payload.content,
-                            tags,
-                            payload.extension,
-                            self._duplicate_threshold(),
+                        digest = hashlib.sha256(payload.content).hexdigest()
+                        save = lambda: self.store.save_image(
+                            payload.content, tags, payload.extension, self._duplicate_threshold()
                         )
+                        if self._capture_blacklist is None:
+                            allowed, result = True, save()
+                        else:
+                            try:
+                                allowed, result = self._capture_blacklist.run_if_allowed(digest, save)
+                            except ValueError as exc:
+                                logger.error("[meme_manager_master] 捕获黑名单不可用，拒绝保存图片: %s", exc)
+                                allowed, result = False, None
+                        if not allowed or result is None:
+                            statuses[index] = "blacklisted"
+                            continue
                         if result.status in {"saved", "duplicate"}:
                             self._bind_saved_result(event, result.path)
                         statuses[index] = result.status

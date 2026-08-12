@@ -52,6 +52,8 @@ from .capture_activity import (
     mark_capture_events_indexed,
     record_capture_event,
 )
+from .capture_blacklist import CaptureBlacklist
+from .config import PLUGIN_DATA_DIR
 from .health import MemeManagerHealth, check_meme_manager_master_health
 from .indexing import catalog_needs_write, normalize_library_results
 from .runtime_config import PluginConfig, consume_migration_used
@@ -133,6 +135,7 @@ class CaptureMixin:
         self.store = MemeStore.from_astrbot()
         self._semaphore = asyncio.Semaphore(self.runtime_config.max_concurrent)
         self._save_lock = asyncio.Lock()
+        self.capture_blacklist = CaptureBlacklist(PLUGIN_DATA_DIR)
         self.capture_pipeline = CapturePipeline(
             store=self.store,
             config=self.runtime_config,
@@ -146,6 +149,7 @@ class CaptureMixin:
             should_skip=self._should_skip,
             catalog_entry_builder=CaptureMixin._catalog_entry_from_vision,
             bind_saved_result=self._bind_saved_image,
+            capture_blacklist=self.capture_blacklist,
         )
         self.meme_selection = MemeSelectionService(
             store=self.store,
@@ -703,6 +707,7 @@ class CaptureMixin:
             "duplicate": "已存在",
             "not_meme": "判定为普通图片",
             "unavailable": "图片无法读取",
+            "blacklisted": "已被永久黑名单拦截",
             "error": "处理失败",
         }
         counts: dict[str, int] = {}
