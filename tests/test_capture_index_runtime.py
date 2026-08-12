@@ -168,6 +168,10 @@ async function runPage(scriptPath) {
   let disposeShouldFail = false;
   let disposePartially = false;
   let workspaceCalls = 0;
+  let thumbnailCalls = 0;
+  let originalImageCalls = 0;
+  let thumbnailFailurePending = true;
+  let reindexStarted = false;
   const workspacePages = [];
   let indexStatusCalls = 0;
   const pageApi = {
@@ -179,13 +183,26 @@ async function runPage(scriptPath) {
         workspacePages.push(String(params.page || "1"));
         return workspaceFor(params.page);
       }
-      if (endpoint === "meme_image_data") return { data_url: "data:image/png;base64,AA==" };
+      if (endpoint === "meme_image_data") {
+        if (params.size === "original") {
+          originalImageCalls += 1;
+          return { data_url: `data:image/png;base64,${Buffer.from(params.filename).toString("base64")}` };
+        }
+        thumbnailCalls += 1;
+        if (params.filename === "meme_duplicate_c.png" && thumbnailFailurePending) {
+          thumbnailFailurePending = false;
+          throw new Error("thumbnail failed once");
+        }
+        return { data_url: `data:image/png;base64,${Buffer.from(params.filename).toString("base64")}` };
+      }
       if (endpoint === "capture/index/status") {
         indexStatusCalls += 1;
         return { status: "completed", processed: 1, total: 1, message: "分类索引已完成" };
       }
       if (endpoint === "capture/reindex/status") {
-        return { status: "completed", processed: 1, total: 1, message: "重索引已完成" };
+        return reindexStarted
+          ? { status: "completed", processed: 1, total: 1, message: "重索引已完成" }
+          : { status: "idle", processed: 0, total: 0, message: "尚未重索引" };
       }
       throw new Error(`unexpected GET ${endpoint}`);
     },
@@ -221,7 +238,10 @@ async function runPage(scriptPath) {
         };
       }
       if (endpoint === "capture/index") return { status: "running", message: "分类索引已开始" };
-      if (endpoint === "capture/reindex") return { status: "running", processed: 0, total: 1, message: "正在重索引" };
+      if (endpoint === "capture/reindex") {
+        reindexStarted = true;
+        return { status: "running", processed: 0, total: 1, message: "正在重索引" };
+      }
       return { status: "ok" };
     },
   };
@@ -236,6 +256,59 @@ async function runPage(scriptPath) {
   await new Promise((resolve) => setImmediate(resolve));
   const pack = document.querySelector("#pack");
   pack.value = "pack";
+
+  const initialUniqueThumbnailRequests = thumbnailCalls === 51;
+  const retryCard = document.querySelector("#capture-pending-items").children[3];
+  const beforeRetry = thumbnailCalls;
+  await retryCard.children[0].dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const failedThumbnailRetried =
+    thumbnailCalls === beforeRetry + 1 && retryCard.classList.contains("thumbnail-loaded");
+
+  const beforeRefresh = thumbnailCalls;
+  await document.querySelector("#capture-refresh-button").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const manualRefreshReusedThumbnails = thumbnailCalls === beforeRefresh;
+
+  const beforeFilter = thumbnailCalls;
+  await document.querySelector("#capture-category-filters").children[1].dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const categoryFilterReusedThumbnails = thumbnailCalls === beforeFilter;
+
+  const beforeDelete = thumbnailCalls;
+  const successButton = document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
+  const successDelete = successButton.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await successDelete;
+  await new Promise((resolve) => setImmediate(resolve));
+  const deletePayload = calls.find((call) => call.endpoint === "capture/items/dispose").body;
+  const successNotice = document.querySelector("#notice").textContent;
+  const refilledAfterDelete = document.querySelector("#capture-indexed-items").children.length === 48 &&
+    document.querySelector("#capture-indexed-items").children[47].children[0].children[1].textContent === "meme_49.png";
+  const disposalLoadedOnlyRefill = thumbnailCalls === beforeDelete + 1;
+
+  const beforeNewPage = thumbnailCalls;
+  await document.querySelector("#capture-pagination-next").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const newPageLoadedOnlyNewThumbnails = thumbnailCalls === beforeNewPage + 1;
+  await document.querySelector("#capture-pagination-prev").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const returningPageReusedThumbnails = thumbnailCalls === beforeNewPage + 1;
+
+  const firstPreview = document.querySelector("#capture-indexed-items").children[0].children[0];
+  await firstPreview.dispatch("click");
+  await firstPreview.dispatch("click");
+  const originalPreviewStayedUncached = originalImageCalls === 2;
+
+  const decodeCard = document.querySelector("#capture-indexed-items").children[1];
+  const decodeImage = decodeCard.children[0].children[0].children[0];
+  const beforeDecodeRetry = thumbnailCalls;
+  await decodeImage.dispatch("error");
+  await decodeCard.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  const decodeFailureEvictedCache =
+    thumbnailCalls === beforeDecodeRetry + 1 && decodeCard.classList.contains("thumbnail-loaded");
 
   const duplicateCard = document.querySelector("#capture-pending-items").children[1];
   await document.querySelector("#capture-selection-mode-button").dispatch("click");
@@ -260,17 +333,6 @@ async function runPage(scriptPath) {
   await document.querySelector("#capture-clear-selection-button").dispatch("click");
 
   const getDeleteButton = () => document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
-  const successButton = getDeleteButton();
-  const successDelete = successButton.dispatch("click");
-  await new Promise((resolve) => setImmediate(resolve));
-  await document.querySelector("#capture-confirm-confirm").dispatch("click");
-  await successDelete;
-  await new Promise((resolve) => setImmediate(resolve));
-  const deletePayload = calls.find((call) => call.endpoint === "capture/items/dispose").body;
-  const successNotice = document.querySelector("#notice").textContent;
-  const refilledAfterDelete = document.querySelector("#capture-indexed-items").children.length === 48 &&
-    document.querySelector("#capture-indexed-items").children[47].children[0].children[1].textContent === "meme_49.png";
-
   await document.querySelector("#capture-pagination-next").dispatch("click");
   await new Promise((resolve) => setImmediate(resolve));
   const clampButton = getDeleteButton();
@@ -389,6 +451,15 @@ async function runPage(scriptPath) {
     deselectedByCardClick,
     ignoreButtonDidNotSelect,
     workspacePages,
+    initialUniqueThumbnailRequests,
+    failedThumbnailRetried,
+    manualRefreshReusedThumbnails,
+    categoryFilterReusedThumbnails,
+    disposalLoadedOnlyRefill,
+    newPageLoadedOnlyNewThumbnails,
+    returningPageReusedThumbnails,
+    originalPreviewStayedUncached,
+    decodeFailureEvictedCache,
   };
 }
 
@@ -484,6 +555,15 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["deselectedByCardClick"])
             self.assertTrue(payload["ignoreButtonDidNotSelect"])
             self.assertIn("2", payload["workspacePages"])
+            self.assertTrue(payload["initialUniqueThumbnailRequests"])
+            self.assertTrue(payload["failedThumbnailRetried"])
+            self.assertTrue(payload["manualRefreshReusedThumbnails"])
+            self.assertTrue(payload["categoryFilterReusedThumbnails"])
+            self.assertTrue(payload["disposalLoadedOnlyRefill"])
+            self.assertTrue(payload["newPageLoadedOnlyNewThumbnails"])
+            self.assertTrue(payload["returningPageReusedThumbnails"])
+            self.assertTrue(payload["originalPreviewStayedUncached"])
+            self.assertTrue(payload["decodeFailureEvictedCache"])
 
 
 if __name__ == "__main__":

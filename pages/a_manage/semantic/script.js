@@ -47,6 +47,11 @@ async function initCaptureIndexPage() {
   const failedDisposals = new Map();
   let mutationInProgress = false;
   let currentPage = 1;
+  const THUMBNAIL_CACHE_MAX_ENTRIES = 512;
+  const THUMBNAIL_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+  const thumbnailCache = new Map();
+  const thumbnailRequests = new Map();
+  let thumbnailCacheBytes = 0;
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -223,6 +228,109 @@ async function initCaptureIndexPage() {
     return { managed_pack_id: packSelect.value, category, filename };
   }
 
+  function thumbnailCacheKey(item, location) {
+    const packId = String(location?.managed_pack_id || "").trim();
+    if (!packId) return "";
+    const digest = normalizeDigest(item?.sha256);
+    if (digest) return JSON.stringify([packId, "sha256", digest]);
+    const relativePath = String(item?.relative_path || "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+/, "");
+    if (relativePath) return JSON.stringify([packId, "path", relativePath]);
+    return JSON.stringify([packId, "location", location.category, location.filename]);
+  }
+
+  function removeThumbnailCacheEntry(key) {
+    const entry = thumbnailCache.get(key);
+    if (!entry) return;
+    thumbnailCache.delete(key);
+    thumbnailCacheBytes = Math.max(0, thumbnailCacheBytes - entry.bytes);
+  }
+
+  function trimThumbnailCache() {
+    while (
+      thumbnailCache.size > THUMBNAIL_CACHE_MAX_ENTRIES ||
+      thumbnailCacheBytes > THUMBNAIL_CACHE_MAX_BYTES
+    ) {
+      const oldestKey = thumbnailCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      removeThumbnailCacheEntry(oldestKey);
+    }
+  }
+
+  function rememberThumbnail(key, dataUrl, location) {
+    const bytes = dataUrl.length * 2;
+    if (bytes > THUMBNAIL_CACHE_MAX_BYTES) return;
+    removeThumbnailCacheEntry(key);
+    const entry = {
+      dataUrl,
+      bytes,
+      packId: location.managed_pack_id,
+      filename: location.filename,
+    };
+    thumbnailCache.set(key, entry);
+    thumbnailCacheBytes += entry.bytes;
+    trimThumbnailCache();
+  }
+
+  function readThumbnailCache(key) {
+    const entry = thumbnailCache.get(key);
+    if (!entry) return "";
+    thumbnailCache.delete(key);
+    thumbnailCache.set(key, entry);
+    return entry.dataUrl;
+  }
+
+  function clearThumbnailCache() {
+    thumbnailCache.clear();
+    thumbnailRequests.clear();
+    thumbnailCacheBytes = 0;
+  }
+
+  function evictThumbnailFile(packId, filename) {
+    for (const [key, entry] of thumbnailCache) {
+      if (entry.packId === packId && entry.filename === filename) removeThumbnailCacheEntry(key);
+    }
+    for (const [key, request] of thumbnailRequests) {
+      if (request.packId === packId && request.filename === filename) thumbnailRequests.delete(key);
+    }
+  }
+
+  function evictThumbnailItem(item, location = getImageLocation(item)) {
+    const key = location ? thumbnailCacheKey(item, location) : "";
+    if (!key) return;
+    removeThumbnailCacheEntry(key);
+    thumbnailRequests.delete(key);
+  }
+
+  async function getCachedThumbnail(item, location) {
+    const key = thumbnailCacheKey(item, location);
+    if (!key) throw new Error("缩略图缓存键无效");
+    const cached = readThumbnailCache(key);
+    if (cached) return cached;
+    const activeRequest = thumbnailRequests.get(key);
+    if (activeRequest) return activeRequest.promise;
+
+    const request = {
+      packId: location.managed_pack_id,
+      filename: location.filename,
+      promise: null,
+    };
+    request.promise = (async () => {
+      const data = await apiGet("meme_image_data", { ...location, size: "preview" });
+      const dataUrl = String(data?.data_url || "");
+      if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(dataUrl)) {
+        throw new Error("缩略图数据为空或格式无效");
+      }
+      if (thumbnailRequests.get(key) === request) rememberThumbnail(key, dataUrl, location);
+      return dataUrl;
+    })().finally(() => {
+      if (thumbnailRequests.get(key) === request) thumbnailRequests.delete(key);
+    });
+    thumbnailRequests.set(key, request);
+    return request.promise;
+  }
+
   async function showPreview(item) {
     const location = getImageLocation(item);
     if (!location) return;
@@ -251,9 +359,8 @@ async function initCaptureIndexPage() {
     card.classList.remove("thumbnail-error", "thumbnail-loaded");
     card.classList.add("thumbnail-loading");
     try {
-      const data = await apiGet("meme_image_data", { ...location, size: "preview" });
-      if (!data.data_url) throw new Error("缩略图数据为空");
-      image.src = data.data_url;
+      const dataUrl = await getCachedThumbnail(item, location);
+      image.src = dataUrl;
       card.classList.remove("thumbnail-loading");
       card.classList.add("thumbnail-loaded");
     } catch (error) {
@@ -481,6 +588,7 @@ async function initCaptureIndexPage() {
     card.dataset.filename = item.filename || "";
     card.dataset.selectionKey = disposalKey;
     const digest = normalizeDigest(item.sha256);
+    const thumbnailLocation = getImageLocation(item);
     if (item.duplicate && digest) card.dataset.sha256 = digest;
 
     card.title = item.filename || "未命名图片";
@@ -496,7 +604,10 @@ async function initCaptureIndexPage() {
     image.className = "thumbnail-image";
     image.loading = "lazy";
     image.alt = "";
-    image.addEventListener("error", () => markThumbnailError(image, card));
+    image.addEventListener("error", () => {
+      evictThumbnailItem(item, thumbnailLocation);
+      markThumbnailError(image, card);
+    });
     const placeholder = document.createElement("span");
     placeholder.className = "thumbnail-placeholder";
     placeholder.textContent = "加载缩略图";
