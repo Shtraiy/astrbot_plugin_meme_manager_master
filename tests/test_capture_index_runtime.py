@@ -1,10 +1,26 @@
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_node_harness(harness, scripts):
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        harness_path = Path(temporary_directory) / "capture_index_runtime_harness.js"
+        harness_path.write_text("process.argv.splice(1, 1);\n" + harness, encoding="utf-8")
+        return subprocess.run(
+            ["node", str(harness_path), *scripts],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
 
 
 NODE_RUNTIME_HARNESS = r'''
@@ -1245,6 +1261,160 @@ async function runStaleDisposalScenario(scriptPath, rejectOldDisposal) {
   return { bothDisposalsStarted, staleOldDisposalDidNotAffectNewPack };
 }
 
+async function runStaleDisposalWorkspaceScenario(scriptPath) {
+  const oldItem = {
+    filename: "old-workspace-disposal.png", tag: "happy", category: "happy",
+    relative_path: "memes/old-workspace-disposal.png", indexed: true,
+  };
+  const newItem = {
+    filename: "new-workspace-disposal.png", tag: "happy", category: "happy",
+    relative_path: "memes/new-workspace-disposal.png", indexed: true,
+  };
+  let oldWorkspaceCalls = 0;
+  let resolveOldWorkspace;
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") {
+        if (params.pack_id === "other") {
+          const data = workspace([newItem], []);
+          data.library_index.message = "B workspace loaded";
+          return data;
+        }
+        oldWorkspaceCalls += 1;
+        if (oldWorkspaceCalls === 1) return workspace([oldItem], []);
+        return new Promise((resolve) => { resolveOldWorkspace = resolve; });
+      }
+      if (endpoint === "capture/reindex/status" || endpoint === "capture/index/status") {
+        return { status: "idle", processed: 0, total: 0, message: "idle" };
+      }
+      if (endpoint === "meme_image_data") {
+        return { data_url: `data:image/png;base64,${Buffer.from(String(params.filename)).toString("base64")}` };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost(endpoint) {
+      if (endpoint === "capture/items/dispose") {
+        return {
+          succeeded: [{ kind: "indexed", filename: "old-workspace-disposal.png" }],
+          failed: [], disposed_count: 1, failed_count: 0, message: "A disposal completed",
+        };
+      }
+      return { status: "ok" };
+    },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  const oldButton = document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
+  const oldAction = oldButton.dispatch("click");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await settle();
+
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  const newCard = document.querySelector("#capture-indexed-items").children[0];
+  const noticeBeforeOldWorkspaceCompletes = document.querySelector("#notice").textContent;
+  await document.querySelector("#capture-selection-mode-button").dispatch("click");
+  await newCard.dispatch("click");
+  resolveOldWorkspace(workspace([oldItem], []));
+  await oldAction;
+  await settle();
+  return {
+    staleWorkspaceCompletionDidNotAffectNewPack:
+      document.querySelector("#capture-indexed-items").children[0] === newCard &&
+      newCard.dataset.filename === "new-workspace-disposal.png" &&
+      newCard.classList.contains("selected") &&
+      document.querySelector("#notice").textContent === noticeBeforeOldWorkspaceCompletes &&
+      !document.querySelector("#notice").classList.contains("error"),
+  };
+}
+
+async function runCrossPackDisposalConfirmationScenario(scriptPath) {
+  const oldItem = {
+    filename: "old-confirmation-disposal.png", tag: "happy", category: "happy",
+    relative_path: "memes/old-confirmation-disposal.png", indexed: true,
+  };
+  const newItem = {
+    filename: "new-confirmation-disposal.png", tag: "happy", category: "happy",
+    relative_path: "memes/new-confirmation-disposal.png", indexed: true,
+  };
+  const disposalCalls = [];
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") return workspace(params.pack_id === "other" ? [newItem] : [oldItem], []);
+      if (endpoint === "capture/reindex/status" || endpoint === "capture/index/status") {
+        return { status: "idle", processed: 0, total: 0, message: "idle" };
+      }
+      if (endpoint === "meme_image_data") {
+        return { data_url: `data:image/png;base64,${Buffer.from(String(params.filename)).toString("base64")}` };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost(endpoint, body) {
+      if (endpoint === "capture/items/dispose") disposalCalls.push(body);
+      return { succeeded: [], failed: [], disposed_count: 0, failed_count: 0, message: "completed" };
+    },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  const oldButton = document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
+  const oldAction = oldButton.dispatch("click");
+  await settle();
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await oldAction;
+  await settle();
+  return {
+    crossPackConfirmationDidNotSubmitOldItem:
+      !disposalCalls.some((body) => body.pack_id === "other" && body.items.some(
+        (item) => item.filename === "old-confirmation-disposal.png",
+      )),
+  };
+}
+
+async function runCrossPackReindexConfirmationScenario(scriptPath) {
+  const item = {
+    filename: "reindex-confirmation.png", tag: "happy", category: "happy",
+    relative_path: "memes/reindex-confirmation.png", indexed: true,
+  };
+  const reindexCalls = [];
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") return workspace([item], []);
+      if (endpoint === "capture/reindex/status" || endpoint === "capture/index/status") {
+        return { status: "idle", processed: 0, total: 0, message: "idle" };
+      }
+      if (endpoint === "meme_image_data") {
+        return { data_url: "data:image/png;base64,UkVJTkRFWA==" };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost(endpoint, body) {
+      if (endpoint === "capture/reindex") reindexCalls.push(body);
+      return { status: "running", processed: 0, total: 1, message: "running" };
+    },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  const reindexAction = document.querySelector("#capture-reindex-button").dispatch("click");
+  await settle();
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await reindexAction;
+  return { crossPackReindexConfirmationWasCancelled: reindexCalls.length === 0 };
+}
+
 (async () => {
   const results = {};
   for (const scriptPath of process.argv.slice(1)) {
@@ -1261,6 +1431,9 @@ async function runStaleDisposalScenario(scriptPath, rejectOldDisposal) {
       ...(await runStaleRequestScenario(scriptPath)),
       staleDisposalResolve: await runStaleDisposalScenario(scriptPath, false),
       staleDisposalReject: await runStaleDisposalScenario(scriptPath, true),
+      ...(await runStaleDisposalWorkspaceScenario(scriptPath)),
+      ...(await runCrossPackDisposalConfirmationScenario(scriptPath)),
+      ...(await runCrossPackReindexConfirmationScenario(scriptPath)),
     };
   }
   process.stdout.write(JSON.stringify(results));
@@ -1277,15 +1450,7 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             str(ROOT / "pages" / "semantic" / "script.js"),
             str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
         ]
-        result = subprocess.run(
-            ["node", "-e", NODE_RUNTIME_HARNESS, *scripts],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        result = run_node_harness(NODE_RUNTIME_HARNESS, scripts)
         self.assertEqual(result.returncode, 0, result.stderr)
         payloads = json.loads(result.stdout)
         for payload in payloads.values():
@@ -1367,15 +1532,7 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             str(ROOT / "pages" / "semantic" / "script.js"),
             str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
         ]
-        result = subprocess.run(
-            ["node", "-e", NODE_CACHE_BOUNDARY_HARNESS, *scripts],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        result = run_node_harness(NODE_CACHE_BOUNDARY_HARNESS, scripts)
         self.assertEqual(result.returncode, 0, result.stderr)
         payloads = json.loads(result.stdout)
         for payload in payloads["actual"].values():
@@ -1391,15 +1548,7 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             str(ROOT / "pages" / "semantic" / "script.js"),
             str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
         ]
-        result = subprocess.run(
-            ["node", "-e", NODE_CACHE_INVALIDATION_HARNESS, *scripts],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        result = run_node_harness(NODE_CACHE_INVALIDATION_HARNESS, scripts)
         self.assertEqual(result.returncode, 0, result.stderr)
         payloads = json.loads(result.stdout)
         expected_behaviors = (
@@ -1430,6 +1579,12 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
                 with self.subTest(script=script, behavior=outcome):
                     self.assertTrue(payload[outcome]["bothDisposalsStarted"])
                     self.assertTrue(payload[outcome]["staleOldDisposalDidNotAffectNewPack"])
+            with self.subTest(script=script, behavior="staleWorkspaceCompletionDidNotAffectNewPack"):
+                self.assertTrue(payload["staleWorkspaceCompletionDidNotAffectNewPack"])
+            with self.subTest(script=script, behavior="crossPackConfirmationDidNotSubmitOldItem"):
+                self.assertTrue(payload["crossPackConfirmationDidNotSubmitOldItem"])
+            with self.subTest(script=script, behavior="crossPackReindexConfirmationWasCancelled"):
+                self.assertTrue(payload["crossPackReindexConfirmationWasCancelled"])
 
 
 if __name__ == "__main__":

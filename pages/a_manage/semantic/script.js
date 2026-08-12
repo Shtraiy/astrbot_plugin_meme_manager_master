@@ -553,9 +553,15 @@ async function initCaptureIndexPage() {
       indexedTotal ? `已整理 ${indexedTotal} 张：删除文件并永久拉黑。` : "",
       pendingTotal ? `待处理 ${pendingTotal} 张：忽略并永久拉黑；普通项删除文件，重复项保留已有图片。` : "",
     ].filter(Boolean).join("\n");
+    const confirmationPackId = packSelect.value;
+    const confirmationGeneration = disposalOperationGeneration;
     if (!(await requestConfirmation(confirmation, "统一处理表情"))) return;
+    if (
+      confirmationGeneration !== disposalOperationGeneration ||
+      packSelect.value !== confirmationPackId
+    ) return;
 
-    const disposalPackId = packSelect.value;
+    const disposalPackId = confirmationPackId;
     const disposalGeneration = ++disposalOperationGeneration;
     const isCurrentDisposal = () =>
       disposalGeneration === disposalOperationGeneration && packSelect.value === disposalPackId;
@@ -583,6 +589,7 @@ async function initCaptureIndexPage() {
         if (key) failedDisposals.set(key, item);
       });
       await loadWorkspace({ preserveSelection: true });
+      if (!isCurrentDisposal()) return;
       const failedCount = Number(result.failed_count || 0);
       notice.textContent = failedCount
         ? `已处理 ${Number(result.disposed_count || 0)} 项，${failedCount} 项失败；失败项仍保持选中。`
@@ -826,6 +833,7 @@ async function initCaptureIndexPage() {
   }
 
   packSelect.addEventListener("change", () => {
+    closeConfirmation(false);
     reindexPollGeneration += 1;
     disposalOperationGeneration += 1;
     mutationInProgress = false;
