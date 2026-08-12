@@ -47,6 +47,7 @@ async function initCaptureIndexPage() {
   const selectedItems = new Map();
   const failedDisposals = new Map();
   let mutationInProgress = false;
+  let disposalOperationGeneration = 0;
   let currentPage = 1;
   let workspaceRequestGeneration = 0;
   const THUMBNAIL_CACHE_MAX_ENTRIES = 512;
@@ -555,6 +556,9 @@ async function initCaptureIndexPage() {
     if (!(await requestConfirmation(confirmation, "统一处理表情"))) return;
 
     const disposalPackId = packSelect.value;
+    const disposalGeneration = ++disposalOperationGeneration;
+    const isCurrentDisposal = () =>
+      disposalGeneration === disposalOperationGeneration && packSelect.value === disposalPackId;
     button?.setAttribute("aria-busy", "true");
     mutationInProgress = true;
     updateSelectionUi();
@@ -567,6 +571,9 @@ async function initCaptureIndexPage() {
         if (item.kind !== "duplicate") {
           evictThumbnailFile(disposalPackId, String(item.filename || ""));
         }
+      });
+      if (!isCurrentDisposal()) return;
+      (result.succeeded || []).forEach((item) => {
         const key = selectionKey(item);
         selectedItems.delete(key);
         failedDisposals.delete(key);
@@ -582,11 +589,13 @@ async function initCaptureIndexPage() {
         : result.message || "统一处理完成";
       notice.classList.toggle("error", failedCount > 0);
     } catch (error) {
-      showError(error);
+      if (isCurrentDisposal()) showError(error);
     } finally {
-      mutationInProgress = false;
-      button?.setAttribute("aria-busy", "false");
-      updateSelectionUi();
+      if (disposalGeneration === disposalOperationGeneration) {
+        mutationInProgress = false;
+        button?.setAttribute("aria-busy", "false");
+        updateSelectionUi();
+      }
     }
   }
 
@@ -818,6 +827,8 @@ async function initCaptureIndexPage() {
 
   packSelect.addEventListener("change", () => {
     reindexPollGeneration += 1;
+    disposalOperationGeneration += 1;
+    mutationInProgress = false;
     clearThumbnailCache();
     stopReindexPolling();
     stopIndexPolling();

@@ -1163,6 +1163,88 @@ async function runStaleRequestScenario(scriptPath) {
   return { staleRequestDidNotRepopulateCache: deferredPackRequests === 2 };
 }
 
+async function runStaleDisposalScenario(scriptPath, rejectOldDisposal) {
+  const oldItem = {
+    filename: "old-disposal.png", tag: "happy", category: "happy",
+    relative_path: "memes/old-disposal.png", indexed: true,
+  };
+  const newItem = {
+    filename: "new-disposal.png", tag: "happy", category: "happy",
+    relative_path: "memes/new-disposal.png", indexed: true,
+  };
+  const disposalCalls = [];
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }, { id: "other" }] };
+      if (endpoint === "capture/workspace") {
+        const isNewPack = params.pack_id === "other";
+        const data = workspace(isNewPack ? [newItem] : [oldItem], []);
+        data.library_index.message = isNewPack ? "B workspace loaded" : "A workspace loaded";
+        return data;
+      }
+      if (endpoint === "capture/reindex/status" || endpoint === "capture/index/status") {
+        return { status: "idle", processed: 0, total: 0, message: "idle" };
+      }
+      if (endpoint === "meme_image_data") {
+        return { data_url: `data:image/png;base64,${Buffer.from(String(params.filename)).toString("base64")}` };
+      }
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost(endpoint, body) {
+      if (endpoint !== "capture/items/dispose") return { status: "ok" };
+      return new Promise((resolve, reject) => disposalCalls.push({ body, resolve, reject }));
+    },
+  };
+  const document = await loadScript(scriptPath, pageApi);
+  const oldButton = document.querySelector("#capture-indexed-items").children[0].children[1].children[0];
+  const oldAction = oldButton.dispatch("click");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await settle();
+
+  const pack = document.querySelector("#pack");
+  pack.value = "other";
+  await pack.dispatch("change");
+  await settle();
+  const newCard = document.querySelector("#capture-indexed-items").children[0];
+  const noticeBeforeOldCompletion = document.querySelector("#notice").textContent;
+  await document.querySelector("#capture-selection-mode-button").dispatch("click");
+  await newCard.dispatch("click");
+  const newButton = newCard.children[1].children[0];
+  const newAction = newButton.dispatch("click");
+  await settle();
+  await document.querySelector("#capture-confirm-confirm").dispatch("click");
+  await settle();
+
+  const bothDisposalsStarted = disposalCalls.length === 2 &&
+    disposalCalls[0].body.pack_id === "pack" && disposalCalls[1].body.pack_id === "other";
+  if (rejectOldDisposal) {
+    disposalCalls[0]?.reject(new Error("old disposal failed"));
+  } else {
+    disposalCalls[0]?.resolve({
+      succeeded: [{ kind: "indexed", filename: "old-disposal.png" }],
+      failed: [], disposed_count: 1, failed_count: 0, message: "A disposal completed",
+    });
+  }
+  await settle();
+  const staleOldDisposalDidNotAffectNewPack =
+    document.querySelector("#capture-indexed-items").children[0] === newCard &&
+    newCard.dataset.filename === "new-disposal.png" &&
+    newCard.classList.contains("selected") &&
+    document.querySelector("#notice").textContent === noticeBeforeOldCompletion &&
+    !document.querySelector("#notice").classList.contains("error") &&
+    newButton.getAttribute("aria-busy") === "true";
+
+  disposalCalls[1]?.resolve({
+    succeeded: [{ kind: "indexed", filename: "new-disposal.png" }],
+    failed: [], disposed_count: 1, failed_count: 0, message: "B disposal completed",
+  });
+  await Promise.all([oldAction, newAction]);
+  await settle();
+  return { bothDisposalsStarted, staleOldDisposalDidNotAffectNewPack };
+}
+
 (async () => {
   const results = {};
   for (const scriptPath of process.argv.slice(1)) {
@@ -1177,6 +1259,8 @@ async function runStaleRequestScenario(scriptPath) {
       staleReindexPostReject: await runStaleReindexPostScenario(scriptPath, true),
       ...(await runPackSwitchScenario(scriptPath)),
       ...(await runStaleRequestScenario(scriptPath)),
+      staleDisposalResolve: await runStaleDisposalScenario(scriptPath, false),
+      staleDisposalReject: await runStaleDisposalScenario(scriptPath, true),
     };
   }
   process.stdout.write(JSON.stringify(results));
@@ -1342,6 +1426,10 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
                 with self.subTest(script=script, behavior=outcome):
                     self.assertEqual(payload[outcome]["postedPackId"], "pack")
                     self.assertTrue(payload[outcome]["unaffected"])
+            for outcome in ("staleDisposalResolve", "staleDisposalReject"):
+                with self.subTest(script=script, behavior=outcome):
+                    self.assertTrue(payload[outcome]["bothDisposalsStarted"])
+                    self.assertTrue(payload[outcome]["staleOldDisposalDidNotAffectNewPack"])
 
 
 if __name__ == "__main__":
