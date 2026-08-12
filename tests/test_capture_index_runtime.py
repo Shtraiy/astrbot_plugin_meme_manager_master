@@ -474,6 +474,140 @@ async function runPage(scriptPath) {
 '''
 
 
+NODE_CACHE_BOUNDARY_HARNESS = NODE_RUNTIME_HARNESS.split("async function runPage(scriptPath) {", 1)[0] + r'''
+function settle() {
+  return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+}
+
+async function runThumbnailCacheScenario(scriptPath, options = {}) {
+  const document = makeDocument();
+  const callsByFilename = new Map();
+  const items = ["a", "b", "c", "oversize", "invalid"].map((category) => ({
+    filename: `${category}.png`,
+    tag: category,
+    category,
+    relative_path: `memes/${category}.png`,
+    indexed: true,
+  }));
+  const pageApi = {
+    async ready() {},
+    async apiGet(endpoint, params = {}) {
+      if (endpoint === "packs") return { packs: [{ id: "pack" }] };
+      if (endpoint === "capture/workspace") {
+        const category = String(params.category || "");
+        return {
+          summary: { indexed: items.length, pending: 0, duplicate: 0, complete_folders: 0, folder_total: items.length },
+          folders: items.map((item) => ({ category: item.category, tag: item.tag, indexed: 1, total: 1, complete: true })),
+          indexed_items: category ? items.filter((item) => item.category === category) : [],
+          pending_items: [],
+          pagination: { page: 1, indexed: { total: category ? 1 : 0, total_pages: 1 }, pending: { total: 0, total_pages: 1 } },
+          library_index: { status: "idle", active_pack: true, message: "目录索引已加载" },
+        };
+      }
+      if (endpoint === "meme_image_data") {
+        const filename = String(params.filename || "");
+        callsByFilename.set(filename, (callsByFilename.get(filename) || 0) + 1);
+        if (filename === "invalid.png") return { data_url: "invalid-data-url" };
+        if (filename === "oversize.png") return { data_url: `data:image/png;base64,${"A".repeat(300)}` };
+        return { data_url: `data:image/png;base64,${Buffer.from(filename).toString("base64")}` };
+      }
+      if (endpoint === "capture/reindex/status") return { status: "idle", processed: 0, total: 0, message: "尚未重索引" };
+      if (endpoint === "capture/index/status") return { status: "idle", processed: 0, total: 0, message: "尚未索引" };
+      throw new Error(`unexpected GET ${endpoint}`);
+    },
+    async apiPost() { return { status: "ok" }; },
+  };
+  globalThis.document = document;
+  globalThis.window = { AstrBotPluginPage: pageApi, setTimeout, clearTimeout };
+  let source = fs.readFileSync(scriptPath, "utf8")
+    .replace("const THUMBNAIL_CACHE_MAX_ENTRIES = 512;", `const THUMBNAIL_CACHE_MAX_ENTRIES = ${options.entries};`)
+    .replace("const THUMBNAIL_CACHE_MAX_BYTES = 64 * 1024 * 1024;", `const THUMBNAIL_CACHE_MAX_BYTES = ${options.bytes};`)
+    .replace("void initCaptureIndexPage();", "globalThis.pageInit = initCaptureIndexPage();");
+  if (options.mutateReadDoesNotRefreshLru) {
+    source = source.replace(
+      "thumbnailCache.delete(key);\n    thumbnailCache.set(key, entry);",
+      "// deliberate mutation: cache hits do not refresh recency",
+    );
+  }
+  if (options.mutateAcceptInvalidDataUrl) {
+    source = source.replace(
+      "if (!/^data:image\\/[a-z0-9.+-]+;base64,/i.test(dataUrl)) {",
+      "if (false) {",
+    );
+  }
+  vm.runInThisContext(source, { filename: scriptPath });
+  await globalThis.pageInit;
+  await settle();
+
+  const selectCategory = async (index) => {
+    await document.querySelector("#capture-category-filters").children[index].dispatch("click");
+    await settle();
+  };
+  for (const index of options.sequence || [1, 2, 1, 3, 2]) await selectCategory(index);
+  const entryLruEviction =
+    callsByFilename.get("a.png") === 1 && callsByFilename.get("b.png") === 2 && callsByFilename.get("c.png") === 1;
+
+  return { entryLruEviction, callsByFilename: Object.fromEntries(callsByFilename) };
+}
+
+async function runThumbnailCacheBoundaries(scriptPath, mutations = {}) {
+  const entry = await runThumbnailCacheScenario(scriptPath, {
+    entries: 2,
+    bytes: 10000,
+    mutateReadDoesNotRefreshLru: mutations.readDoesNotRefreshLru,
+    sequence: [1, 2, 1, 3, 2],
+  });
+  const byte = await runThumbnailCacheScenario(scriptPath, {
+    entries: 10,
+    bytes: 130,
+    sequence: [1, 2, 3, 2, 1],
+  });
+  const byteCalls = byte.callsByFilename;
+  const byteEvictionKeepsRemainingEntry =
+    byteCalls["a.png"] === 2 && byteCalls["b.png"] === 1 && byteCalls["c.png"] === 1;
+
+  const oversized = await runThumbnailCacheScenario(scriptPath, {
+    entries: 10,
+    bytes: 130,
+    sequence: [4, 4],
+  });
+  const oversizedCalls = oversized.callsByFilename;
+  const oversizedThumbnailIsNotCached = oversizedCalls["oversize.png"] === 2;
+
+  const invalid = await runThumbnailCacheScenario(scriptPath, {
+    entries: 10,
+    bytes: 130,
+    sequence: [5, 5],
+    mutateAcceptInvalidDataUrl: mutations.acceptInvalidDataUrl,
+  });
+  const invalidCalls = invalid.callsByFilename;
+  const invalidDataUrlIsNotCached = invalidCalls["invalid.png"] === 2;
+  return {
+    entryLruEviction: entry.entryLruEviction,
+    byteEvictionKeepsRemainingEntry,
+    oversizedThumbnailIsNotCached,
+    invalidDataUrlIsNotCached,
+  };
+}
+
+(async () => {
+  const scripts = process.argv.slice(1);
+  const actual = {};
+  for (const scriptPath of scripts) actual[scriptPath] = await runThumbnailCacheBoundaries(scriptPath);
+  const mutatedReadDoesNotRefreshLru = await runThumbnailCacheBoundaries(scripts[0], {
+    readDoesNotRefreshLru: true,
+  });
+  const mutatedAcceptInvalidDataUrl = await runThumbnailCacheBoundaries(scripts[0], {
+    acceptInvalidDataUrl: true,
+  });
+  process.stdout.write(JSON.stringify({ actual, mutatedReadDoesNotRefreshLru, mutatedAcceptInvalidDataUrl }));
+})().catch((error) => {
+  process.stderr.write(error.stack || String(error));
+  process.exitCode = 1;
+});
+'''
+
+
 class CaptureIndexRuntimeTests(unittest.TestCase):
     def test_delete_and_reindex_runtime_states_for_both_page_copies(self):
         scripts = [
@@ -564,6 +698,30 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["returningPageReusedThumbnails"])
             self.assertTrue(payload["originalPreviewStayedUncached"])
             self.assertTrue(payload["decodeFailureEvictedCache"])
+
+    def test_thumbnail_cache_boundaries_for_both_page_copies(self):
+        scripts = [
+            str(ROOT / "pages" / "semantic" / "script.js"),
+            str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
+        ]
+        result = subprocess.run(
+            ["node", "-e", NODE_CACHE_BOUNDARY_HARNESS, *scripts],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payloads = json.loads(result.stdout)
+        for payload in payloads["actual"].values():
+            self.assertTrue(payload["entryLruEviction"])
+            self.assertTrue(payload["byteEvictionKeepsRemainingEntry"])
+            self.assertTrue(payload["oversizedThumbnailIsNotCached"])
+            self.assertTrue(payload["invalidDataUrlIsNotCached"])
+        self.assertFalse(payloads["mutatedReadDoesNotRefreshLru"]["entryLruEviction"])
+        self.assertFalse(payloads["mutatedAcceptInvalidDataUrl"]["invalidDataUrlIsNotCached"])
 
 
 if __name__ == "__main__":
