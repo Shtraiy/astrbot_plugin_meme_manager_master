@@ -2,7 +2,7 @@
 
 # 表情包管理大师
 
-[![version](https://img.shields.io/badge/version-v2.1.6-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
+[![version](https://img.shields.io/badge/version-v2.1.7-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.5.7-orange.svg)](https://github.com/Soulter/AstrBot)
 
 **让表情包管理、收集与选图更简单**
@@ -23,6 +23,7 @@
 - 采用 12 个稳定主分类路由，辅助语义最多保留 2 个，并用精确 ID 选图。
 - 索引会整理图片描述、可见配字、文字含义、适用场景和避免场景，降低带字表情包误用。
 - 表情索引页的“全量语义重索引”会扫描整个资源包、整理旧目录；已有完整 v4 索引会跳过视觉模型，旧版或字段不完整的图片会重新识别，并写入 `full_reindex_status` 检查标记。
+- 全量语义重索引按批次保存检查点并持久化进度；切换 WebUI 页面、插件重载或任务中断后，重新打开页面会自动恢复，已完成图片不会重复调用模型。
 - 自动识别群聊图片，使用视觉模型判断是否为表情包，再按场景分类保存。
 - 机器人回复完成后由情景模型统一判断是否追加本地表情包；其他插件生成的图片、文件、视频或音频不会被本插件抢占或再次追加表情包。
 - 支持 `/偷取`、`/表情管理` 命令组和 `/表情偷取状态` 状态检查。

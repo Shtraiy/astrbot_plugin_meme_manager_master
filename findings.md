@@ -61,3 +61,11 @@
 - API 复用现有任务状态和锁；手动全量重索引与后台 capture/index 互斥，避免两个流程同时覆盖同一份 catalog。
 - WebUI 进度只展示跳过、重新识别和失败计数，不展示模型返回的原始文本；完成但有失败时使用 `completed_with_errors`，便于用户继续处理遗留条目。
 - 若资源包中的所有条目都已满足 v4 契约，即使当前未配置视觉模型也可以完成全量检查；只有发现需要重新识别的图片时才返回 blocked。
+
+## Resumable Reindex Findings — 2026-08-15
+
+- 原实现的单次末尾写入策略使批次中途取消时丢失所有已识别结果；检查点必须在每个批次完成后写入，并保留尚未处理图片为 `indexed=false`/`needs_reindex`。
+- 仅把进度放在 `_reindex_states` 不足以支持页面切换或插件重载；资源包级 `reindex_state.json` 提供了恢复入口，状态 API 在发现 running/paused 状态且没有活动任务时自动创建续跑任务。
+- `_run_reindex_task` 必须单独处理 `asyncio.CancelledError`，写入 paused 状态后再继续抛出取消信号，避免把正常关闭误记录为完成或错误。
+- `reindex_flat_catalog` 的旧 SHA 必须绑定在每个 source entry 上；循环外变量会把最后一张图片的 SHA 写到其他条目，造成错误重识别。
+- 页面回到 WebUI 后除了恢复轮询，还必须恢复 `managed_pack_id`，否则多资源包场景会对错误资源包请求状态，看起来像任务消失。

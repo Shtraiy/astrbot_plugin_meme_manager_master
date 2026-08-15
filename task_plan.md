@@ -55,8 +55,17 @@ Phase 5
 
 ### Phase C: UI and release
 - [x] 更新两份语义管理页面和脚本缓存版本
-- [x] 更新 v2.1.6、README 和 CHANGELOG
-- [x] 完成 346 项测试通过、1 项跳过及静态检查
+- [x] 更新 v2.1.7、README 和 CHANGELOG
+- [x] 完成 350 项测试通过、1 项跳过及静态检查
+
+## Addendum: Resumable Full Reindex — 2026-08-15
+
+### Phase D: Root cause and recovery
+- [x] 复现并确认末尾写入导致的中断丢失
+- [x] 修正多图片扁平化时旧 SHA 错误复用
+- [x] 增加批次检查点和资源包级持久化状态
+- [x] 接入页面重返、插件重载后的自动恢复
+- [x] 完成 350 项全量测试和静态检查
 
 ## Key Questions
 1. v2.1.5 的主分类是否采用 12 个稳定类别：开心、悲伤、尴尬、无奈、疑惑、震惊、愤怒、吐槽、赞同、拒绝、卖萌、围观？

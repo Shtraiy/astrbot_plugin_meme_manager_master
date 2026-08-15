@@ -136,6 +136,7 @@ class MemeStore:
         self.memes_dir = self.root / "memes"
         self.tag_index_path = self.memes_dir / "tag_index.json"
         self.metadata_path = self.root / "memes_data.json"
+        self.reindex_state_path = self.root / "reindex_state.json"
         self.temp_dir = self.root / "temp"
         self._perceptual_hash_cache: dict[Path, tuple[int, int, str | None]] = {}
         # Compose the new storage boundaries while retaining the legacy
@@ -630,6 +631,26 @@ class MemeStore:
             self.memes_dir / category / "index.json", category=category
         )
 
+    def load_reindex_state(self) -> dict:
+        """Load the durable full-reindex snapshot for this pack."""
+        try:
+            data = json.loads(self.reindex_state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def write_reindex_state(self, state: dict) -> None:
+        """Atomically persist the small, JSON-safe full-reindex snapshot."""
+        if not isinstance(state, dict):
+            return
+        payload = {
+            str(key): value
+            for key, value in state.items()
+            if isinstance(value, (str, int, float, bool)) or value is None
+        }
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._atomic_write_json(self.reindex_state_path, payload)
+
     def load_primary_catalog(self, primary_category: object) -> dict:
         """Load only entries whose stable primary category matches."""
         category = normalize_primary_category(primary_category)
@@ -1006,6 +1027,10 @@ class MemeStore:
             entry = dict(old_entry)
             previous_digest = str(entry.get("sha256") or "")
             entry.update({"sha256": digest, "filename": source.name})
+            if previous_digest and previous_digest != digest:
+                entry["reindex_previous_sha256"] = previous_digest
+            else:
+                entry.pop("reindex_previous_sha256", None)
             entry["tags"] = normalize_tags(
                 [category, *(entry.get("tags") or []), entry.get("emotion", "")]
             )
@@ -1036,10 +1061,6 @@ class MemeStore:
             target_name = self._meme_filename(digest, extension, reserved)
             reserved.add(target_name)
             target = self.memes_dir / target_name
-            if previous_digest and previous_digest != digest:
-                merged["reindex_previous_sha256"] = previous_digest
-            else:
-                merged.pop("reindex_previous_sha256", None)
             merged.update({"id": target.stem, "filename": target.name, "sha256": digest})
             if source != target:
                 temporary = self.memes_dir / f".meme-migrate-{time.time_ns()}-{len(moves)}{extension}"

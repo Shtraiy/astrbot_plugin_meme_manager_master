@@ -159,7 +159,7 @@ async function initCaptureIndexPage() {
       const state = await apiGet("capture/reindex/status", { pack_id: packId });
       if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
       renderReindexProgress(state);
-      if (state.status === "running") {
+      if (["queued", "running"].includes(state.status)) {
         reindexing = true;
         reindexButton.disabled = true;
         reindexButton.setAttribute("aria-busy", "true");
@@ -831,12 +831,16 @@ async function initCaptureIndexPage() {
 
   async function loadPacks() {
     const data = await apiGet("packs");
+    const preferredPackId = new URLSearchParams(window.location?.search || "").get("managed_pack_id") || "";
     packSelect.replaceChildren();
     for (const pack of data.packs || []) {
       const option = document.createElement("option");
       option.value = String(pack.id || "");
       option.textContent = `${pack.name || pack.id || "未命名资源包"} (${pack.id || "-"})`;
       packSelect.append(option);
+    }
+    if ((data.packs || []).some((pack) => String(pack.id || "") === preferredPackId)) {
+      packSelect.value = preferredPackId;
     }
   }
 

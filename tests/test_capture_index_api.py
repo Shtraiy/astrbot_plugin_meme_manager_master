@@ -577,6 +577,62 @@ class ManualIndexStatusApiTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReindexProgressApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reindex_status_restores_persisted_running_task(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            pack_dir.mkdir(parents=True)
+            persisted = {
+                "pack_id": "pack",
+                "status": "running",
+                "processed": 1,
+                "total": 3,
+                "changed_file_count": 0,
+                "classified": 1,
+                "skipped": 0,
+                "reindexed": 1,
+                "errors": 0,
+                "message": "正在请求视觉模型：批次 1/3",
+            }
+            (pack_dir / "reindex_state.json").write_text(
+                json.dumps(persisted, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance._capture_pack_id = lambda data=None: "pack"
+            instance._reindex_states = {}
+            instance._reindex_tasks = {}
+            resume_started = asyncio.Event()
+            keep_running = asyncio.Event()
+
+            async def resume(pack_id, state):
+                self.assertEqual(pack_id, "pack")
+                self.assertEqual(state["processed"], 1)
+                resume_started.set()
+                await keep_running.wait()
+
+            instance._run_reindex_task = resume
+
+            class Request:
+                args = {"pack_id": "pack"}
+
+            try:
+                with (
+                    patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent),
+                    patch.object(capture_index_api, "request", Request()),
+                    patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+                ):
+                    result = await instance._api_capture_reindex_status()
+                await asyncio.wait_for(resume_started.wait(), timeout=1)
+            finally:
+                keep_running.set()
+                tasks = list(instance._reindex_tasks.values())
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(result["total"], 3)
+
     async def test_reindex_reports_running_progress_then_completed_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pack_dir = Path(temp_dir) / "pack"

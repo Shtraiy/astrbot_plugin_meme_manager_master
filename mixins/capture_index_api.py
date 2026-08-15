@@ -256,6 +256,57 @@ class CaptureIndexAPIMixin:
             "message": "正在准备重索引……",
         }
 
+    @staticmethod
+    def _reindex_state_is_resumable(state: dict | None) -> bool:
+        return isinstance(state, dict) and str(state.get("status") or "") in {
+            "queued",
+            "running",
+            "paused",
+            "interrupted",
+        }
+
+    def _persist_reindex_state(self, pack_id: str, state: dict) -> None:
+        pack_dir = (PACKS_DIR / str(pack_id)).resolve()
+        if not pack_dir.is_dir():
+            return
+        try:
+            MemeStore(pack_dir).write_reindex_state(state)
+        except Exception as exc:
+            logger.warning("持久化全量语义重索引状态失败 pack=%s: %s", pack_id, exc)
+
+    def _load_persisted_reindex_state(self, pack_id: str) -> dict:
+        pack_dir = (PACKS_DIR / str(pack_id)).resolve()
+        if not pack_dir.is_dir():
+            return {}
+        try:
+            state = MemeStore(pack_dir).load_reindex_state()
+        except Exception as exc:
+            logger.warning("读取全量语义重索引状态失败 pack=%s: %s", pack_id, exc)
+            return {}
+        return state if state.get("pack_id") in (None, str(pack_id)) else {}
+
+    def _start_reindex_task(
+        self,
+        pack_id: str,
+        state: dict[str, int | str],
+        *,
+        resume: bool = False,
+    ) -> asyncio.Task:
+        tasks = getattr(self, "_reindex_tasks", {})
+        existing = tasks.get(pack_id)
+        if existing is not None and not existing.done():
+            return existing
+        if resume:
+            state.update(
+                status="running",
+                message=state.get("message") or "正在恢复全量语义重索引……",
+            )
+        self._persist_reindex_state(pack_id, state)
+        task = asyncio.create_task(self._run_reindex_task(pack_id, state))
+        tasks[pack_id] = task
+        self._reindex_tasks = tasks
+        return task
+
     async def _reindex_pack_catalog_with_progress(
         self, pack_id: str, state: dict[str, int | str]
     ) -> dict[str, int | str]:
@@ -298,6 +349,7 @@ class CaptureIndexAPIMixin:
             )
             state.update(result)
             if state.get("status") == "blocked":
+                self._persist_reindex_state(pack_id, state)
                 return
             errors = int(state.get("errors") or 0)
             state.update(
@@ -309,9 +361,18 @@ class CaptureIndexAPIMixin:
                     f"失败 {errors} 张；整理 {result.get('changed_file_count', 0)} 个文件名"
                 ),
             )
+            self._persist_reindex_state(pack_id, state)
+        except asyncio.CancelledError:
+            state.update(
+                status="paused",
+                message="全量语义重索引已暂停，重新打开页面后会从检查点继续",
+            )
+            self._persist_reindex_state(pack_id, state)
+            raise
         except Exception as exc:
             logger.error("重索引表情包失败: %s", exc, exc_info=True)
             state.update(status="error", message=f"重索引失败：{exc}")
+            self._persist_reindex_state(pack_id, state)
 
     async def _api_capture_workspace(self):
         try:
@@ -608,14 +669,20 @@ class CaptureIndexAPIMixin:
                 for running_pack, task in getattr(self, "_reindex_tasks", {}).items()
             ):
                 return jsonify({"message": "已有其他资源包正在全量语义重索引", "status": "running"}), 409
-            state = self._new_reindex_state(pack_id)
             states = getattr(self, "_reindex_states", {})
-            tasks = getattr(self, "_reindex_tasks", {})
+            state = states.get(pack_id)
+            if state is None:
+                state = self._load_persisted_reindex_state(pack_id)
+            if self._reindex_state_is_resumable(state):
+                states[pack_id] = state
+                self._reindex_states = states
+                self._start_reindex_task(pack_id, state, resume=True)
+                return jsonify(dict(state))
+
+            state = self._new_reindex_state(pack_id)
             states[pack_id] = state
             self._reindex_states = states
-            task = asyncio.create_task(self._run_reindex_task(pack_id, state))
-            tasks[pack_id] = task
-            self._reindex_tasks = tasks
+            self._start_reindex_task(pack_id, state)
             return jsonify(dict(state))
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"message": str(exc)}), 400
@@ -628,7 +695,17 @@ class CaptureIndexAPIMixin:
     async def _api_capture_reindex_status(self):
         try:
             pack_id = self._capture_pack_id()
-            state = getattr(self, "_reindex_states", {}).get(pack_id)
+            states = getattr(self, "_reindex_states", {})
+            state = states.get(pack_id)
+            if state is None:
+                state = self._load_persisted_reindex_state(pack_id)
+                if state:
+                    states[pack_id] = state
+                    self._reindex_states = states
+                else:
+                    state = None
+            if self._reindex_state_is_resumable(state):
+                self._start_reindex_task(pack_id, state, resume=True)
             if state is None:
                 return jsonify({
                     "pack_id": pack_id,

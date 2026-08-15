@@ -254,6 +254,105 @@ class FullReindexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["errors"], 0)
         self.assertTrue(all(item["full_reindex_status"] == "reindexed" for item in result_entries))
 
+    async def test_interrupted_reindex_checkpoints_completed_batches_for_resume(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "pack")
+            paths = [
+                store.save_image(f"image-{index}".encode(), "尴尬", ".png", perceptual_threshold=None).path
+                for index in range(2)
+            ]
+            store.reindex_flat_catalog()
+            catalog = store.load_catalog()
+            store.write_catalog(
+                [
+                    {
+                        **entry,
+                        "index_version": 3,
+                        "primary_category": "尴尬",
+                        "primary_category_status": "ready",
+                    }
+                    for entry in catalog["items"]
+                ],
+                {"classification_index_complete": True},
+            )
+            current_paths = [store.memes_dir / item["filename"] for item in store.load_catalog()["items"]]
+            first_path, second_path = current_paths
+            instance = self._make_instance(store, batch_size=1)
+            state = self._state()
+            call_count = 0
+
+            async def interrupt_after_first_batch(_event, batch_paths, _category, _provider):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return {path: self._model_entry(path) for path in batch_paths}
+                raise asyncio.CancelledError()
+
+            instance._describe_library_batch = interrupt_after_first_batch
+            instance._describe_library_single = interrupt_after_first_batch
+
+            with self.assertRaises(asyncio.CancelledError):
+                await instance._ensure_flat_library_index(
+                    target_store=store,
+                    progress_state=state,
+                    full_reindex=True,
+                )
+
+            checkpoint = {
+                item["filename"]: item
+                for item in store.load_catalog()["items"]
+            }
+            self.assertEqual(checkpoint[first_path.name]["full_reindex_status"], "reindexed")
+            persisted_state = store.load_reindex_state()
+            self.assertEqual(persisted_state["status"], "running")
+            self.assertEqual(persisted_state["processed"], 1)
+            self.assertEqual(persisted_state["reindexed"], 1)
+            self.assertTrue(
+                full_reindex_entry_is_current(
+                    checkpoint[first_path.name],
+                    store.image_digest(first_path),
+                    index_version=4,
+                    prompt_version="library-semantic-primary-v1",
+                ),
+                checkpoint[first_path.name],
+            )
+            self.assertFalse(checkpoint[second_path.name].get("indexed"))
+
+            store.reindex_flat_catalog()
+            after_flatten = {
+                item["filename"]: item for item in store.load_catalog()["items"]
+            }
+            self.assertTrue(
+                full_reindex_entry_is_current(
+                    after_flatten[first_path.name],
+                    store.image_digest(first_path),
+                    index_version=4,
+                    prompt_version="library-semantic-primary-v1",
+                ),
+                after_flatten[first_path.name],
+            )
+
+            resumed_paths = []
+            resumed = self._make_instance(store, batch_size=1)
+            resumed_state = self._state()
+
+            async def resume_batch(_event, batch_paths, _category, _provider):
+                resumed_paths.extend(batch_paths)
+                return {path: self._model_entry(path) for path in batch_paths}
+
+            resumed._describe_library_batch = resume_batch
+            resumed._describe_library_single = resume_batch
+            await resumed._ensure_flat_library_index(
+                target_store=store,
+                progress_state=resumed_state,
+                full_reindex=True,
+            )
+
+        self.assertEqual(resumed_paths, [second_path])
+        self.assertEqual(resumed_state["skipped"], 1)
+        self.assertEqual(resumed_state["reindexed"], 1)
+        self.assertEqual(resumed_state["errors"], 0)
+
     async def test_failed_reindex_marks_one_image_without_blocking_catalog_rebuild(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = MemeStore(Path(temp_dir) / "pack")

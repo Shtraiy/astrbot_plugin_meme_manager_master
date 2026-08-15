@@ -168,6 +168,21 @@
 - **Delivery:**
   - 已创建本地功能提交；未推送远端。
 
+### New Session: 2026-08-15 — 全量重索引可恢复性修复
+- **Status:** implementation complete; local commit pending。
+- **Root cause:** 全量任务原先只在末尾写 catalog，且进度仅保存在插件实例内存；同时 `reindex_flat_catalog()` 会错误复用循环外的其他图片 SHA。
+- **Changes:**
+  - 每个批次完成后写入 catalog 检查点，未完成图片被标记为待重识别，已完成图片下次直接跳过。
+  - 将任务状态原子写入每个资源包的 `reindex_state.json`；状态 API 可加载并自动恢复 running/paused 任务。
+  - 插件终止时将任务保存为 paused，重新打开页面或重新请求状态后继续。
+  - 页面恢复 URL 中的 `managed_pack_id`，避免重新进入时查询错误资源包；缓存版本升级为 `20260815-resumable-reindex-1`。
+  - 修正多图片扁平化时 `reindex_previous_sha256` 的错误绑定。
+  - 版本升级至 v2.1.7，更新 README、CHANGELOG 和发布测试。
+- **Verification:**
+  - `python -m unittest discover -s tests`：350 项通过，1 项跳过。
+  - 定向恢复/API/UI 回归：54 项通过。
+  - 编译、schema、architecture、两份 Node 脚本语法和 `git diff --check` 均通过。
+
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|

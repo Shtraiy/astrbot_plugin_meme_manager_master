@@ -184,6 +184,8 @@ class CaptureMixin:
         self._last_health_check = 0.0
         self._health_task: asyncio.Task | None = None
         self._library_task: asyncio.Task | None = None
+        self._reindex_tasks: dict[str, asyncio.Task] = {}
+        self._reindex_states: dict[str, dict[str, int | str]] = {}
         self._library_lock = asyncio.Lock()
         self._library_completed_key: tuple[str, tuple] | None = None
         self._library_retry_key: tuple[str, tuple] | None = None
@@ -1067,6 +1069,18 @@ class CaptureMixin:
                 and (store.memes_dir / item["filename"]).is_file()
             }
             total = len(paths)
+
+            def persist_full_reindex_state() -> None:
+                if not full_reindex:
+                    return
+                try:
+                    store.write_reindex_state(dict(state))
+                except Exception as exc:
+                    logger.warning(
+                        "[meme_manager_master] 全量语义重索引进度持久化失败: %s",
+                        exc,
+                    )
+
             state.update(
                 status="running",
                 processed=0,
@@ -1082,11 +1096,13 @@ class CaptureMixin:
                     else "正在检查标签索引……"
                 ),
             )
+            persist_full_reindex_state()
             if not total:
                 state.update(
                     status="completed" if full_reindex else "idle",
                     message="没有待索引图片",
                 )
+                persist_full_reindex_state()
                 return {
                     "processed": 0,
                     "total": 0,
@@ -1105,6 +1121,7 @@ class CaptureMixin:
                     status="blocked",
                     message="未配置全量语义索引视觉模型" if full_reindex else "未配置标签索引视觉模型",
                 )
+                persist_full_reindex_state()
                 return {
                     "processed": 0,
                     "total": total,
@@ -1160,6 +1177,7 @@ class CaptureMixin:
                     errors=0,
                     message="存在需要重新识别的图片，但未配置全量语义索引视觉模型",
                 )
+                persist_full_reindex_state()
                 return {
                     "processed": len(records),
                     "total": total,
@@ -1168,6 +1186,52 @@ class CaptureMixin:
                     "reindexed": 0,
                     "errors": 0,
                 }
+
+            pending_by_filename = {
+                path.name: (path, digest) for path, digest in pending
+            }
+            base_catalog_metadata = {
+                key: value
+                for key, value in catalog.items()
+                if key not in {"version", "updated_at", "items", "category"}
+            }
+
+            async def checkpoint_full_reindex() -> bool:
+                if not full_reindex:
+                    return True
+                async with self._save_lock:
+                    if self._library_source_signature(store) != run_signature:
+                        return False
+                    checkpoint_entries: list[dict] = []
+                    for filename in sorted(paths):
+                        if filename in records:
+                            checkpoint_entries.append(records[filename])
+                            continue
+                        path, digest = pending_by_filename[filename]
+                        pending_entry = dict(by_filename.get(filename) or {})
+                        pending_entry.update(
+                            {
+                                "id": path.stem,
+                                "filename": filename,
+                                "sha256": digest,
+                                "indexed": False,
+                                "status": "pending",
+                                "primary_category": "needs_reindex",
+                                "primary_category_status": "needs_reindex",
+                            }
+                        )
+                        pending_entry.pop("full_reindex_status", None)
+                        pending_entry.pop("full_reindex_checked_at", None)
+                        checkpoint_entries.append(pending_entry)
+                    checkpoint_metadata = {
+                        **base_catalog_metadata,
+                        **index_metadata,
+                        "classification_index_complete": False,
+                        "classification_indexed_at": int(time.time()),
+                        "classification_index_file_total": len(checkpoint_entries),
+                    }
+                    store.write_catalog(checkpoint_entries, checkpoint_metadata)
+                return True
 
             processed = len(records)
             classified = 0
@@ -1383,6 +1447,31 @@ class CaptureMixin:
                     records[path.name] = metadata
                     processed += 1
 
+                if full_reindex:
+                    state.update(
+                        processed=processed,
+                        classified=classified,
+                        skipped=skipped,
+                        reindexed=reindexed,
+                        errors=errors,
+                    )
+                    persist_full_reindex_state()
+                    if not await checkpoint_full_reindex():
+                        state.update(
+                            status="completed_with_errors",
+                            errors=errors + 1,
+                            message="目录内容在索引期间发生变化，已保存此前检查点并放弃本轮写入",
+                        )
+                        persist_full_reindex_state()
+                        return {
+                            "processed": processed,
+                            "total": total,
+                            "changed_file_count": migration["migrated_file_count"],
+                            "skipped": skipped,
+                            "reindexed": reindexed,
+                            "errors": errors + 1,
+                        }
+
             async with self._save_lock:
                 if self._library_source_signature(store) != run_signature:
                     if not full_reindex:
@@ -1396,6 +1485,7 @@ class CaptureMixin:
                         errors=errors + 1,
                         message="目录内容在索引期间发生变化，已放弃本轮写入",
                     )
+                    persist_full_reindex_state()
                     return {
                         "processed": processed,
                         "total": total,
@@ -1420,6 +1510,7 @@ class CaptureMixin:
                         bool(item.get("indexed")) for item in entries
                     )
                 catalog_metadata = {
+                    **base_catalog_metadata,
                     **index_metadata,
                     "classification_index_complete": complete,
                     "classification_indexed_at": int(time.time()),
@@ -1453,6 +1544,7 @@ class CaptureMixin:
                 errors=errors,
                 message=message,
             )
+            persist_full_reindex_state()
             logger.info(
                 "[meme_manager_master] 分类索引完成 total=%s newly_classified=%s "
                 "skipped=%s reindexed=%s errors=%s",
@@ -2256,6 +2348,12 @@ class CaptureMixin:
         if self._library_task is not None:
             self._library_task.cancel()
             await asyncio.gather(self._library_task, return_exceptions=True)
+        reindex_tasks = tuple(getattr(self, "_reindex_tasks", {}).values())
+        for task in reindex_tasks:
+            if task is not None and not task.done():
+                task.cancel()
+        if reindex_tasks:
+            await asyncio.gather(*reindex_tasks, return_exceptions=True)
         for task in tuple(self._tasks):
             task.cancel()
         if self._tasks:
