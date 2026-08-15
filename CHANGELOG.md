@@ -28,6 +28,28 @@
 - `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 和 `git diff --check`：通过。
 - 自动化页面回归已覆盖删除后补齐、页码回退、跨页选择、部分失败保留与缩略图缓存边界/失效；当前环境无法访问局域网 AstrBot WebUI，长页面滚动与真实浏览器交互仍需人工复核。
 
+## [v2.1.6] - 2026-08-15
+
+### 新增
+
+- 将表情索引页“重索引”升级为“全量语义重索引”：先整理旧分类目录和 flat 文件名，再检查当前资源包中的全部图片。
+- 完整 v4 语义索引会跳过视觉模型；v3、SHA 变化、主分类无效或语义字段不完整的图片会重新调用视觉模型。
+- 每张图片记录 `full_reindex_status` 和 `full_reindex_checked_at`，并在页面进度中分别显示跳过、重新识别和失败数量。
+
+### 修复
+
+- 修复旧版目录整理后因 catalog SHA 被刷新而误判为“已完成”的问题；目录整理会保留前一次 SHA，确保内容变化仍会触发语义重索引。
+- 单批或单图视觉识别失败时继续处理其他图片；失败条目标记为 `needs_reindex`，不会进入主分类自动发送候选。
+
+### 兼容
+
+- 保留 `capture/reindex` 和 `capture/reindex/status` API；“分类索引待处理项”仍只处理后台发现的待分类图片。
+- 全量任务与待分类索引互斥，旧 `tags`、`text` 和现有 tag index 继续保留兼容读取。
+
+### 验证
+
+- 新增完整 v4 跳过、旧索引重建、SHA 变化、失败标记、API 计数和双页面进度回归测试。
+
 ## [v2.1.5] - 2026-08-15
 
 ### 变更

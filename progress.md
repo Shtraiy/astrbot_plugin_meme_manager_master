@@ -146,6 +146,28 @@
 |-----------|-------|---------|------------|
 | 2026-08-15 | Git 无法读取用户级 ignore 文件 | 1 | 不影响当前工作区状态读取 |
 
+### New Session: 2026-08-15 — 全量语义重索引检查
+- **Status:** complete。
+- **Design and plan:**
+  - `docs/superpowers/specs/2026-08-15-full-semantic-reindex-check-design.md`
+  - `docs/superpowers/plans/2026-08-15-full-semantic-reindex-check.md`
+- **Implementation results:**
+  - 将手动“重索引”扩展为对当前表情包目录的全量检查、扁平化和语义分类。
+  - 已有完整 v4 语义条目且 SHA 未变化时跳过视觉模型，并写入 `full_reindex_status=skipped_current`。
+  - v3、SHA 变化、主分类无效或语义字段不完整的条目重新调用视觉模型。
+  - 单图失败写入 `full_reindex_status=error`、`indexed=false` 和 `primary_category_status=needs_reindex`，不阻塞其余图片，也不进入 `by_primary_category`。
+  - 扁平化时保留旧 SHA，避免文件内容变化被错误地判定为当前条目。
+  - API、WebUI 进度展示和 `capture/index`、手动重索引互斥逻辑已同步更新。
+  - 版本、README 和 CHANGELOG 更新至 v2.1.6。
+- **Verification:**
+  - `python -m unittest discover -s tests`：347 项通过，1 项跳过。
+  - 新增全量重索引专项测试、API/UI/runtime 回归测试均通过。
+  - 编译、schema、architecture、Node 脚本语法和 `git diff --check` 已完成验证。
+- **Review correction:**
+  - 补充“无视觉模型但全部条目已是完整 v4”用例；该场景现在仍会写入跳过标记并完成，只有存在待重识别条目时才阻塞。
+- **Delivery:**
+  - 已创建本地功能提交；未推送远端。
+
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|

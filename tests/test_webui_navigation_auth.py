@@ -202,7 +202,7 @@ class WebUINavigationAuthTests(unittest.TestCase):
             ROOT / "pages" / "a_manage" / "index.html": ("api.js", "20260811-sandbox-nav-fix-1"),
             ROOT / "pages" / "a_manage" / "catalog" / "index.html": ("script.js", "20260811-sandbox-nav-fix-1"),
             ROOT / "pages" / "a_manage" / "settings" / "index.html": ("script.js", "20260811-sandbox-nav-fix-1"),
-            ROOT / "pages" / "a_manage" / "semantic" / "index.html": ("script.js", "20260812-thumbnail-cache-1"),
+            ROOT / "pages" / "a_manage" / "semantic" / "index.html": ("script.js", "20260815-full-semantic-reindex-1"),
         }
 
         for path, (script_name, version) in pages.items():

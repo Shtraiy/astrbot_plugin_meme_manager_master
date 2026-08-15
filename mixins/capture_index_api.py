@@ -249,6 +249,10 @@ class CaptureIndexAPIMixin:
             "total": total,
             "changed_file_count": 0,
             "current_category": "",
+            "classified": 0,
+            "skipped": 0,
+            "reindexed": 0,
+            "errors": 0,
             "message": "正在准备重索引……",
         }
 
@@ -257,17 +261,30 @@ class CaptureIndexAPIMixin:
     ) -> dict[str, int | str]:
         pack_dir = (PACKS_DIR / str(pack_id)).resolve()
         store = MemeStore(pack_dir)
-        result = await asyncio.to_thread(store.reindex_flat_catalog)
-        state["processed"] = result["processed"]
-        state["total"] = result["total"]
-        state["changed_file_count"] = result["migrated_file_count"]
+        result = await self._ensure_flat_library_index(
+            target_store=store,
+            progress_state=state,
+            full_reindex=True,
+        )
+        catalog = store.load_catalog()
+        category_count = len(
+            {
+                tag
+                for item in catalog.get("items", [])
+                if isinstance(item, dict)
+                for tag in item.get("tags", [])
+            }
+        )
         state["current_category"] = ""
         return {
             "pack_id": str(pack_id),
-            "category_count": result["tag_count"],
-            "changed_file_count": result["migrated_file_count"],
-            "processed": result["processed"],
-            "total": result["total"],
+            "category_count": category_count,
+            "changed_file_count": result.get("changed_file_count", 0),
+            "processed": result.get("processed", 0),
+            "total": result.get("total", 0),
+            "skipped": result.get("skipped", 0),
+            "reindexed": result.get("reindexed", 0),
+            "errors": result.get("errors", 0),
             **result,
         }
     async def _run_reindex_task(
@@ -276,16 +293,20 @@ class CaptureIndexAPIMixin:
         try:
             result = await self.catalog_index_service.run_locked_pack_mutation(
                 pack_id,
-                "重索引表情文件",
+                "全量语义重索引表情包",
                 lambda: self._reindex_pack_catalog_with_progress(pack_id, state),
             )
             state.update(result)
+            if state.get("status") == "blocked":
+                return
+            errors = int(state.get("errors") or 0)
             state.update(
-                status="completed",
+                status="completed" if not errors else "completed_with_errors",
                 current_category="",
                 message=(
-                    f"重索引完成：整理 {result['category_count']} 个分类，"
-                    f"更新 {result['changed_file_count']} 个文件名"
+                    f"全量语义重索引完成：跳过 {state.get('skipped', 0)} 张，"
+                    f"重新识别 {state.get('reindexed', 0)} 张，"
+                    f"失败 {errors} 张；整理 {result.get('changed_file_count', 0)} 个文件名"
                 ),
             )
         except Exception as exc:
@@ -318,6 +339,11 @@ class CaptureIndexAPIMixin:
             task = getattr(self, "_library_task", None)
             if task is not None and not task.done():
                 return jsonify({"message": "分类索引正在处理中", "status": "running"}), 202
+            if any(
+                task is not None and not task.done()
+                for task in getattr(self, "_reindex_tasks", {}).values()
+            ):
+                return jsonify({"message": "全量语义重索引正在处理中", "status": "running"}), 409
             self._library_completed_key = None
             self._library_retry_key = None
             self._library_retry_at = 0.0
@@ -575,6 +601,13 @@ class CaptureIndexAPIMixin:
             if existing_task is not None and not existing_task.done():
                 state = getattr(self, "_reindex_states", {}).get(pack_id, {})
                 return jsonify(dict(state)), 409
+            if any(
+                running_pack != pack_id
+                and task is not None
+                and not task.done()
+                for running_pack, task in getattr(self, "_reindex_tasks", {}).items()
+            ):
+                return jsonify({"message": "已有其他资源包正在全量语义重索引", "status": "running"}), 409
             state = self._new_reindex_state(pack_id)
             states = getattr(self, "_reindex_states", {})
             tasks = getattr(self, "_reindex_tasks", {})
@@ -603,6 +636,10 @@ class CaptureIndexAPIMixin:
                     "processed": 0,
                     "total": 0,
                     "changed_file_count": 0,
+                    "classified": 0,
+                    "skipped": 0,
+                    "reindexed": 0,
+                    "errors": 0,
                     "current_category": "",
                     "message": "尚未开始重索引",
                 })

@@ -104,7 +104,7 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         "capture/reindex",
         "_api_capture_reindex",
         ("POST",),
-        "只重新编号并同步表情包索引",
+        "手动全量语义重索引表情包",
         capability="catalog_index",
     ),
     WebRouteSpec(

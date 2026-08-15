@@ -11,7 +11,7 @@
       <div>
         <p class="eyebrow">Capture &amp; Catalog Workspace</p>
         <h1>表情索引</h1>
-        <p class="subtitle">按分类查看表情缩略图；重索引只整理文件编号，不重复识别。</p>
+        <p class="subtitle">按分类查看表情缩略图；全量语义重索引会扫描整个资源包，完整 v4 索引自动跳过，旧索引会重新识别。</p>
       </div>
       <nav class="nav-actions" aria-label="页面导航">
         <a href="../index.html" data-nav-page="a_manage">返回表情管理</a>
@@ -26,7 +26,7 @@
         <select id="pack" aria-label="选择资源包"></select>
         <button id="capture-refresh-button" type="button">刷新记录</button>
         <div class="reindex-control">
-          <button id="capture-reindex-button" type="button">重索引</button>
+          <button id="capture-reindex-button" type="button">全量语义重索引</button>
         </div>
         <div class="selection-control" aria-live="polite">
           <button id="capture-selection-mode-button" type="button" aria-pressed="false">开启批量选择</button>
@@ -107,6 +107,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260812-thumbnail-cache-1"></script>
+    <script type="module" src="./script.js?v=20260815-full-semantic-reindex-1"></script>
   </body>
 </html>

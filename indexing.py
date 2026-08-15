@@ -27,6 +27,63 @@ def catalog_needs_write(
     )
 
 
+def full_reindex_entry_is_current(
+    entry: dict[str, Any],
+    digest: str,
+    *,
+    index_version: int,
+    prompt_version: str,
+) -> bool:
+    """Return whether one catalog entry already satisfies the v4 contract."""
+    if not isinstance(entry, dict):
+        return False
+    if not entry.get("indexed"):
+        return False
+    if entry.get("index_version") != index_version:
+        return False
+    if entry.get("index_prompt_version") != prompt_version:
+        return False
+    if entry.get("sha256") != digest:
+        return False
+    previous_digest = str(entry.get("reindex_previous_sha256") or "")
+    if previous_digest and previous_digest != digest:
+        return False
+    if not normalize_primary_category(entry.get("primary_category")):
+        return False
+    if entry.get("primary_category_status") == "needs_reindex":
+        return False
+
+    required_fields = (
+        "semantic_summary",
+        "visible_text",
+        "text_meaning",
+        "use_cases",
+        "avoid_cases",
+        "classification_confidence",
+        "semantic_tags",
+    )
+    if any(field not in entry for field in required_fields):
+        return False
+    if not isinstance(entry.get("semantic_summary"), str) or not entry[
+        "semantic_summary"
+    ].strip():
+        return False
+    if not isinstance(entry.get("visible_text"), str):
+        return False
+    if not isinstance(entry.get("text_meaning"), str):
+        return False
+    if not isinstance(entry.get("use_cases"), (str, list, tuple, type(None))):
+        return False
+    if not isinstance(entry.get("avoid_cases"), (str, list, tuple, type(None))):
+        return False
+    if not isinstance(entry.get("semantic_tags"), (str, list, tuple, type(None))):
+        return False
+    confidence = entry.get("classification_confidence")
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        return False
+    return 0.0 <= float(confidence) <= 1.0
+
+
 def normalize_library_results(
     items: Any,
     image_paths: list[Path],

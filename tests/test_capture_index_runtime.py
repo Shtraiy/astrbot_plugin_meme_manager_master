@@ -866,8 +866,8 @@ async function runObservedReindexScenario(scriptPath) {
       if (endpoint === "capture/reindex/status") {
         statusCalls += 1;
         return statusCalls === 1
-          ? { status: "running", processed: 0, total: 1, message: "正在重索引" }
-          : { status: "completed", processed: 1, total: 1, message: "重索引已完成" };
+          ? { status: "running", processed: 0, total: 1, skipped: 0, reindexed: 0, errors: 0, message: "正在重索引" }
+          : { status: "completed", processed: 1, total: 1, skipped: 1, reindexed: 1, errors: 0, message: "重索引已完成" };
       }
       if (endpoint === "capture/index/status") return { status: "idle" };
       if (endpoint === "meme_image_data") {
@@ -879,9 +879,12 @@ async function runObservedReindexScenario(scriptPath) {
     async apiPost() { return { status: "ok" }; },
   };
   const immediateTimeout = (callback) => setImmediate(callback);
-  await loadScript(scriptPath, pageApi, { setTimeout: immediateTimeout, clearTimeout: clearImmediate });
+  const document = await loadScript(scriptPath, pageApi, { setTimeout: immediateTimeout, clearTimeout: clearImmediate });
   await settle();
-  return { observedRunningThenCompletedClearedCache: thumbnailCalls === 2 };
+  return {
+    observedRunningThenCompletedClearedCache: thumbnailCalls === 2,
+    reindexProgressLabel: document.querySelector("#capture-reindex-progress-label").textContent,
+  };
 }
 
 async function runStaleReindexStatusScenario(scriptPath) {
@@ -1571,6 +1574,8 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             for behavior in expected_behaviors:
                 with self.subTest(script=script, behavior=behavior):
                     self.assertTrue(payload[behavior])
+            self.assertIn("跳过 1", payload["reindexProgressLabel"])
+            self.assertIn("重识别 1", payload["reindexProgressLabel"])
             for outcome in ("staleReindexPostResolve", "staleReindexPostReject"):
                 with self.subTest(script=script, behavior=outcome):
                     self.assertEqual(payload[outcome]["postedPackId"], "pack")

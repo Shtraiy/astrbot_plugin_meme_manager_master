@@ -138,8 +138,16 @@ async function initCaptureIndexPage() {
     const processed = Math.min(Math.max(Number(state?.processed || 0), 0), total);
     reindexProgress.hidden = false;
     progressRow.classList.add("active");
-    reindexProgress.classList.toggle("error", status === "error");
-    reindexProgressLabel.textContent = String(state?.message || "正在准备重索引……");
+    reindexProgress.classList.toggle(
+      "error",
+      ["error", "completed_with_errors"].includes(status),
+    );
+    const skipped = Math.max(Number(state?.skipped || 0), 0);
+    const reindexed = Math.max(Number(state?.reindexed || 0), 0);
+    const errors = Math.max(Number(state?.errors || 0), 0);
+    reindexProgressLabel.textContent = `${String(
+      state?.message || "正在准备全量语义重索引……",
+    )}（跳过 ${skipped} · 重识别 ${reindexed} · 失败 ${errors}）`;
     reindexProgressCount.textContent = `${processed}/${Number(state?.total || 0)}`;
     reindexProgressBar.max = total;
     reindexProgressBar.value = processed;
@@ -166,7 +174,7 @@ async function initCaptureIndexPage() {
         showError(new Error(state.message || "重索引失败"));
         return;
       }
-      if (state.status === "completed") {
+      if (["completed", "completed_with_errors"].includes(state.status)) {
         const shouldClearThumbnails = reindexing;
         reindexing = false;
         reindexButton.disabled = false;
@@ -176,7 +184,7 @@ async function initCaptureIndexPage() {
         if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
         if (refreshed) {
           notice.textContent = state.message || "重索引已完成";
-          notice.classList.remove("error");
+          notice.classList.toggle("error", state.status === "completed_with_errors");
         }
         return;
       }
@@ -799,7 +807,7 @@ async function initCaptureIndexPage() {
     indexButton.disabled =
       indexInProgress || !state.active_pack || !(stats.pending || stats.duplicate);
     indexButton.textContent = indexInProgress ? "分类索引中……" : "分类索引待处理项";
-    reindexButton.disabled = reindexing;
+    reindexButton.disabled = reindexing || indexing;
     notice.textContent = indexing && state.status === "idle"
       ? "已提交分类索引，正在启动……"
       : state.message || "目录索引已加载";
@@ -898,10 +906,10 @@ async function initCaptureIndexPage() {
     }
   });
   reindexButton.addEventListener("click", async () => {
-    if (!packSelect.value) return;
+    if (indexing || !packSelect.value) return;
     if (!(await requestConfirmation(
-      "将旧分类目录迁移到平铺目录，并按 meme_<哈希> 重建标签索引。继续吗？",
-      "重索引表情目录",
+      "将扫描整个资源包并整理旧目录；完整 v4 索引会跳过视觉模型，旧版或字段不完整的图片会重新调用视觉模型。继续吗？",
+      "全量语义重索引",
     ))) return;
     const reindexPackId = packSelect.value;
     const generation = ++reindexPollGeneration;
@@ -909,7 +917,7 @@ async function initCaptureIndexPage() {
     reindexButton.disabled = true;
     reindexButton.setAttribute("aria-busy", "true");
     notice.classList.remove("error");
-    notice.textContent = "正在重索引表情文件，请稍候……";
+    notice.textContent = "正在进行全量语义重索引，请稍候……";
     try {
       const result = await apiPost("capture/reindex", { pack_id: reindexPackId });
       if (generation !== reindexPollGeneration || packSelect.value !== reindexPackId) return;

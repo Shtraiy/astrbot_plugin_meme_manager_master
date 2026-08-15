@@ -1,13 +1,13 @@
-# Task Plan: 重构表情包主分类与语义选图
+# Task Plan: 重构表情包主分类与全量语义重索引
 
 ## Goal
-将当前多标签平铺的表情包索引重构为少量稳定主分类 + 辅助语义信息，降低误分类导致的自动选图偏差，并发布 v2.1.5。
+将当前多标签平铺的表情包索引重构为少量稳定主分类 + 辅助语义信息，并把手动重索引升级为可幂等跳过 v4 条目、增量修复旧条目的全量语义检查，发布 v2.1.6。
 
 ## Next Step
-完成交付前静态检查，并把实际测试结果写入工作记录。
+完成交付前静态检查、提交本地变更，并等待用户决定是否推送远端。
 
 ## Current Phase
-Phase 3
+Phase 5
 
 ## Phases
 
@@ -37,7 +37,26 @@ Phase 3
 
 ### Phase 5: Delivery
 - [x] 汇总修改范围与验证结果
-- **Status:** in_progress（等待用户选择集成方式）
+- [x] 更新工作记录
+- [x] 创建本地功能 commit
+- [ ] 等待用户决定是否推送远端
+- **Status:** complete（本地提交已创建，未推送远端）
+
+## Addendum: Full Semantic Reindex Check — 2026-08-15
+
+### Phase A: Contract and tests
+- [x] 定义 v4 当前条目判断和 `full_reindex_status` 标记
+- [x] 覆盖完整条目跳过、旧条目重识别和单图失败隔离
+
+### Phase B: Runtime and API
+- [x] 将全量扫描接入现有扁平化和 catalog 写入流程
+- [x] 保留 SHA 变化信息，避免迁移阶段误跳过
+- [x] 接入进度计数、任务状态和 capture/index 互斥
+
+### Phase C: UI and release
+- [x] 更新两份语义管理页面和脚本缓存版本
+- [x] 更新 v2.1.6、README 和 CHANGELOG
+- [x] 完成 346 项测试通过、1 项跳过及静态检查
 
 ## Key Questions
 1. v2.1.5 的主分类是否采用 12 个稳定类别：开心、悲伤、尴尬、无奈、疑惑、震惊、愤怒、吐槽、赞同、拒绝、卖萌、围观？

@@ -55,7 +55,11 @@ from .capture_activity import (
 from .capture_blacklist import CaptureBlacklist
 from .config import PLUGIN_DATA_DIR
 from .health import MemeManagerHealth, check_meme_manager_master_health
-from .indexing import catalog_needs_write, normalize_library_results
+from .indexing import (
+    catalog_needs_write,
+    full_reindex_entry_is_current,
+    normalize_library_results,
+)
 from .runtime_config import PluginConfig, consume_migration_used
 from .storage import MemeStore, detect_image_extension
 from .backend.tagging import (
@@ -537,28 +541,16 @@ class CaptureMixin:
         self._library_task = asyncio.create_task(self._ensure_library_index())
         self._library_task.add_done_callback(self._log_library_task_failure)
 
-    def _library_source_signature(self) -> tuple:
+    def _library_source_signature(self, target_store: MemeStore | None = None) -> tuple:
         """Return a cheap signature for image files that need indexing."""
-        self.store.reindex_flat_catalog()
+        store = target_store or self.store
+        store.reindex_flat_catalog()
         signature = []
-        for path in self.store.image_paths():
+        for path in store.image_paths():
             try:
-                signature.append((path.name, self.store.image_digest(path)))
+                signature.append((path.name, store.image_digest(path)))
             except OSError:
                 continue
-        return tuple(signature)
-        signature = []
-        for category in sorted(self.store.directory_categories()):
-            for path in self.store.image_paths(category):
-                try:
-                    stat = path.stat()
-                except OSError:
-                    continue
-                try:
-                    digest = self.store.image_digest(path)
-                except OSError:
-                    continue
-                signature.append((category, path.name, digest))
         return tuple(signature)
 
     def _library_catalogs_are_complete(
@@ -1052,54 +1044,104 @@ class CaptureMixin:
             event, sources, message_text, message_outline
         )
 
-    async def _ensure_flat_library_index(self) -> None:
-        """Classify pending flat memes and rebuild the unified tag index."""
+    async def _ensure_flat_library_index(
+        self,
+        *,
+        target_store: MemeStore | None = None,
+        progress_state: dict | None = None,
+        full_reindex: bool = False,
+    ) -> dict[str, int | str]:
+        """Index a flat catalog, optionally performing a manual full check."""
+        store = target_store or self.store
+        state = progress_state or self._library_index_state
         if self._library_lock.locked():
-            return
+            return {}
         async with self._library_lock:
-            self.store.reindex_flat_catalog()
-            catalog = self.store.load_catalog()
+            migration = store.reindex_flat_catalog()
+            catalog = store.load_catalog()
             items = [item for item in catalog.get("items", []) if isinstance(item, dict)]
             paths = {
-                item["filename"]: self.store.memes_dir / item["filename"]
+                item["filename"]: store.memes_dir / item["filename"]
                 for item in items
                 if isinstance(item.get("filename"), str)
-                and (self.store.memes_dir / item["filename"]).is_file()
+                and (store.memes_dir / item["filename"]).is_file()
             }
             total = len(paths)
-            self._library_index_state.update(
+            state.update(
                 status="running",
                 processed=0,
                 total=total,
                 classified=0,
+                skipped=0,
+                reindexed=0,
                 errors=0,
-                message="正在检查标签索引……",
+                changed_file_count=migration["migrated_file_count"],
+                message=(
+                    "正在检查全量语义索引……"
+                    if full_reindex
+                    else "正在检查标签索引……"
+                ),
             )
             if not total:
-                self._library_index_state.update(status="idle", message="没有待索引图片")
-                return
+                state.update(
+                    status="completed" if full_reindex else "idle",
+                    message="没有待索引图片",
+                )
+                return {
+                    "processed": 0,
+                    "total": 0,
+                    "changed_file_count": migration["migrated_file_count"],
+                    "skipped": 0,
+                    "reindexed": 0,
+                    "errors": 0,
+                }
             provider_id = configured_provider_id(
                 self.runtime_config,
                 "library_index_provider_id",
                 "vision_provider_id",
             )
-            if not provider_id:
-                self._library_index_state.update(
-                    status="blocked", message="未配置标签索引视觉模型"
+            if not provider_id and not full_reindex:
+                state.update(
+                    status="blocked",
+                    message="未配置全量语义索引视觉模型" if full_reindex else "未配置标签索引视觉模型",
                 )
-                return
+                return {
+                    "processed": 0,
+                    "total": total,
+                    "changed_file_count": migration["migrated_file_count"],
+                    "skipped": 0,
+                    "reindexed": 0,
+                    "errors": 0,
+                }
 
-            run_signature = self._library_source_signature()
+            run_signature = self._library_source_signature(store)
             by_filename = {item["filename"]: item for item in items if item.get("filename")}
-            index_metadata = self._library_index_metadata(provider_id)
+            index_metadata = (
+                self._library_index_metadata(provider_id) if provider_id else {}
+            )
             records: dict[str, dict] = {}
             pending: list[tuple[Path, str]] = []
             catalog_is_current = index_metadata_matches(catalog, index_metadata)
+            skipped = 0
+            checked_at = int(time.time())
             for filename, path in paths.items():
-                digest = self.store.image_digest(path)
+                digest = store.image_digest(path)
                 old_entry = by_filename.get(filename)
-                if (
-                    catalog_is_current
+                if full_reindex and full_reindex_entry_is_current(
+                    old_entry or {},
+                    digest,
+                    index_version=LIBRARY_INDEX_VERSION,
+                    prompt_version=LIBRARY_INDEX_PROMPT_VERSION,
+                ):
+                    current = dict(old_entry)
+                    current.pop("reindex_previous_sha256", None)
+                    current["full_reindex_status"] = "skipped_current"
+                    current["full_reindex_checked_at"] = checked_at
+                    records[filename] = current
+                    skipped += 1
+                elif (
+                    not full_reindex
+                    and catalog_is_current
                     and old_entry
                     and old_entry.get("sha256") == digest
                     and self._catalog_entry_is_current(old_entry, provider_id)
@@ -1108,9 +1150,52 @@ class CaptureMixin:
                 else:
                     pending.append((path, digest))
 
+            if full_reindex and not provider_id and pending:
+                state.update(
+                    status="blocked",
+                    processed=len(records),
+                    classified=0,
+                    skipped=skipped,
+                    reindexed=0,
+                    errors=0,
+                    message="存在需要重新识别的图片，但未配置全量语义索引视觉模型",
+                )
+                return {
+                    "processed": len(records),
+                    "total": total,
+                    "changed_file_count": migration["migrated_file_count"],
+                    "skipped": skipped,
+                    "reindexed": 0,
+                    "errors": 0,
+                }
+
             processed = len(records)
             classified = 0
+            reindexed = 0
             errors = 0
+
+            def full_reindex_error_entry(
+                path: Path,
+                digest: str,
+                previous: dict | None,
+            ) -> dict:
+                error_entry = dict(previous) if isinstance(previous, dict) else {}
+                error_entry.update(
+                    {
+                        "id": path.stem,
+                        "filename": path.name,
+                        "category": "",
+                        "sha256": digest,
+                        "tags": [],
+                        "indexed": False,
+                        "primary_category": "",
+                        "primary_category_status": "needs_reindex",
+                        "full_reindex_status": "error",
+                        "full_reindex_checked_at": checked_at,
+                    }
+                )
+                return error_entry
+
             batch_size = self.runtime_config.library_index_batch_size
             batch_total = (len(pending) + batch_size - 1) // batch_size
             for start in range(0, len(pending), batch_size):
@@ -1118,7 +1203,7 @@ class CaptureMixin:
                 batch_paths = [path for path, _digest in batch]
                 batch_number = start // batch_size + 1
                 classified += len(batch)
-                self._library_index_state.update(
+                state.update(
                     message=(
                         f"正在请求视觉模型：批次 {batch_number}/{batch_total}"
                         f"（{len(batch)} 张）"
@@ -1144,7 +1229,7 @@ class CaptureMixin:
                         len(batch),
                         exc,
                     )
-                    self._library_index_state.update(
+                    state.update(
                         message=(
                             f"批量识别失败，正在逐图重试：批次 "
                             f"{batch_number}/{batch_total}（{len(batch)} 张）"
@@ -1166,7 +1251,7 @@ class CaptureMixin:
                             len(batch_results),
                             len(fallback_paths),
                         )
-                        self._library_index_state.update(
+                        state.update(
                             message=(
                                 f"批量识别结果不完整，正在补齐：批次 "
                                 f"{batch_number}/{batch_total}（{len(fallback_paths)} 张）"
@@ -1174,20 +1259,13 @@ class CaptureMixin:
                         )
                 fallback_is_full_batch = len(fallback_paths) == len(batch_paths)
                 for retry_index, path in enumerate(fallback_paths, start=1):
-                    if fallback_is_full_batch:
-                        self._library_index_state.update(
-                            message=(
-                                f"正在逐图重试：批次 {batch_number}/{batch_total}，"
-                                f"第 {retry_index}/{len(fallback_paths)} 张"
-                            )
+                    state.update(
+                        message=(
+                            f"正在逐图{'重试' if fallback_is_full_batch else '补齐'}："
+                            f"批次 {batch_number}/{batch_total}，"
+                            f"第 {retry_index}/{len(fallback_paths)} 张"
                         )
-                    else:
-                        self._library_index_state.update(
-                            message=(
-                                f"正在逐图补齐：批次 {batch_number}/{batch_total}，"
-                                f"第 {retry_index}/{len(fallback_paths)} 张"
-                            )
-                        )
+                    )
                     try:
                         batch_results.update(
                             await self._describe_library_single(
@@ -1200,9 +1278,9 @@ class CaptureMixin:
                             path,
                             single_exc,
                         )
-                if fallback_paths and not batch_results:
+                if fallback_paths and not batch_results and not full_reindex:
                     self._schedule_library_retry(provider_id)
-                    self._library_index_state.update(
+                    state.update(
                         status="completed_with_errors",
                         processed=processed,
                         classified=classified,
@@ -1215,7 +1293,14 @@ class CaptureMixin:
                         batch_total,
                         len(batch),
                     )
-                    return
+                    return {
+                        "processed": processed,
+                        "total": total,
+                        "changed_file_count": migration["migrated_file_count"],
+                        "skipped": 0,
+                        "reindexed": 0,
+                        "errors": errors + len(batch),
+                    }
                 logger.info(
                     "[meme_manager_master] 分类索引批次完成 batch=%s/%s results=%s",
                     batch_number,
@@ -1224,81 +1309,171 @@ class CaptureMixin:
                 )
                 for path, digest in batch:
                     metadata = dict(batch_results.get(path) or {})
-                    if not metadata:
-                        errors += 1
-                        metadata = {
-                            "description": "待重新识别",
-                            "emotion": "未知",
-                            "text": "",
-                            "visible_text": "",
-                            "text_meaning": "",
-                            "semantic_summary": "",
-                            "semantic_tags": [],
-                            "use_cases": [],
-                            "avoid_cases": [],
-                            "classification_confidence": None,
-                            "primary_category": "",
-                            "primary_category_status": "needs_reindex",
-                            "tags": [],
-                            "indexed": False,
-                        }
                     previous = by_filename.get(path.name)
                     if isinstance(previous, dict):
                         for key in ("send_count", "last_sent_at"):
                             if key in previous:
                                 metadata[key] = previous[key]
-                        metadata["tags"] = [*(previous.get("tags") or []), *(metadata.get("tags") or [])]
-                    metadata.update({
-                        "id": path.stem,
-                        "filename": path.name,
-                        "sha256": digest,
-                        "tags": normalize_tags(metadata.get("tags")),
-                        "semantic_tags": normalize_semantic_tags(
-                            metadata.get("semantic_tags")
-                        ),
-                        "perceptual_hash": self.store.image_perceptual_hash(path),
-                        **index_metadata,
-                    })
+                        metadata["tags"] = [
+                            *(previous.get("tags") or []),
+                            *(metadata.get("tags") or []),
+                        ]
+                    if full_reindex:
+                        candidate = dict(metadata)
+                        candidate.update(
+                            {
+                                "id": path.stem,
+                                "filename": path.name,
+                                "sha256": digest,
+                                "tags": normalize_tags(candidate.get("tags")),
+                                "semantic_tags": normalize_semantic_tags(
+                                    candidate.get("semantic_tags")
+                                ),
+                                "perceptual_hash": store.image_perceptual_hash(path),
+                                **index_metadata,
+                                "indexed": True,
+                            }
+                        )
+                        candidate.pop("reindex_previous_sha256", None)
+                        if full_reindex_entry_is_current(
+                            candidate,
+                            digest,
+                            index_version=LIBRARY_INDEX_VERSION,
+                            prompt_version=LIBRARY_INDEX_PROMPT_VERSION,
+                        ):
+                            candidate["full_reindex_status"] = "reindexed"
+                            candidate["full_reindex_checked_at"] = checked_at
+                            metadata = candidate
+                            reindexed += 1
+                        else:
+                            errors += 1
+                            metadata = full_reindex_error_entry(path, digest, previous)
+                    else:
+                        if not metadata:
+                            errors += 1
+                            metadata = {
+                                "description": "待重新识别",
+                                "emotion": "未知",
+                                "text": "",
+                                "visible_text": "",
+                                "text_meaning": "",
+                                "semantic_summary": "",
+                                "semantic_tags": [],
+                                "use_cases": [],
+                                "avoid_cases": [],
+                                "classification_confidence": None,
+                                "primary_category": "",
+                                "primary_category_status": "needs_reindex",
+                                "tags": [],
+                                "indexed": False,
+                            }
+                        metadata.update(
+                            {
+                                "id": path.stem,
+                                "filename": path.name,
+                                "sha256": digest,
+                                "tags": normalize_tags(metadata.get("tags")),
+                                "semantic_tags": normalize_semantic_tags(
+                                    metadata.get("semantic_tags")
+                                ),
+                                "perceptual_hash": store.image_perceptual_hash(path),
+                                **index_metadata,
+                            }
+                        )
                     records[path.name] = metadata
                     processed += 1
 
             async with self._save_lock:
-                if self._library_source_signature() != run_signature:
-                    self._schedule_library_retry(provider_id)
-                    self._library_index_state.update(status="completed_with_errors", errors=errors + 1)
-                    return
+                if self._library_source_signature(store) != run_signature:
+                    if not full_reindex:
+                        self._schedule_library_retry(provider_id)
+                    state.update(
+                        status="completed_with_errors",
+                        processed=processed,
+                        classified=classified,
+                        skipped=skipped,
+                        reindexed=reindexed,
+                        errors=errors + 1,
+                        message="目录内容在索引期间发生变化，已放弃本轮写入",
+                    )
+                    return {
+                        "processed": processed,
+                        "total": total,
+                        "changed_file_count": migration["migrated_file_count"],
+                        "skipped": skipped,
+                        "reindexed": reindexed,
+                        "errors": errors + 1,
+                    }
                 entries = [records[name] for name in sorted(paths) if name in records]
-                complete = len(entries) == total and all(bool(item.get("indexed")) for item in entries)
-                index_metadata = {
+                if full_reindex:
+                    complete = len(entries) == total and all(
+                        full_reindex_entry_is_current(
+                            item,
+                            str(item.get("sha256") or ""),
+                            index_version=LIBRARY_INDEX_VERSION,
+                            prompt_version=LIBRARY_INDEX_PROMPT_VERSION,
+                        )
+                        for item in entries
+                    )
+                else:
+                    complete = len(entries) == total and all(
+                        bool(item.get("indexed")) for item in entries
+                    )
+                catalog_metadata = {
                     **index_metadata,
                     "classification_index_complete": complete,
                     "classification_indexed_at": int(time.time()),
                     "classification_index_file_total": len(entries),
                 }
-                if catalog_needs_write(catalog, entries, index_metadata):
-                    self.store.write_catalog(entries, index_metadata)
+                if catalog_needs_write(catalog, entries, catalog_metadata):
+                    store.write_catalog(entries, catalog_metadata)
                 for tag in {tag for item in entries for tag in item.get("tags", [])}:
                     mark_capture_events_indexed(
-                        self.store.root,
+                        store.root,
                         category=tag,
-                        digests={str(item.get("sha256")) for item in entries if tag in item.get("tags", [])},
+                        digests={
+                            str(item.get("sha256"))
+                            for item in entries
+                            if tag in item.get("tags", [])
+                        },
                     )
-            self._library_index_state.update(
-                status="completed" if not errors else "completed_with_errors",
+            status = "completed" if not errors else "completed_with_errors"
+            message = (
+                f"全量语义重索引完成：跳过 {skipped} 张，重新识别 {reindexed} 张，"
+                f"失败 {errors} 张；整理 {migration['migrated_file_count']} 个文件名"
+                if full_reindex
+                else ("标签索引完成" if not errors else "标签索引完成，但有图片待重试")
+            )
+            state.update(
+                status=status,
                 processed=processed,
                 classified=classified,
+                skipped=skipped,
+                reindexed=reindexed,
                 errors=errors,
-                message="标签索引完成" if not errors else "标签索引完成，但有图片待重试",
+                message=message,
             )
             logger.info(
-                "[meme_manager_master] 分类索引完成 total=%s newly_classified=%s errors=%s",
+                "[meme_manager_master] 分类索引完成 total=%s newly_classified=%s "
+                "skipped=%s reindexed=%s errors=%s",
                 total,
                 classified,
+                skipped,
+                reindexed,
                 errors,
             )
-            self._library_completed_key = (provider_id, run_signature)
-            self._library_retry_key = None
-            self._library_retry_at = 0.0
+            if not full_reindex:
+                self._library_completed_key = (provider_id, run_signature)
+                self._library_retry_key = None
+                self._library_retry_at = 0.0
+            return {
+                "processed": processed,
+                "total": total,
+                "changed_file_count": migration["migrated_file_count"],
+                "skipped": skipped,
+                "reindexed": reindexed,
+                "errors": errors,
+            }
 
     async def _ensure_library_index(self) -> None:
         return await self._ensure_flat_library_index()

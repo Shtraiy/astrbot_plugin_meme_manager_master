@@ -1004,6 +1004,7 @@ class MemeStore:
                     old_entry,
                 )
             entry = dict(old_entry)
+            previous_digest = str(entry.get("sha256") or "")
             entry.update({"sha256": digest, "filename": source.name})
             entry["tags"] = normalize_tags(
                 [category, *(entry.get("tags") or []), entry.get("emotion", "")]
@@ -1035,6 +1036,10 @@ class MemeStore:
             target_name = self._meme_filename(digest, extension, reserved)
             reserved.add(target_name)
             target = self.memes_dir / target_name
+            if previous_digest and previous_digest != digest:
+                merged["reindex_previous_sha256"] = previous_digest
+            else:
+                merged.pop("reindex_previous_sha256", None)
             merged.update({"id": target.stem, "filename": target.name, "sha256": digest})
             if source != target:
                 temporary = self.memes_dir / f".meme-migrate-{time.time_ns()}-{len(moves)}{extension}"

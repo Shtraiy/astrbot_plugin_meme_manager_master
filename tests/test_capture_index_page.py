@@ -14,6 +14,8 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn("capture-indexed-items", source)
         self.assertIn("capture-pending-items", source)
         self.assertIn("capture-reindex-button", source)
+        self.assertIn("全量语义重索引", source)
+        self.assertIn("完整 v4", source)
         self.assertNotIn("capture-dispose-selected-button", source)
         self.assertIn("capture-category-filters", source)
         self.assertIn("sections-stack", source)
@@ -24,6 +26,8 @@ class CaptureIndexPageTests(unittest.TestCase):
         script = page.with_name("script.js").read_text(encoding="utf-8")
         style = page.with_name("style.css").read_text(encoding="utf-8")
         self.assertIn("capture-reindex-button", source)
+        self.assertIn("全量语义重索引", source)
+        self.assertIn("完整 v4", source)
         self.assertIn("capture-category-filters", source)
         self.assertIn("sections-stack", source)
         self.assertIn('size: "preview"', script)
@@ -50,7 +54,7 @@ class CaptureIndexPageTests(unittest.TestCase):
                 'reindexButton.disabled = state.status === "running";',
                 script,
             )
-            self.assertIn("正在重索引表情文件", script)
+            self.assertIn("正在进行全量语义重索引", script)
 
     def test_reindex_progress_contract_exists_in_both_page_copies(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -62,6 +66,16 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn('apiGet("capture/reindex/status"', script)
             self.assertIn("setTimeout", script)
             self.assertIn("reindex-progress", style)
+
+    def test_full_reindex_progress_contract_includes_semantic_counters(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn("skipped", script)
+            self.assertIn("reindexed", script)
+            self.assertIn("completed_with_errors", script)
 
     def test_reindex_progress_hidden_state_is_not_rendered_by_display_rule(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -176,8 +190,8 @@ class CaptureIndexPageTests(unittest.TestCase):
 
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         expected_script_versions = {
-            ROOT / "pages" / "semantic": "20260812-thumbnail-cache-1",
-            ROOT / "pages" / "a_manage" / "semantic": "20260812-thumbnail-cache-1",
+            ROOT / "pages" / "semantic": "20260815-full-semantic-reindex-1",
+            ROOT / "pages" / "a_manage" / "semantic": "20260815-full-semantic-reindex-1",
         }
         for page_dir, script_version in expected_script_versions.items():
             source = (page_dir / "index.html").read_text(encoding="utf-8")
@@ -197,7 +211,7 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("evictThumbnailFile", script)
             self.assertIn('if (item.kind !== "duplicate")', script)
             self.assertIn('size: "original"', script)
-            self.assertIn('script.js?v=20260812-thumbnail-cache-1', source)
+            self.assertIn('script.js?v=20260815-full-semantic-reindex-1', source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -229,7 +243,7 @@ class CaptureIndexPageTests(unittest.TestCase):
             script = script_path.read_text(encoding="utf-8")
             self.assertIn('if (state.status === "error")', script)
             self.assertIn('showError(new Error(state.message', script)
-            self.assertIn('if (state.status === "completed")', script)
+            self.assertIn('["completed", "completed_with_errors"].includes(state.status)', script)
 
     def test_index_stats_render_dynamic_values_without_inner_html(self):
         for script_path in (
