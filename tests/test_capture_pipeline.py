@@ -170,6 +170,7 @@ class CapturePipelineTests(unittest.TestCase):
                     should_skip=lambda _vision: False,
                     catalog_entry_builder=lambda path, category, vision, scene: {
                         "filename": path.name,
+                        "primary_category": category,
                         "description": vision.get("description", ""),
                         "emotion": vision.get("emotion", ""),
                         "text": vision.get("text", ""),
@@ -197,7 +198,7 @@ class CapturePipelineTests(unittest.TestCase):
         statuses, tags, description, image_count, events = asyncio.run(run())
 
         self.assertEqual(statuses, ["duplicate"])
-        self.assertEqual(tags, ["开心", "疑惑", "嘲讽"])
+        self.assertEqual(tags, ["开心", "嘲讽"])
         self.assertEqual(description, "新的识别描述")
         self.assertEqual(image_count, 1)
         self.assertEqual(events[0]["status"], "duplicate")

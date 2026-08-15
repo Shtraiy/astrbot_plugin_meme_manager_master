@@ -504,4 +504,9 @@ def normalize_category(
 
 
 def _is_safe_category(value: str) -> bool:
-    return bool(value and re.fullmatch(r"[A-Za-z0-9_-]+", value))
+    return bool(
+        value
+        and value not in {".", ".."}
+        and len(value) <= 80
+        and not any(char in value for char in "/\\\x00\r\n")
+    )

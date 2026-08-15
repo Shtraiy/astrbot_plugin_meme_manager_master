@@ -13,10 +13,24 @@ from pathlib import Path
 
 try:
     from .backend.atomic_io import atomic_write_bytes, atomic_write_json
-    from .backend.tagging import CANONICAL_TAGS, canonical_tag, normalize_tags
+    from .backend.tagging import (
+        CANONICAL_TAGS,
+        PRIMARY_CATEGORIES,
+        canonical_tag,
+        normalize_primary_category,
+        normalize_semantic_tags,
+        normalize_tags,
+    )
 except ImportError:  # standalone test imports (repo root on sys.path)
     from backend.atomic_io import atomic_write_bytes, atomic_write_json
-    from backend.tagging import CANONICAL_TAGS, canonical_tag, normalize_tags
+    from backend.tagging import (
+        CANONICAL_TAGS,
+        PRIMARY_CATEGORIES,
+        canonical_tag,
+        normalize_primary_category,
+        normalize_semantic_tags,
+        normalize_tags,
+    )
 
 try:
     from PIL import Image
@@ -91,6 +105,21 @@ DEFAULT_CATEGORY_DESCRIPTIONS = {
     "morning": "早安问候场景",
     "sleep": "涉及作息、熬夜、疲劳或休息场景",
     "sigh": "表达无奈、无语或感慨",
+}
+
+DEFAULT_PRIMARY_CATEGORY_DESCRIPTIONS = {
+    "开心": "表达积极反馈、成功确认或轻松愉快的情绪",
+    "悲伤": "表达难过、遗憾、歉意或需要安慰的情绪",
+    "尴尬": "表达社死、认错、窘迫或场面不自然的情绪",
+    "无奈": "表达无语、叹气、妥协或拿当前情况没办法",
+    "疑惑": "表达不理解、需要澄清或对信息感到困惑",
+    "震惊": "表达意外、超出预期或突然受到冲击",
+    "愤怒": "表达强烈不满、抱怨或激烈反对",
+    "吐槽": "表达调侃、轻微责备、嫌弃或带幽默感的批评",
+    "赞同": "表达喜欢、认可、同意或支持对方观点",
+    "拒绝": "表达拒绝、否定、不接受或明确反对",
+    "卖萌": "表达可爱、撒娇、装乖或萌系互动",
+    "围观": "表达看戏、关注现场或等待事态发展的旁观态度",
 }
 
 
@@ -177,6 +206,35 @@ class MemeStore:
             category: str(
                 metadata.get(category)
                 or DEFAULT_CATEGORY_DESCRIPTIONS.get(category, "")
+            )
+            for category in categories
+        }
+
+    def available_primary_categories(self) -> set[str]:
+        """Return only categories that are safe for automatic routing."""
+        categories = {
+            category
+            for item in self.load_catalog().get("items", [])
+            if isinstance(item, dict)
+            and (category := normalize_primary_category(item.get("primary_category")))
+            and item.get("primary_category_status") != "needs_reindex"
+        }
+        metadata = self._load_metadata()
+        categories.update(
+            category
+            for raw_category in metadata
+            if (category := normalize_primary_category(raw_category))
+        )
+        return categories or set(PRIMARY_CATEGORIES)
+
+    def primary_category_descriptions(self) -> dict[str, str]:
+        """Return descriptions for the small automatic-routing vocabulary."""
+        metadata = self._load_metadata()
+        categories = self.available_primary_categories()
+        return {
+            category: str(
+                metadata.get(category)
+                or DEFAULT_PRIMARY_CATEGORY_DESCRIPTIONS.get(category, "")
             )
             for category in categories
         }
@@ -271,8 +329,35 @@ class MemeStore:
     def pick_image(self, tags: object = None) -> Path | None:
         return self.selection_state.pick(tags)
 
-    def pick_indexed_image(self, preferred_tags: object = None, *, now: float | None = None, repeat_window: float = DEFAULT_SEND_REPEAT_WINDOW) -> Path | None:
-        return self.selection_state.pick_indexed(preferred_tags, now=now, repeat_window=repeat_window)
+    def pick_indexed_image(
+        self,
+        preferred_tags: object = None,
+        *,
+        now: float | None = None,
+        repeat_window: float = DEFAULT_SEND_REPEAT_WINDOW,
+        candidate_filenames: list[str] | None = None,
+    ) -> Path | None:
+        return self.selection_state.pick_indexed(
+            preferred_tags,
+            now=now,
+            repeat_window=repeat_window,
+            candidate_filenames=candidate_filenames,
+        )
+
+    def pick_indexed_primary_image(
+        self,
+        primary_category: object,
+        *,
+        now: float | None = None,
+        repeat_window: float = DEFAULT_SEND_REPEAT_WINDOW,
+        candidate_filenames: list[str] | None = None,
+    ) -> Path | None:
+        return self.selection_state.pick_indexed_primary(
+            primary_category,
+            now=now,
+            repeat_window=repeat_window,
+            candidate_filenames=candidate_filenames,
+        )
 
     @staticmethod
     def _send_weight(item: dict, now: float, repeat_window: float) -> float:
@@ -420,7 +505,51 @@ class MemeStore:
         }
 
     @staticmethod
-    def _normalize_catalog_items(raw_items: object) -> list[dict]:
+    def _normalize_text_list(value: object) -> list[str]:
+        if isinstance(value, str):
+            values = re.split(r"[\r\n,，、;；]+", value)
+        elif isinstance(value, (list, tuple, set)):
+            values = list(value)
+        else:
+            values = []
+        result: list[str] = []
+        for raw in values:
+            text = str(raw or "").strip()
+            if text and text not in result:
+                result.append(text)
+        return result
+
+    @staticmethod
+    def _migrate_primary_category(
+        item: dict,
+        *,
+        legacy_category: object = None,
+    ) -> tuple[str, str]:
+        explicit = item.get("primary_category")
+        if explicit not in (None, ""):
+            primary = normalize_primary_category(explicit)
+            return (primary, "ready") if primary else ("", "needs_reindex")
+
+        category = item.get("category") or legacy_category
+        primary = normalize_primary_category(category)
+        if primary:
+            return primary, "ready"
+
+        candidates = {
+            candidate
+            for raw_tag in (item.get("tags") or [])
+            if (candidate := normalize_primary_category(raw_tag))
+        }
+        if len(candidates) == 1:
+            return next(iter(candidates)), "ready"
+        return "", "needs_reindex"
+
+    @staticmethod
+    def _normalize_catalog_items(
+        raw_items: object,
+        *,
+        legacy_category: object = None,
+    ) -> list[dict]:
         if isinstance(raw_items, dict):
             raw_items = [
                 dict(value, filename=str(filename))
@@ -437,6 +566,26 @@ class MemeStore:
             item = dict(raw)
             item["filename"] = Path(str(item["filename"])).name
             item["tags"] = normalize_tags(item.get("tags"))
+            primary_category, primary_status = MemeStore._migrate_primary_category(
+                item,
+                legacy_category=legacy_category,
+            )
+            item["primary_category"] = primary_category
+            item["primary_category_status"] = primary_status
+            item["semantic_tags"] = normalize_semantic_tags(
+                item.get("semantic_tags")
+            )
+            visible_text = str(
+                item.get("visible_text") or item.get("text") or ""
+            ).strip()
+            item["visible_text"] = visible_text
+            item["text"] = str(item.get("text") or visible_text).strip()
+            item["semantic_summary"] = str(
+                item.get("semantic_summary") or item.get("description") or ""
+            ).strip()
+            item["text_meaning"] = str(item.get("text_meaning") or "").strip()
+            item["use_cases"] = MemeStore._normalize_text_list(item.get("use_cases"))
+            item["avoid_cases"] = MemeStore._normalize_text_list(item.get("avoid_cases"))
             result.append(item)
         return result
 
@@ -455,7 +604,10 @@ class MemeStore:
                 if isinstance(data.get(legacy_key), (list, dict)):
                     raw_items = data[legacy_key]
                     break
-        data["items"] = self._normalize_catalog_items(raw_items)
+        data["items"] = self._normalize_catalog_items(
+            raw_items,
+            legacy_category=data.get("category") or category,
+        )
         return data
 
     def load_catalog(self, category: str | None = None) -> dict:
@@ -477,6 +629,23 @@ class MemeStore:
         return self._read_catalog_file(
             self.memes_dir / category / "index.json", category=category
         )
+
+    def load_primary_catalog(self, primary_category: object) -> dict:
+        """Load only entries whose stable primary category matches."""
+        category = normalize_primary_category(primary_category)
+        catalog = self.load_catalog()
+        if not category:
+            catalog["items"] = []
+            return catalog
+        catalog["items"] = [
+            item
+            for item in catalog.get("items", [])
+            if isinstance(item, dict)
+            and item.get("primary_category") == category
+            and item.get("primary_category_status") != "needs_reindex"
+        ]
+        catalog["category"] = category
+        return catalog
 
     def write_catalog(
         self,
@@ -503,8 +672,12 @@ class MemeStore:
                 item["tags"] = normalize_tags(
                     [legacy_category, *(item.get("tags") or [])]
                 )
+                item.setdefault("category", legacy_category)
                 by_filename[str(item["filename"])] = item
-            normalized_entries = list(by_filename.values())
+            normalized_entries = self._normalize_catalog_items(
+                list(by_filename.values()),
+                legacy_category=legacy_category,
+            )
             catalog_metadata = metadata or {}
         else:
             normalized_entries = [
@@ -546,6 +719,7 @@ class MemeStore:
         source_updated_at: int,
     ) -> dict:
         by_tag: dict[str, list[str]] = {}
+        by_primary_category: dict[str, list[str]] = {}
         lookup_items: dict[str, dict] = {}
         for raw in entries:
             if not isinstance(raw, dict) or not self._catalog_item_is_indexed(raw):
@@ -564,17 +738,30 @@ class MemeStore:
             if tags == ["其他"] and not raw_tags:
                 tags = []
             meme_id = str(raw.get("id") or path.stem)
+            primary_category = normalize_primary_category(
+                raw.get("primary_category")
+            )
+            primary_ready = (
+                bool(primary_category)
+                and raw.get("primary_category_status") != "needs_reindex"
+            )
             lookup_items[meme_id] = {
                 "filename": filename,
                 "tags": tags,
+                "primary_category": primary_category or "",
+                "semantic_tags": normalize_semantic_tags(raw.get("semantic_tags")),
                 "indexed": True,
                 "send_count": raw.get("send_count", 0),
                 "last_sent_at": raw.get("last_sent_at", 0),
             }
             for tag in tags:
                 by_tag.setdefault(tag, []).append(meme_id)
+            if primary_ready:
+                by_primary_category.setdefault(primary_category, []).append(meme_id)
         for tag, ids in by_tag.items():
             by_tag[tag] = sorted(set(ids))
+        for category, ids in by_primary_category.items():
+            by_primary_category[category] = sorted(set(ids))
         return {
             "version": 1,
             "source_version": 2,
@@ -582,6 +769,7 @@ class MemeStore:
             "source_mtime_ns": self._catalog_mtime_ns(),
             "updated_at": int(time.time()),
             "by_tag": dict(sorted(by_tag.items())),
+            "by_primary_category": dict(sorted(by_primary_category.items())),
             "items": {
                 meme_id: lookup_items[meme_id]
                 for meme_id in sorted(lookup_items)
@@ -634,8 +822,13 @@ class MemeStore:
         except (TypeError, ValueError):
             return False
         by_tag = data.get("by_tag")
+        by_primary_category = data.get("by_primary_category")
         items = data.get("items")
-        if not isinstance(by_tag, dict) or not isinstance(items, dict):
+        if (
+            not isinstance(by_tag, dict)
+            or not isinstance(by_primary_category, dict)
+            or not isinstance(items, dict)
+        ):
             return False
         for tag, ids in by_tag.items():
             if not canonical_tag(tag) or not isinstance(ids, list):
@@ -645,6 +838,28 @@ class MemeStore:
             for meme_id in ids:
                 item = items.get(meme_id)
                 if not isinstance(item, dict) or tag not in item.get("tags", []):
+                    return False
+                filename = Path(str(item.get("filename", ""))).name
+                path = self.memes_dir / filename
+                if (
+                    filename != str(item.get("filename", ""))
+                    or not path.is_file()
+                    or path.suffix.lower() not in IMAGE_EXTENSIONS
+                    or not item.get("indexed", False)
+                ):
+                    return False
+        for category, ids in by_primary_category.items():
+            if not normalize_primary_category(category) or not isinstance(ids, list):
+                return False
+            if len(ids) != len(set(ids)):
+                return False
+            for meme_id in ids:
+                item = items.get(meme_id)
+                if (
+                    not isinstance(item, dict)
+                    or item.get("primary_category") != category
+                    or item.get("primary_category_status") == "needs_reindex"
+                ):
                     return False
                 filename = Path(str(item.get("filename", ""))).name
                 path = self.memes_dir / filename

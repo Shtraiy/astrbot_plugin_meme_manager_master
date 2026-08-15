@@ -6,6 +6,15 @@ import re
 from pathlib import Path
 from typing import Any
 
+try:
+    from .backend.tagging import (
+        normalize_primary_category,
+        normalize_semantic_tags,
+        normalize_tags,
+    )
+except ImportError:
+    from backend.tagging import normalize_primary_category, normalize_semantic_tags, normalize_tags
+
 
 def catalog_needs_write(
     catalog: dict[str, Any],
@@ -88,10 +97,58 @@ def _normalized_item(item: dict[str, Any]) -> dict[str, Any]:
         tags = [part.strip() for part in re.split(r"[,，、]", tags) if part.strip()]
     if not isinstance(tags, list):
         tags = []
+    raw_primary = item.get("primary_category")
+    if raw_primary not in (None, ""):
+        primary_category = normalize_primary_category(raw_primary) or ""
+        primary_status = "ready" if primary_category else "needs_reindex"
+    else:
+        category = normalize_primary_category(item.get("category"))
+        candidates = {
+            candidate
+            for tag in tags
+            if (candidate := normalize_primary_category(tag))
+        }
+        if category:
+            primary_category, primary_status = category, "ready"
+        elif len(candidates) == 1:
+            primary_category, primary_status = next(iter(candidates)), "ready"
+        else:
+            primary_category, primary_status = "", "needs_reindex"
+    visible_text = str(item.get("visible_text") or item.get("text") or "")[:120]
+    description = str(item.get("description", "") or "")[:120]
+
+    def text_list(value: Any) -> list[str]:
+        if isinstance(value, str):
+            values = re.split(r"[\r\n,，、;；]+", value)
+        elif isinstance(value, list):
+            values = value
+        else:
+            values = []
+        result: list[str] = []
+        for raw in values:
+            text = str(raw or "").strip()
+            if text and text not in result:
+                result.append(text[:80])
+        return result[:6]
+
+    confidence = item.get("classification_confidence")
+    try:
+        confidence = max(0.0, min(1.0, float(confidence)))
+    except (TypeError, ValueError):
+        confidence = None
     return {
-        "description": str(item.get("description", "") or "")[:120],
+        "primary_category": primary_category,
+        "primary_category_status": primary_status,
+        "semantic_tags": normalize_semantic_tags(item.get("semantic_tags")),
+        "semantic_summary": str(item.get("semantic_summary") or description)[:160],
+        "description": description,
         "emotion": str(item.get("emotion", "") or "")[:40],
-        "text": str(item.get("text", "") or "")[:120],
+        "visible_text": visible_text,
+        "text": visible_text,
+        "text_meaning": str(item.get("text_meaning", "") or "")[:200],
+        "use_cases": text_list(item.get("use_cases")),
+        "avoid_cases": text_list(item.get("avoid_cases")),
+        "classification_confidence": confidence,
         "tags": [str(tag)[:30] for tag in tags[:8] if str(tag).strip()],
         "indexed": True,
     }

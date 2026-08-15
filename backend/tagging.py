@@ -39,6 +39,25 @@ CANONICAL_TAGS: tuple[str, ...] = (
 )
 MAX_TAGS = 6
 
+# Keep the routing vocabulary deliberately small.  The broader legacy tag
+# vocabulary remains available for the WebUI and old catalog files, but these
+# values are the only categories that may drive automatic image selection.
+PRIMARY_CATEGORIES: tuple[str, ...] = (
+    "开心",
+    "悲伤",
+    "尴尬",
+    "无奈",
+    "疑惑",
+    "震惊",
+    "愤怒",
+    "吐槽",
+    "赞同",
+    "拒绝",
+    "卖萌",
+    "围观",
+)
+MAX_SEMANTIC_TAGS = 2
+
 _ALIASES: dict[str, str] = {
     "生气": "愤怒",
     "发火": "愤怒",
@@ -86,6 +105,42 @@ _ALIASES: dict[str, str] = {
     "color": "无语",
 }
 
+_PRIMARY_ALIASES: dict[str, str] = {
+    "生气": "愤怒",
+    "发火": "愤怒",
+    "恼火": "愤怒",
+    "吃惊": "震惊",
+    "惊讶": "震惊",
+    "意外": "震惊",
+    "困惑": "疑惑",
+    "懵": "疑惑",
+    "难过": "悲伤",
+    "伤心": "悲伤",
+    "高兴": "开心",
+    "快乐": "开心",
+    "happy": "开心",
+    "sad": "悲伤",
+    "angry": "愤怒",
+    "surprised": "震惊",
+    "confused": "疑惑",
+    "shy": "尴尬",
+    "无语": "无奈",
+    "sigh": "无奈",
+    "嘲讽": "吐槽",
+    "嫌弃": "吐槽",
+    "吐槽": "吐槽",
+    "fool": "吐槽",
+    "baka": "吐槽",
+    "喜欢": "赞同",
+    "同意": "赞同",
+    "like": "赞同",
+    "反对": "拒绝",
+    "meow": "卖萌",
+    "卖萌": "卖萌",
+    "看戏": "围观",
+    "see": "围观",
+}
+
 _CANONICAL_BY_KEY = {
     unicodedata.normalize("NFKC", tag).casefold(): tag for tag in CANONICAL_TAGS
 }
@@ -93,6 +148,16 @@ _ALIAS_BY_KEY = {
     unicodedata.normalize("NFKC", key).casefold(): value
     for key, value in _ALIASES.items()
 }
+_PRIMARY_BY_KEY = {
+    unicodedata.normalize("NFKC", key).casefold(): value
+    for key, value in _PRIMARY_ALIASES.items()
+}
+_PRIMARY_BY_KEY.update(
+    {
+        unicodedata.normalize("NFKC", category).casefold(): category
+        for category in PRIMARY_CATEGORIES
+    }
+)
 
 
 def tag_aliases() -> dict[str, str]:
@@ -107,6 +172,14 @@ def canonical_tag(value: Any) -> str | None:
         return None
     key = raw.casefold()
     return _CANONICAL_BY_KEY.get(key) or _ALIAS_BY_KEY.get(key)
+
+
+def normalize_primary_category(value: Any) -> str | None:
+    """Resolve a value to one of the small automatic-routing categories."""
+    raw = unicodedata.normalize("NFKC", str(value or "")).strip(" `\"'\t\r\n")
+    if not raw:
+        return None
+    return _PRIMARY_BY_KEY.get(raw.casefold())
 
 
 def _tag_values(value: Any) -> list[str]:
@@ -130,3 +203,16 @@ def normalize_tags(value: Any, *, fallback: str = "其他") -> list[str]:
         fallback_tag = canonical_tag(fallback) or "其他"
         return [fallback_tag]
     return ordered[:MAX_TAGS]
+
+
+def normalize_semantic_tags(value: Any) -> list[str]:
+    """Keep at most two short auxiliary labels without making them routable."""
+    found: list[str] = []
+    for item in _tag_values(value):
+        label = unicodedata.normalize("NFKC", str(item)).strip(" `\"'\t\r\n")
+        if not label or len(label) > 24 or label in found:
+            continue
+        found.append(label)
+        if len(found) >= MAX_SEMANTIC_TAGS:
+            break
+    return found

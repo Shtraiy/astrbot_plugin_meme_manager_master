@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from ..backend.tagging import normalize_tags
+    from ..backend.tagging import normalize_primary_category, normalize_tags
     from .storage_policy import IMAGE_EXTENSIONS
 except ImportError:
-    from backend.tagging import normalize_tags
+    from backend.tagging import normalize_primary_category, normalize_tags
     from infrastructure.storage_policy import IMAGE_EXTENSIONS
 
 
@@ -44,8 +44,14 @@ class SelectionState:
         *,
         now: float | None = None,
         repeat_window: float = 300.0,
+        candidate_filenames: list[str] | None = None,
     ):
         tags = set(normalize_tags(preferred_tags, fallback="")) if preferred_tags else set()
+        allowed_filenames = {
+            Path(str(filename)).name
+            for filename in (candidate_filenames or [])
+            if str(filename).strip()
+        }
         current_time = time.time() if now is None else float(now)
         lookup = self.store._load_tag_index()
         lookup_items = lookup.get("items", {})
@@ -65,6 +71,48 @@ class SelectionState:
             path = self.store.memes_dir / filename
             if (
                 filename == str(item.get("filename", ""))
+                and (not allowed_filenames or filename in allowed_filenames)
+                and path.is_file()
+                and path.suffix.lower() in IMAGE_EXTENSIONS
+            ):
+                candidates.append(path)
+                weights.append(self._send_weight(item, current_time, repeat_window))
+        if not candidates:
+            return None
+        return random.choices(candidates, weights=weights, k=1)[0]
+
+    def pick_indexed_primary(
+        self,
+        primary_category: object,
+        *,
+        now: float | None = None,
+        repeat_window: float = 300.0,
+        candidate_filenames: list[str] | None = None,
+    ):
+        """Pick only from the indexed primary-category bucket."""
+        category = normalize_primary_category(primary_category)
+        if not category:
+            return None
+        allowed_filenames = {
+            Path(str(filename)).name
+            for filename in (candidate_filenames or [])
+            if str(filename).strip()
+        }
+        current_time = time.time() if now is None else float(now)
+        lookup = self.store._load_tag_index()
+        lookup_items = lookup.get("items", {})
+        candidate_ids = lookup.get("by_primary_category", {}).get(category, [])
+        candidates: list[Path] = []
+        weights: list[float] = []
+        for meme_id in sorted(set(candidate_ids)):
+            item = lookup_items.get(meme_id)
+            if not isinstance(item, dict):
+                continue
+            filename = Path(str(item.get("filename", ""))).name
+            path = self.store.memes_dir / filename
+            if (
+                filename == str(item.get("filename", ""))
+                and (not allowed_filenames or filename in allowed_filenames)
                 and path.is_file()
                 and path.suffix.lower() in IMAGE_EXTENSIONS
             ):

@@ -58,7 +58,12 @@ from .health import MemeManagerHealth, check_meme_manager_master_health
 from .indexing import catalog_needs_write, normalize_library_results
 from .runtime_config import PluginConfig, consume_migration_used
 from .storage import MemeStore, detect_image_extension
-from .backend.tagging import normalize_tags
+from .backend.tagging import (
+    PRIMARY_CATEGORIES,
+    normalize_primary_category,
+    normalize_semantic_tags,
+    normalize_tags,
+)
 
 
 VISION_SYSTEM_PROMPT = """
@@ -79,23 +84,30 @@ JSON 格式：{{"category": "分类名", "confidence": 0.0, "reason": "不超过
 """.strip()
 
 
+PRIMARY_CATEGORY_TEXT = "、".join(PRIMARY_CATEGORIES)
+
+
 def _library_batch_system_prompt(category: str) -> str:
     return f"""
-你是表情包素材库批量整理器。当前收到多张图片，请根据画面含义为每张图片选择固定标签。
-可选标签必须来自：开心、愤怒、悲伤、震惊、疑惑、尴尬、害怕、期待、无语、赞同、拒绝、嘲讽、嫌弃、感谢、道歉、安慰、催促、围观、吃瓜、摸鱼、庆祝、工作、加班、睡觉、早安、求助、发钱、其他。每张最多选择5个标签。
-不要创建新标签，也不要移动图片。请为每张图片输出一条结果，并严格保留输入的 id。
+你是表情包素材库批量整理器。当前收到多张图片，请为每张图片建立稳定主分类和详细语义索引。
+主分类只能来自：{PRIMARY_CATEGORY_TEXT}，每张只能选择一个主分类。
+semantic_tags 是辅助语义标签，最多2个，只用于描述，不得把它们当作分类，也不要创建大量同义标签。
+请特别整理图片中可见的配字：准确抄录 visible_text，解释 text_meaning，并分别填写适用场景 use_cases 和不适用场景 avoid_cases。
+目录提示“{category}”仅供参考，不能绕过主分类词表。不要移动图片。请为每张图片输出一条结果，并严格保留输入的 id。
 只输出一个可被 json.loads 直接解析的 JSON 对象；禁止输出 <think>、分析过程、Markdown、代码块或 JSON 之外的说明。
 输出前检查 JSON 语法正确，并确保每个输入 id 都出现且只出现一次。
-格式：{{"items":[{{"id":"image_0", "description":"不超过40字", "emotion":"主要情绪", "text":"图片文字，没有则为空", "tags":["关键词1"]}}]}}
+格式：{{"items":[{{"id":"image_0", "primary_category":"尴尬", "semantic_tags":["认错"], "semantic_summary":"不超过80字的画面语义", "description":"不超过40字", "emotion":"主要情绪", "visible_text":"图片中可见文字，没有则为空", "text_meaning":"解释配字在对话中的含义", "use_cases":["适用场景"], "avoid_cases":["不适用场景"], "classification_confidence":0.0, "tags":["兼容旧字段"]}}]}}
 """.strip()
 
 
 def _library_single_system_prompt(category: str) -> str:
     return f"""
-你是表情包素材库单图整理器。请根据画面含义从固定标签中选择最多5个标签，不要创建新标签，也不要移动图片。
-固定标签：开心、愤怒、悲伤、震惊、疑惑、尴尬、害怕、期待、无语、赞同、拒绝、嘲讽、嫌弃、感谢、道歉、安慰、催促、围观、吃瓜、摸鱼、庆祝、工作、加班、睡觉、早安、求助、发钱、其他。
+你是表情包素材库单图整理器。请建立稳定主分类和详细语义索引，不要移动图片。
+主分类只能来自：{PRIMARY_CATEGORY_TEXT}，只能选择一个；semantic_tags 最多2个，只做辅助描述，不参与自动分类。
+必须认真整理图片配字：填写 visible_text、text_meaning、use_cases 和 avoid_cases，避免只看画面情绪而忽略配字。
+目录提示“{category}”仅供参考，不能输出词表外主分类。
 不要输出 Markdown、解释或 JSON 数组；没有文字或标签时使用空字符串或空数组。
-格式：{{"description":"不超过40字", "emotion":"主要情绪", "text":"图片文字", "tags":["关键词1"]}}
+格式：{{"primary_category":"尴尬", "semantic_tags":["认错"], "semantic_summary":"画面语义", "description":"不超过40字", "emotion":"主要情绪", "visible_text":"图片文字", "text_meaning":"配字含义", "use_cases":["适用场景"], "avoid_cases":["不适用场景"], "classification_confidence":0.0, "tags":["兼容旧字段"]}}
 """.strip()
 
 
@@ -110,8 +122,8 @@ OUTGOING_DECISION_SYSTEM_PROMPT = """
 """.strip()
 
 
-LIBRARY_INDEX_VERSION = 3
-LIBRARY_INDEX_PROMPT_VERSION = "library-batch-v3"
+LIBRARY_INDEX_VERSION = 4
+LIBRARY_INDEX_PROMPT_VERSION = "library-semantic-primary-v1"
 LIBRARY_INDEX_LLM_TIMEOUT = 120.0
 LIBRARY_INDEX_BATCH_RETRIES = 1
 LIBRARY_INDEX_SINGLE_RETRIES = 1
@@ -1214,7 +1226,22 @@ class CaptureMixin:
                     metadata = dict(batch_results.get(path) or {})
                     if not metadata:
                         errors += 1
-                        metadata = {"description": "待重新识别", "emotion": "未知", "text": "", "tags": [], "indexed": False}
+                        metadata = {
+                            "description": "待重新识别",
+                            "emotion": "未知",
+                            "text": "",
+                            "visible_text": "",
+                            "text_meaning": "",
+                            "semantic_summary": "",
+                            "semantic_tags": [],
+                            "use_cases": [],
+                            "avoid_cases": [],
+                            "classification_confidence": None,
+                            "primary_category": "",
+                            "primary_category_status": "needs_reindex",
+                            "tags": [],
+                            "indexed": False,
+                        }
                     previous = by_filename.get(path.name)
                     if isinstance(previous, dict):
                         for key in ("send_count", "last_sent_at"):
@@ -1226,6 +1253,9 @@ class CaptureMixin:
                         "filename": path.name,
                         "sha256": digest,
                         "tags": normalize_tags(metadata.get("tags")),
+                        "semantic_tags": normalize_semantic_tags(
+                            metadata.get("semantic_tags")
+                        ),
                         "perceptual_hash": self.store.image_perceptual_hash(path),
                         **index_metadata,
                     })
@@ -1645,7 +1675,7 @@ class CaptureMixin:
 
     def _image_details(self, path: Path) -> dict[str, object]:
         category = path.parent.name
-        catalog = self.store.load_catalog(category)
+        catalog = self.store.load_catalog()
         entry = next(
             (
                 item
@@ -1653,6 +1683,21 @@ class CaptureMixin:
                 if isinstance(item, dict) and item.get("filename") == path.name
             ),
             {},
+        )
+        if not entry and path.parent != self.store.memes_dir:
+            catalog = self.store.load_catalog(category)
+            entry = next(
+                (
+                    item
+                    for item in catalog.get("items", [])
+                    if isinstance(item, dict) and item.get("filename") == path.name
+                ),
+                {},
+            )
+        category = str(
+            entry.get("primary_category")
+            or entry.get("category")
+            or category
         )
         tags = entry.get("tags", []) if isinstance(entry, dict) else []
         if not isinstance(tags, list):
@@ -1662,7 +1707,14 @@ class CaptureMixin:
             "filename": path.name,
             "description": str(entry.get("description", "") or "")[:120],
             "emotion": str(entry.get("emotion", "") or "")[:40],
-            "text": str(entry.get("text", "") or "")[:120],
+            "text": str(
+                entry.get("visible_text") or entry.get("text") or ""
+            )[:120],
+            "text_meaning": str(entry.get("text_meaning", "") or "")[:200],
+            "semantic_summary": str(
+                entry.get("semantic_summary") or entry.get("description") or ""
+            )[:160],
+            "avoid_cases": entry.get("avoid_cases", []) or [],
             "tags": [str(tag)[:30] for tag in tags[:5]],
         }
 
@@ -1673,14 +1725,42 @@ class CaptureMixin:
             tags = [item.strip() for item in re.split(r"[,，、]", tags) if item.strip()]
         if not isinstance(tags, list):
             tags = []
+        primary_category = normalize_primary_category(category) or category
+        semantic_tags = normalize_semantic_tags(
+            [
+                scene.get("semantic_tags"),
+                scene.get("tags"),
+                vision.get("semantic_tags"),
+                vision.get("tags"),
+            ]
+        )
+        visible_text = str(
+            vision.get("visible_text") or vision.get("text") or ""
+        ).strip()[:120]
+        description = str(vision.get("description", "") or "").strip()[:120]
         return {
             "id": path.stem,
             "filename": path.name,
-            "category": category,
-            "description": str(vision.get("description", "") or "")[:120],
+            "category": primary_category,
+            "primary_category": primary_category,
+            "primary_category_status": "ready" if primary_category else "needs_reindex",
+            "semantic_tags": semantic_tags,
+            "semantic_summary": str(
+                vision.get("semantic_summary") or description
+            ).strip()[:160],
+            "description": description,
             "emotion": str(vision.get("emotion", scene.get("category", "")) or "")[:40],
-            "text": str(vision.get("text", "") or "")[:120],
-            "tags": [str(item)[:30] for item in tags[:8] if str(item).strip()],
+            "visible_text": visible_text,
+            "text": visible_text,
+            "text_meaning": str(
+                vision.get("text_meaning") or scene.get("text_meaning") or ""
+            ).strip()[:200],
+            "use_cases": scene.get("use_cases") or vision.get("use_cases") or [],
+            "avoid_cases": scene.get("avoid_cases") or vision.get("avoid_cases") or [],
+            "classification_confidence": scene.get(
+                "classification_confidence", scene.get("confidence")
+            ),
+            "tags": normalize_tags([primary_category, *tags]),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "indexed": False,
             "index_source": "capture",

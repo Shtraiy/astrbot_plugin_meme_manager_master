@@ -22,7 +22,12 @@ from .collector import (
     normalize_category,
     parse_model_json,
 )
-from .backend.tagging import normalize_tags
+from .backend.tagging import (
+    PRIMARY_CATEGORIES,
+    normalize_primary_category,
+    normalize_semantic_tags,
+    normalize_tags,
+)
 
 
 VISION_BATCH_SYSTEM_PROMPT = """
@@ -137,7 +142,14 @@ class CapturePipeline:
                 return statuses
 
             try:
-                categories = self.store.available_categories()
+                primary_categories = getattr(self.store, "available_primary_categories", None)
+                categories = (
+                    set(primary_categories())
+                    if callable(primary_categories)
+                    else set(PRIMARY_CATEGORIES)
+                )
+                if not categories:
+                    categories = set(PRIMARY_CATEGORIES)
                 image_paths = [
                     (index, temp_path) for index, _payload, temp_path in loaded
                 ]
@@ -218,13 +230,30 @@ class CapturePipeline:
                         for index, vision in accepted.items()
                     }
                 payload_by_index = {index: payload for index, payload, _path in loaded}
-                fallback = self.config.fallback_category
+                fallback = normalize_primary_category(self.config.fallback_category) or "疑惑"
                 for index, vision in accepted.items():
                     scene = scenes.get(index, {})
+                    scene_category = normalize_primary_category(scene.get("category"))
                     category = normalize_category(
-                        scene.get("category"), categories, fallback
+                        scene_category or scene.get("category"), categories, fallback
                     )
-                    tags = normalize_tags([category, scene.get("tags"), vision.get("tags")])
+                    semantic_tags = normalize_semantic_tags(
+                        [
+                            scene.get("semantic_tags"),
+                            scene.get("tags"),
+                            vision.get("semantic_tags"),
+                            vision.get("tags"),
+                        ]
+                    )
+                    tags = normalize_tags(
+                        [category, scene.get("tags"), vision.get("tags")]
+                    )
+                    scene = {
+                        **scene,
+                        "category": category,
+                        "primary_category": category,
+                        "semantic_tags": semantic_tags,
+                    }
                     payload = payload_by_index[index]
                     async with self._save_lock:
                         digest = hashlib.sha256(payload.content).hexdigest()

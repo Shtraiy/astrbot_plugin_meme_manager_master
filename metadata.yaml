@@ -3,7 +3,7 @@ display_name: 表情包管理大师
 short_desc: 提供 AstrBot WebUI、视觉识别、情景选图与群聊表情包自动收集。
 desc: 参考 AstrBot 原版 meme_manager，提供独立的多表情包运行时、WebUI 管理、视觉识别、情景判断选图和群聊自动收集；不会抢占其他插件的生图或文件生成流程。
 help: 功能：1. AstrBot WebUI 表情包管理 2. 多表情包与会话/人格选包 3. 视觉识别与情景判断选图 4. 群聊表情包自动收集 5. /表情管理大师 与 /偷取 命令
-version: v2.1.4
+version: v2.1.5
 author: Shtraiy
 repo: https://github.com/Shtraiy/astrbot_plugin_meme_manager_master
 astrbot_version: ">=4.5.7,<5"
