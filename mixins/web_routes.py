@@ -101,6 +101,13 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         capability="catalog_index",
     ),
     WebRouteSpec(
+        "capture/items/ignore-all",
+        "_api_capture_ignore_all_items",
+        ("POST",),
+        "忽略当前资源包全部待处理和重复捕获记录",
+        capability="catalog_index",
+    ),
+    WebRouteSpec(
         "capture/reindex",
         "_api_capture_reindex",
         ("POST",),

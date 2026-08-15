@@ -5,6 +5,7 @@ from collector import (
     is_safe_remote_image_url,
     parse_model_json,
     should_block_agent_tool_for_meme_request,
+    should_skip_meme_result,
     is_supported_image_source,
 )
 
@@ -61,6 +62,48 @@ class CollectorRequestTests(unittest.TestCase):
         self.assertTrue(is_supported_image_source("data:image/png;base64,AAAA"))
         self.assertFalse(is_supported_image_source("ftp://example.com/a.png"))
         self.assertFalse(is_supported_image_source("javascript:alert(1)"))
+
+    def test_capture_classifier_accepts_only_high_confidence_meme_content(self):
+        accepted = {
+            "is_meme": True,
+            "confidence": 0.95,
+            "content_type": "reaction_meme",
+            "is_screenshot": False,
+            "is_chat_screenshot": False,
+            "is_document": False,
+            "is_ui": False,
+        }
+        self.assertFalse(should_skip_meme_result(accepted))
+        self.assertTrue(should_skip_meme_result({**accepted, "confidence": 0.69}))
+        self.assertTrue(should_skip_meme_result({key: value for key, value in accepted.items() if key != "content_type"}))
+
+    def test_capture_classifier_rejects_screenshots_documents_and_ordinary_photos(self):
+        base = {
+            "is_meme": True,
+            "confidence": 0.98,
+            "content_type": "reaction_meme",
+            "is_screenshot": False,
+            "is_chat_screenshot": False,
+            "is_document": False,
+            "is_ui": False,
+        }
+        for field in (
+            "is_screenshot",
+            "is_chat_screenshot",
+            "is_document",
+            "is_ui",
+            "is_photo",
+            "is_webpage",
+            "is_poster",
+            "is_banner",
+            "is_receipt",
+        ):
+            with self.subTest(field=field):
+                self.assertTrue(should_skip_meme_result({**base, field: True}))
+        for content_type in ("photo", "screenshot", "chat_screenshot", "document", "webpage", "ui"):
+            with self.subTest(content_type=content_type):
+                self.assertTrue(should_skip_meme_result({**base, "content_type": content_type}))
+        self.assertTrue(should_skip_meme_result({**base, "has_expression": False}))
 
 
 if __name__ == "__main__":

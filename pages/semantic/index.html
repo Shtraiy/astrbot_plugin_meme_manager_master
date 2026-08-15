@@ -33,10 +33,14 @@
           <span id="capture-selection-summary">未开启批量选择</span>
           <button id="capture-select-indexed-page-button" type="button" hidden>选择当前页已整理项</button>
           <button id="capture-select-pending-button" type="button" hidden>选择当前视图待处理项</button>
+          <button id="capture-select-index-button" type="button" class="primary" hidden disabled>选择索引</button>
           <button id="capture-clear-selection-button" type="button" hidden disabled>清空选择</button>
         </div>
         <button id="capture-index-button" type="button" class="primary">
           分类索引待处理项
+        </button>
+        <button id="capture-ignore-all-button" type="button" disabled>
+          一键忽略全部待处理和待忽略
         </button>
       </section>
 
@@ -107,6 +111,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260815-resumable-reindex-1"></script>
+    <script type="module" src="./script.js?v=20260815-capture-workspace-1"></script>
   </body>
 </html>

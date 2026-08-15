@@ -49,6 +49,7 @@ from .capture_components.vision_gateway import (
 )
 from .capture_activity import (
     index_metadata_matches,
+    load_capture_activity,
     mark_capture_events_indexed,
     record_capture_event,
 )
@@ -72,9 +73,11 @@ from .backend.tagging import (
 
 VISION_SYSTEM_PROMPT = """
 你是一个负责识别聊天表情包的视觉模型。请只输出 JSON，不要 Markdown，不要解释。
-判断图片是否像聊天表情包：包含明显情绪、反应、吐槽、文字梗或用于表达态度的画面。
+只保留高置信度、明确用于聊天表达情绪/反应/吐槽/文字梗的表情包。截图、聊天记录截图、网页或软件界面、文档、海报、普通照片、风景照和没有表达意图的图片都不是表情包。
+必须判断内容类型并设置排除标记；无法确认时宁可拒绝。
 JSON 格式：
-{"is_meme": true, "confidence": 0.0, "description": "简短中文描述", "emotion": "情绪", "text": "图片中的文字"}
+{"is_meme": true, "confidence": 0.0, "content_type": "reaction_meme", "has_expression": true, "is_screenshot": false, "is_chat_screenshot": false, "is_document": false, "is_ui": false, "is_photo": false, "is_webpage": false, "is_poster": false, "is_banner": false, "is_receipt": false, "rejection_reason": "不合格时填写原因，否则为空", "description": "简短中文描述", "emotion": "情绪", "text": "图片中的文字"}
+content_type 只能是 reaction_meme、expression_meme、text_meme、sticker_meme、animated_meme、meme 之一；不属于这些类型时 is_meme 必须为 false。
 """.strip()
 
 
@@ -546,7 +549,6 @@ class CaptureMixin:
     def _library_source_signature(self, target_store: MemeStore | None = None) -> tuple:
         """Return a cheap signature for image files that need indexing."""
         store = target_store or self.store
-        store.reindex_flat_catalog()
         signature = []
         for path in store.image_paths():
             try:
@@ -554,6 +556,27 @@ class CaptureMixin:
             except OSError:
                 continue
         return tuple(signature)
+
+    async def _run_short_catalog_write(
+        self,
+        store: MemeStore,
+        operation: str,
+        mutation,
+    ):
+        """Run one catalog/file mutation under only a short per-pack lock."""
+        service = getattr(self, "catalog_index_service", None)
+
+        async def with_save_lock():
+            async with self._save_lock:
+                return mutation()
+
+        if service is not None:
+            return await service.run_locked_pack_mutation(
+                Path(store.root).name,
+                operation,
+                with_save_lock,
+            )
+        return await with_save_lock()
 
     def _library_catalogs_are_complete(
         self,
@@ -1052,6 +1075,7 @@ class CaptureMixin:
         target_store: MemeStore | None = None,
         progress_state: dict | None = None,
         full_reindex: bool = False,
+        selected_filenames: set[str] | None = None,
     ) -> dict[str, int | str]:
         """Index a flat catalog, optionally performing a manual full check."""
         store = target_store or self.store
@@ -1059,14 +1083,41 @@ class CaptureMixin:
         if self._library_lock.locked():
             return {}
         async with self._library_lock:
-            migration = store.reindex_flat_catalog()
+            migration = await self._run_short_catalog_write(
+                store,
+                "整理偷取表情包目录",
+                store.reindex_flat_catalog,
+            )
             catalog = store.load_catalog()
             items = [item for item in catalog.get("items", []) if isinstance(item, dict)]
-            paths = {
+            all_paths = {
                 item["filename"]: store.memes_dir / item["filename"]
                 for item in items
                 if isinstance(item.get("filename"), str)
                 and (store.memes_dir / item["filename"]).is_file()
+            }
+            duplicate_filenames: set[str] = set()
+            if not full_reindex:
+                duplicate_filenames = {
+                    Path(str(event.get("filename") or "")).name
+                    for event in load_capture_activity(store.root).get("events", [])
+                    if isinstance(event, dict) and event.get("status") == "duplicate"
+                }
+                if selected_filenames is None:
+                    all_paths = {
+                        filename: path
+                        for filename, path in all_paths.items()
+                        if filename not in duplicate_filenames
+                    }
+            selected = {
+                str(filename)
+                for filename in (selected_filenames or set())
+                if str(filename) in all_paths and str(filename) not in duplicate_filenames
+            } if selected_filenames is not None else None
+            paths = {
+                filename: path
+                for filename, path in all_paths.items()
+                if selected is None or filename in selected
             }
             total = len(paths)
 
@@ -1187,50 +1238,133 @@ class CaptureMixin:
                     "errors": 0,
                 }
 
-            pending_by_filename = {
-                path.name: (path, digest) for path, digest in pending
-            }
-            base_catalog_metadata = {
-                key: value
-                for key, value in catalog.items()
-                if key not in {"version", "updated_at", "items", "category"}
-            }
+            async def commit_records(
+                operation: str,
+                *,
+                complete_override: bool | None = None,
+            ) -> tuple[list[dict], set[str]]:
+                def mutation():
+                    current_catalog = store.load_catalog()
+                    ignored_digests = {
+                        str(event.get("sha256") or "").lower()
+                        for event in load_capture_activity(store.root).get("events", [])
+                        if isinstance(event, dict) and event.get("status") == "ignored"
+                    }
+                    blacklist = getattr(self, "capture_blacklist", None)
+                    if blacklist is not None:
+                        try:
+                            ignored_digests.update(str(value).lower() for value in blacklist.load())
+                        except Exception:
+                            logger.debug("读取捕获黑名单失败，继续使用活动记录保护并发提交")
+                    current_entries: dict[str, dict] = {}
+                    current_paths = {
+                        path.name: path
+                        for path in store.image_paths()
+                    }
+                    for raw_entry in current_catalog.get("items", []):
+                        if not isinstance(raw_entry, dict):
+                            continue
+                        filename = str(raw_entry.get("filename") or "")
+                        path = current_paths.get(filename)
+                        if path is None:
+                            continue
+                        entry = dict(raw_entry)
+                        try:
+                            current_digest = store.image_digest(path)
+                        except OSError:
+                            continue
+                        if entry.get("sha256") and entry.get("sha256") != current_digest:
+                            entry.update(
+                                {
+                                    "sha256": current_digest,
+                                    "indexed": False,
+                                    "status": "pending",
+                                    "primary_category_status": "needs_reindex",
+                                }
+                            )
+                        current_entries[filename] = entry
+
+                    committed: set[str] = set()
+                    for filename, record in records.items():
+                        path = current_paths.get(filename)
+                        expected_digest = str(record.get("sha256") or "")
+                        if path is None or not expected_digest or expected_digest.lower() in ignored_digests:
+                            continue
+                        try:
+                            if store.image_digest(path) != expected_digest:
+                                continue
+                        except OSError:
+                            continue
+                        current_entries[filename] = dict(record)
+                        committed.add(filename)
+
+                    for filename, path in current_paths.items():
+                        if filename in current_entries:
+                            continue
+                        try:
+                            digest = store.image_digest(path)
+                        except OSError:
+                            continue
+                        current_entries[filename] = {
+                            "id": path.stem,
+                            "filename": filename,
+                            "sha256": digest,
+                            "indexed": False,
+                            "status": "pending",
+                            "primary_category_status": "needs_reindex",
+                        }
+
+                    entries = [current_entries[name] for name in sorted(current_entries)]
+                    if complete_override is None:
+                        if full_reindex:
+                            complete = len(entries) == len(current_paths) and all(
+                                full_reindex_entry_is_current(
+                                    item,
+                                    str(item.get("sha256") or ""),
+                                    index_version=LIBRARY_INDEX_VERSION,
+                                    prompt_version=LIBRARY_INDEX_PROMPT_VERSION,
+                                )
+                                for item in entries
+                            )
+                        else:
+                            complete = len(entries) == len(current_paths) and all(
+                                bool(item.get("indexed")) for item in entries
+                            )
+                    else:
+                        complete = complete_override
+                    current_metadata = {
+                        key: value
+                        for key, value in current_catalog.items()
+                        if key not in {"version", "updated_at", "items", "category"}
+                    }
+                    metadata = {
+                        **current_metadata,
+                        **index_metadata,
+                        "classification_index_complete": complete,
+                        "classification_indexed_at": int(time.time()),
+                        "classification_index_file_total": len(current_paths),
+                    }
+                    if operation == "full_reindex_checkpoint":
+                        metadata["classification_index_complete"] = False
+                    if catalog_needs_write(current_catalog, entries, metadata):
+                        store.write_catalog(entries, metadata)
+                    for filename in committed:
+                        entry = current_entries.get(filename) or {}
+                        tags = set(entry.get("tags") or [])
+                        for tag in tags:
+                            mark_capture_events_indexed(
+                                store.root,
+                                category=str(tag),
+                                digests={str(entry.get("sha256") or "")},
+                            )
+                    return entries, committed
+
+                return await self._run_short_catalog_write(store, operation, mutation)
 
             async def checkpoint_full_reindex() -> bool:
                 if not full_reindex:
                     return True
-                async with self._save_lock:
-                    if self._library_source_signature(store) != run_signature:
-                        return False
-                    checkpoint_entries: list[dict] = []
-                    for filename in sorted(paths):
-                        if filename in records:
-                            checkpoint_entries.append(records[filename])
-                            continue
-                        path, digest = pending_by_filename[filename]
-                        pending_entry = dict(by_filename.get(filename) or {})
-                        pending_entry.update(
-                            {
-                                "id": path.stem,
-                                "filename": filename,
-                                "sha256": digest,
-                                "indexed": False,
-                                "status": "pending",
-                                "primary_category": "needs_reindex",
-                                "primary_category_status": "needs_reindex",
-                            }
-                        )
-                        pending_entry.pop("full_reindex_status", None)
-                        pending_entry.pop("full_reindex_checked_at", None)
-                        checkpoint_entries.append(pending_entry)
-                    checkpoint_metadata = {
-                        **base_catalog_metadata,
-                        **index_metadata,
-                        "classification_index_complete": False,
-                        "classification_indexed_at": int(time.time()),
-                        "classification_index_file_total": len(checkpoint_entries),
-                    }
-                    store.write_catalog(checkpoint_entries, checkpoint_metadata)
+                await commit_records("full_reindex_checkpoint", complete_override=False)
                 return True
 
             processed = len(records)
@@ -1372,6 +1506,23 @@ class CaptureMixin:
                     len(batch_results),
                 )
                 for path, digest in batch:
+                    try:
+                        if not path.is_file() or store.image_digest(path) != digest:
+                            # The file was deleted/replaced while the model
+                            # was working. Never persist a stale model result.
+                            skipped += 1
+                            processed += 1
+                            continue
+                    except OSError:
+                        skipped += 1
+                        processed += 1
+                        continue
+                    try:
+                        perceptual_hash = store.image_perceptual_hash(path)
+                    except OSError:
+                        skipped += 1
+                        processed += 1
+                        continue
                     metadata = dict(batch_results.get(path) or {})
                     previous = by_filename.get(path.name)
                     if isinstance(previous, dict):
@@ -1393,7 +1544,7 @@ class CaptureMixin:
                                 "semantic_tags": normalize_semantic_tags(
                                     candidate.get("semantic_tags")
                                 ),
-                                "perceptual_hash": store.image_perceptual_hash(path),
+                                "perceptual_hash": perceptual_hash,
                                 **index_metadata,
                                 "indexed": True,
                             }
@@ -1440,7 +1591,7 @@ class CaptureMixin:
                                 "semantic_tags": normalize_semantic_tags(
                                     metadata.get("semantic_tags")
                                 ),
-                                "perceptual_hash": store.image_perceptual_hash(path),
+                                "perceptual_hash": perceptual_hash,
                                 **index_metadata,
                             }
                         )
@@ -1472,62 +1623,7 @@ class CaptureMixin:
                             "errors": errors + 1,
                         }
 
-            async with self._save_lock:
-                if self._library_source_signature(store) != run_signature:
-                    if not full_reindex:
-                        self._schedule_library_retry(provider_id)
-                    state.update(
-                        status="completed_with_errors",
-                        processed=processed,
-                        classified=classified,
-                        skipped=skipped,
-                        reindexed=reindexed,
-                        errors=errors + 1,
-                        message="目录内容在索引期间发生变化，已放弃本轮写入",
-                    )
-                    persist_full_reindex_state()
-                    return {
-                        "processed": processed,
-                        "total": total,
-                        "changed_file_count": migration["migrated_file_count"],
-                        "skipped": skipped,
-                        "reindexed": reindexed,
-                        "errors": errors + 1,
-                    }
-                entries = [records[name] for name in sorted(paths) if name in records]
-                if full_reindex:
-                    complete = len(entries) == total and all(
-                        full_reindex_entry_is_current(
-                            item,
-                            str(item.get("sha256") or ""),
-                            index_version=LIBRARY_INDEX_VERSION,
-                            prompt_version=LIBRARY_INDEX_PROMPT_VERSION,
-                        )
-                        for item in entries
-                    )
-                else:
-                    complete = len(entries) == total and all(
-                        bool(item.get("indexed")) for item in entries
-                    )
-                catalog_metadata = {
-                    **base_catalog_metadata,
-                    **index_metadata,
-                    "classification_index_complete": complete,
-                    "classification_indexed_at": int(time.time()),
-                    "classification_index_file_total": len(entries),
-                }
-                if catalog_needs_write(catalog, entries, catalog_metadata):
-                    store.write_catalog(entries, catalog_metadata)
-                for tag in {tag for item in entries for tag in item.get("tags", [])}:
-                    mark_capture_events_indexed(
-                        store.root,
-                        category=tag,
-                        digests={
-                            str(item.get("sha256"))
-                            for item in entries
-                            if tag in item.get("tags", [])
-                        },
-                    )
+            await commit_records("完成偷取表情包目录索引")
             status = "completed" if not errors else "completed_with_errors"
             message = (
                 f"全量语义重索引完成：跳过 {skipped} 张，重新识别 {reindexed} 张，"
@@ -1554,7 +1650,7 @@ class CaptureMixin:
                 reindexed,
                 errors,
             )
-            if not full_reindex:
+            if not full_reindex and selected is None:
                 self._library_completed_key = (provider_id, run_signature)
                 self._library_retry_key = None
                 self._library_retry_at = 0.0
@@ -1567,8 +1663,12 @@ class CaptureMixin:
                 "errors": errors,
             }
 
-    async def _ensure_library_index(self) -> None:
-        return await self._ensure_flat_library_index()
+    async def _ensure_library_index(
+        self, *, selected_filenames: set[str] | None = None
+    ) -> None:
+        return await self._ensure_flat_library_index(
+            selected_filenames=selected_filenames,
+        )
 
     async def _ensure_legacy_library_index(self) -> None:
         """Index missing or stale images without changing their category folders."""

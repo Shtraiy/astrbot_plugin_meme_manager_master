@@ -392,6 +392,77 @@ class FullReindexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry["send_count"], 4)
         self.assertNotIn(entry["id"], tag_index["by_primary_category"].get("尴尬", []))
 
+    async def test_selected_index_only_classifies_selected_pending_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "pack")
+            selected = store.save_image(b"selected", "happy", ".png", perceptual_threshold=None).path
+            untouched = store.save_image(b"untouched", "sad", ".png", perceptual_threshold=None).path
+            instance = self._make_instance(store, batch_size=2)
+            state = self._state()
+            called_paths = []
+
+            async def classify(_event, batch_paths, _category, _provider):
+                called_paths.extend(batch_paths)
+                return {path: self._model_entry(path) for path in batch_paths}
+
+            instance._describe_library_batch = classify
+            instance._describe_library_single = classify
+            await instance._ensure_flat_library_index(
+                target_store=store,
+                progress_state=state,
+                selected_filenames={selected.name},
+            )
+
+            by_filename = {
+                item["filename"]: item for item in store.load_catalog()["items"]
+            }
+
+        self.assertEqual(called_paths, [selected])
+        self.assertEqual(state["total"], 1)
+        self.assertTrue(by_filename[selected.name]["indexed"])
+        self.assertFalse(by_filename[untouched.name]["indexed"])
+
+    async def test_deleted_file_during_model_work_is_not_resurrected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemeStore(Path(temp_dir) / "pack")
+            path = store.save_image(b"deleted-during-model", "happy", ".png", perceptual_threshold=None).path
+            store.write_catalog(
+                [{
+                    **self._complete_entry(path.name, store.image_digest(path)),
+                    "index_version": 3,
+                }],
+                {"classification_index_complete": True},
+            )
+            instance = self._make_instance(store, batch_size=1)
+            state = self._state()
+            model_started = asyncio.Event()
+            release_model = asyncio.Event()
+
+            async def classify(_event, batch_paths, _category, _provider):
+                model_started.set()
+                await release_model.wait()
+                path.unlink()
+                return {item: self._model_entry(item) for item in batch_paths}
+
+            instance._describe_library_batch = classify
+            instance._describe_library_single = classify
+            task = asyncio.create_task(
+                instance._ensure_flat_library_index(
+                    target_store=store,
+                    progress_state=state,
+                    full_reindex=True,
+                )
+            )
+            await asyncio.wait_for(model_started.wait(), timeout=1)
+            release_model.set()
+            await task
+
+            catalog = store.load_catalog()
+
+        self.assertFalse(path.exists())
+        self.assertNotIn(path.name, {item.get("filename") for item in catalog["items"]})
+        self.assertEqual(state["skipped"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

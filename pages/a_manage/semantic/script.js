@@ -19,7 +19,9 @@ async function initCaptureIndexPage() {
   const selectionModeButton = document.querySelector("#capture-selection-mode-button");
   const selectIndexedPageButton = document.querySelector("#capture-select-indexed-page-button");
   const selectPendingButton = document.querySelector("#capture-select-pending-button");
+  const selectIndexButton = document.querySelector("#capture-select-index-button");
   const clearSelectionButton = document.querySelector("#capture-clear-selection-button");
+  const ignoreAllButton = document.querySelector("#capture-ignore-all-button");
   const selectionSummary = document.querySelector("#capture-selection-summary");
   const indexedHeading = document.querySelector("#capture-indexed-heading");
   const categoryFilters = document.querySelector("#capture-category-filters");
@@ -397,7 +399,11 @@ async function initCaptureIndexPage() {
     }
     const filename = String(item?.filename || "").trim();
     if (!filename) return null;
-    return { kind: item.indexed ? "indexed" : "pending", filename };
+    const kind = item.indexed ? "indexed" : "pending";
+    const digest = normalizeDigest(item.sha256);
+    return kind === "pending" && digest
+      ? { kind, filename, sha256: digest }
+      : { kind, filename };
   }
 
   function selectionKey(item) {
@@ -425,7 +431,8 @@ async function initCaptureIndexPage() {
     const indexedVisible = visibleSelectionItems("indexed");
     const pendingVisible = visibleSelectionItems("pending");
     const indexedSelected = [...selectedItems.values()].filter((item) => item.kind === "indexed").length;
-    const pendingSelected = selectedItems.size - indexedSelected;
+    const pendingSelected = [...selectedItems.values()].filter((item) => item.kind === "pending").length;
+    const duplicateSelected = [...selectedItems.values()].filter((item) => item.kind === "duplicate").length;
     if (selectionModeButton) {
       selectionModeButton.textContent = selectionMode ? "退出批量选择" : "开启批量选择";
       selectionModeButton.setAttribute("aria-pressed", String(selectionMode));
@@ -433,7 +440,7 @@ async function initCaptureIndexPage() {
     }
     if (selectionSummary) {
       selectionSummary.textContent = selectionMode
-        ? `已整理 ${indexedSelected} 张，待处理 ${pendingSelected} 张`
+        ? `已整理 ${indexedSelected} 张，待处理 ${pendingSelected} 张，待忽略 ${duplicateSelected} 条`
         : "未开启批量选择";
     }
     if (selectIndexedPageButton) {
@@ -453,6 +460,15 @@ async function initCaptureIndexPage() {
     if (clearSelectionButton) {
       clearSelectionButton.hidden = !selectionMode;
       clearSelectionButton.disabled = mutationInProgress || selectedItems.size === 0;
+    }
+    if (selectIndexButton) {
+      selectIndexButton.hidden = !selectionMode;
+      selectIndexButton.disabled = mutationInProgress || indexing || pendingSelected === 0;
+    }
+    if (ignoreAllButton) {
+      const stats = currentWorkspace?.summary || {};
+      ignoreAllButton.disabled = mutationInProgress ||
+        Number(stats.pending || 0) + Number(stats.duplicate || 0) === 0;
     }
     document.querySelectorAll(".card[data-selection-key]").forEach((card) => {
       const selected = selectionMode && selectedItems.has(card.dataset.selectionKey || "");
@@ -494,10 +510,8 @@ async function initCaptureIndexPage() {
   function disposalItemsForAction(item) {
     const key = selectionKey(item);
     if (!selectionMode || !key || !selectedItems.has(key)) return [item];
-    const indexedAction = item.kind === "indexed";
-    const matching = [...selectedItems.values()].filter((selected) =>
-      indexedAction ? selected.kind === "indexed" : selected.kind !== "indexed"
-    );
+    if (item.kind !== "indexed") return [item];
+    const matching = [...selectedItems.values()].filter((selected) => selected.kind === "indexed");
     return matching.length ? matching : [item];
   }
 
@@ -609,6 +623,76 @@ async function initCaptureIndexPage() {
       if (disposalGeneration === disposalOperationGeneration) {
         mutationInProgress = false;
         button?.setAttribute("aria-busy", "false");
+        updateSelectionUi();
+      }
+    }
+  }
+
+  async function indexSelectedItems() {
+    if (!selectionMode || indexing || !packSelect.value || mutationInProgress) return;
+    const selectedPending = [...selectedItems.values()]
+      .filter((item) => item.kind === "pending" && normalizeDigest(item.sha256));
+    if (!selectedPending.length) return;
+    const confirmation = `将分类索引选中的 ${selectedPending.length} 张待处理表情；重复待忽略项不会参与，其他图片保持不变。`;
+    if (!(await requestConfirmation(confirmation, "选择索引"))) return;
+    const packId = packSelect.value;
+    indexing = true;
+    selectIndexButton.disabled = true;
+    indexButton.disabled = true;
+    try {
+      const result = await apiPost("capture/index", {
+        pack_id: packId,
+        items: selectedPending.map((item) => ({
+          kind: "pending",
+          filename: item.filename,
+          sha256: normalizeDigest(item.sha256),
+        })),
+      });
+      selectedPending.forEach((item) => selectedItems.delete(selectionKey(item)));
+      notice.textContent = result.message || "已开始索引选中的待处理表情";
+      await loadWorkspace({ preserveSelection: true });
+      void pollIndexStatus();
+    } catch (error) {
+      indexing = false;
+      await loadWorkspace({ preserveSelection: true });
+      showError(error);
+    } finally {
+      updateSelectionUi();
+    }
+  }
+
+  async function ignoreAllCaptureItems() {
+    if (!packSelect.value || mutationInProgress) return;
+    const stats = currentWorkspace?.summary || {};
+    const pendingTotal = Number(stats.pending || 0);
+    const duplicateTotal = Number(stats.duplicate || 0);
+    const total = pendingTotal + duplicateTotal;
+    if (!total) return;
+    if (!(await requestConfirmation(
+      `将忽略当前资源包全部 ${pendingTotal} 张待处理和 ${duplicateTotal} 条待忽略记录，并永久加入黑名单。其他已索引表情不受影响。继续吗？`,
+      "一键忽略全部",
+    ))) return;
+    const packId = packSelect.value;
+    const generation = ++disposalOperationGeneration;
+    mutationInProgress = true;
+    ignoreAllButton.setAttribute("aria-busy", "true");
+    updateSelectionUi();
+    try {
+      const result = await apiPost("capture/items/ignore-all", { pack_id: packId });
+      if (generation !== disposalOperationGeneration || packSelect.value !== packId) return;
+      for (const [key, item] of selectedItems) {
+        if (item.kind !== "indexed") selectedItems.delete(key);
+      }
+      clearThumbnailCache();
+      await loadWorkspace({ preserveSelection: true });
+      notice.textContent = result.message || "已忽略全部待处理和待忽略表情";
+      notice.classList.remove("error");
+    } catch (error) {
+      if (generation === disposalOperationGeneration) showError(error);
+    } finally {
+      if (generation === disposalOperationGeneration) {
+        mutationInProgress = false;
+        ignoreAllButton.setAttribute("aria-busy", "false");
         updateSelectionUi();
       }
     }
@@ -796,7 +880,7 @@ async function initCaptureIndexPage() {
     const state = data.library_index || {};
     const indexInProgress = indexing || ["queued", "running"].includes(state.status);
     indexButton.disabled =
-      indexInProgress || !state.active_pack || !(stats.pending || stats.duplicate);
+      indexInProgress || !state.active_pack || !(stats.pending);
     indexButton.textContent = indexInProgress ? "分类索引中……" : "分类索引待处理项";
     reindexButton.disabled = reindexing || indexing;
     notice.textContent = indexing && state.status === "idle"
@@ -881,6 +965,8 @@ async function initCaptureIndexPage() {
   selectPendingButton?.addEventListener("click", () => {
     if (!mutationInProgress) toggleVisibleSelection(visibleSelectionItems("pending"));
   });
+  selectIndexButton?.addEventListener("click", () => void indexSelectedItems());
+  ignoreAllButton?.addEventListener("click", () => void ignoreAllCaptureItems());
   clearSelectionButton?.addEventListener("click", () => {
     selectedItems.clear();
     updateSelectionUi();

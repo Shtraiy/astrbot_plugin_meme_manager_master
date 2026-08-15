@@ -10,9 +10,11 @@ install_package_alias()
 from meme_manager_master.capture import (
     LIBRARY_INDEX_PROMPT_VERSION,
     LIBRARY_INDEX_VERSION,
+    VISION_SYSTEM_PROMPT,
     _library_batch_system_prompt,
     _library_single_system_prompt,
 )
+from meme_manager_master.capture_pipeline import VISION_BATCH_SYSTEM_PROMPT
 from meme_manager_master.indexing import normalize_library_results
 
 
@@ -69,6 +71,16 @@ class PrimarySemanticIndexTests(unittest.TestCase):
         self.assertNotIn("工作", batch_prompt)
         self.assertGreaterEqual(LIBRARY_INDEX_VERSION, 4)
         self.assertIn("semantic-primary", LIBRARY_INDEX_PROMPT_VERSION)
+
+    def test_capture_prompts_require_strict_content_type_and_rejection_flags(self):
+        for prompt in (VISION_SYSTEM_PROMPT, VISION_BATCH_SYSTEM_PROMPT):
+            self.assertIn("content_type", prompt)
+            self.assertIn("is_screenshot", prompt)
+            self.assertIn("is_chat_screenshot", prompt)
+            self.assertIn("is_document", prompt)
+            self.assertIn("is_ui", prompt)
+            self.assertIn("rejection_reason", prompt)
+            self.assertIn("高置信度", prompt)
 
 
 if __name__ == "__main__":

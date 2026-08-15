@@ -32,9 +32,11 @@ from .backend.tagging import (
 
 VISION_BATCH_SYSTEM_PROMPT = """
 你是群聊表情包批量视觉识别器。输入包含多张图片，请逐张输出结果，必须保留每张图片的 id。
-判断图片是否像聊天表情包：包含明显情绪、反应、吐槽、文字梗或用于表达态度的画面。
+只保留高置信度、明确用于聊天表达情绪/反应/吐槽/文字梗的表情包。截图、聊天记录截图、网页或软件界面、文档、海报、普通照片、风景照和没有表达意图的图片都不是表情包；无法确认时宁可拒绝。
+每张图片必须给出内容类型和排除标记。
 只输出 JSON，不要 Markdown。
-格式：{"items":[{"id":"image_0", "is_meme":true, "confidence":0.0, "description":"简短中文描述", "emotion":"情绪", "text":"图片文字"}]}
+格式：{"items":[{"id":"image_0", "is_meme":true, "confidence":0.0, "content_type":"reaction_meme", "has_expression":true, "is_screenshot":false, "is_chat_screenshot":false, "is_document":false, "is_ui":false, "is_photo":false, "is_webpage":false, "is_poster":false, "is_banner":false, "is_receipt":false, "rejection_reason":"不合格时填写原因，否则为空", "description":"简短中文描述", "emotion":"情绪", "text":"图片文字"}]}
+content_type 只能是 reaction_meme、expression_meme、text_meme、sticker_meme、animated_meme、meme 之一；不属于这些类型时 is_meme 必须为 false。
 """.strip()
 
 

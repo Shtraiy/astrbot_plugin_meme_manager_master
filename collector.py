@@ -23,6 +23,24 @@ SCENE_CONTEXT_EXTRA = "meme_manager_master_scene_context"
 SCENE_CONTEXT_TURNS = 3
 SCENE_CONTEXT_MAX_MESSAGE_CHARS = 300
 SCENE_CONTEXT_MAX_TOTAL_CHARS = 1800
+_CAPTURE_REJECTED_CONTENT_TYPES = {
+    "photo",
+    "photograph",
+    "ordinary_photo",
+    "screenshot",
+    "chat_screenshot",
+    "chat",
+    "chat_log",
+    "screen",
+    "document",
+    "receipt",
+    "webpage",
+    "web_ui",
+    "ui",
+    "poster",
+    "banner",
+    "conversation",
+}
 
 
 def filter_reply_hook_available(event) -> bool:
@@ -254,9 +272,43 @@ def should_skip_meme_result(
     if not math.isfinite(confidence) or not 0 <= confidence <= 1:
         return True
 
-    if is_meme:
-        return False
-    return confidence >= rejection_confidence
+    if not is_meme or confidence < rejection_confidence:
+        return True
+
+    content_type = str(vision.get("content_type") or "").strip().lower()
+    content_type = re.sub(r"[\s-]+", "_", content_type)
+    if not content_type or content_type in _CAPTURE_REJECTED_CONTENT_TYPES:
+        return True
+
+    for flag in (
+        "is_screenshot",
+        "is_chat_screenshot",
+        "is_document",
+        "is_ui",
+        "is_photo",
+        "is_webpage",
+        "is_poster",
+        "is_banner",
+        "is_receipt",
+    ):
+        value = vision.get(flag)
+        if isinstance(value, str):
+            value = value.strip().lower() in {"true", "yes", "1"}
+        if value is True:
+            return True
+    has_expression = vision.get("has_expression")
+    if isinstance(has_expression, str):
+        has_expression = has_expression.strip().lower() in {"true", "yes", "1"}
+    if has_expression is False:
+        return True
+    return content_type not in {
+        "reaction_meme",
+        "expression_meme",
+        "text_meme",
+        "sticker_meme",
+        "animated_meme",
+        "meme",
+    }
 
 
 def is_safe_remote_image_url(value: Any) -> bool:

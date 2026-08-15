@@ -15,6 +15,7 @@ from ..capture_activity import (
 )
 from ..config import PACKS_DIR, get_active_pack_paths
 from ..backend.tagging import canonical_tag
+from ..backend.catalog_index_service import CatalogIndexService
 from ..storage import IMAGE_EXTENSIONS, MemeStore
 
 
@@ -24,6 +25,12 @@ CAPTURE_DISPOSE_LIMIT = 500
 
 class CaptureIndexAPIMixin:
     """Web endpoints for the capture activity and catalog workspace."""
+
+    def _capture_catalog_index_service(self) -> CatalogIndexService:
+        service = getattr(self, "catalog_index_service", None)
+        if service is not None:
+            return service
+        return CatalogIndexService(PACKS_DIR)
 
     def _capture_pack_id(self, data: dict | None = None) -> str:
         payload = data if isinstance(data, dict) else {}
@@ -342,11 +349,11 @@ class CaptureIndexAPIMixin:
         self, pack_id: str, state: dict[str, int | str]
     ) -> None:
         try:
-            result = await self.catalog_index_service.run_locked_pack_mutation(
-                pack_id,
-                "全量语义重索引表情包",
-                lambda: self._reindex_pack_catalog_with_progress(pack_id, state),
-            )
+            # Model calls and progress persistence must not hold the pack
+            # mutation lock.  The indexer takes short write locks only when
+            # committing a checkpoint/final merge, so delete/ignore can run
+            # while a long vision request is in flight.
+            result = await self._reindex_pack_catalog_with_progress(pack_id, state)
             state.update(result)
             if state.get("status") == "blocked":
                 self._persist_reindex_state(pack_id, state)
@@ -389,6 +396,8 @@ class CaptureIndexAPIMixin:
     async def _api_capture_index(self):
         try:
             data = await request.get_json() or {}
+            if not isinstance(data, dict):
+                return jsonify({"message": "请求体无效"}), 400
             pack_id = self._capture_pack_id(data)
             pack_dir = (PACKS_DIR / pack_id).resolve()
             active_store = getattr(self, "store", None)
@@ -405,6 +414,13 @@ class CaptureIndexAPIMixin:
                 for task in getattr(self, "_reindex_tasks", {}).values()
             ):
                 return jsonify({"message": "全量语义重索引正在处理中", "status": "running"}), 409
+            selected_filenames = None
+            if "items" in data:
+                selected_filenames = self._prepare_selected_capture_index_items(
+                    pack_dir, data.get("items")
+                )
+                if not selected_filenames:
+                    return jsonify({"message": "没有可索引的待处理表情"}), 400
             self._library_completed_key = None
             self._library_retry_key = None
             self._library_retry_at = 0.0
@@ -414,9 +430,12 @@ class CaptureIndexAPIMixin:
                 total=0,
                 classified=0,
                 errors=0,
+                selected_count=len(selected_filenames) if selected_filenames is not None else 0,
                 message="已提交分类索引，正在启动……",
             )
-            task = asyncio.create_task(self._ensure_library_index())
+            task = asyncio.create_task(
+                self._ensure_library_index(selected_filenames=selected_filenames)
+            )
             self._library_task = task
             task.add_done_callback(self._log_library_task_failure)
             return jsonify({"message": "已开始处理待分类偷取表情包", "status": "running"}), 202
@@ -425,6 +444,47 @@ class CaptureIndexAPIMixin:
         except Exception as exc:
             logger.error("启动偷取表情包索引失败: %s", exc, exc_info=True)
             return jsonify({"message": "启动偷取表情包索引失败"}), 500
+
+    def _prepare_selected_capture_index_items(
+        self, pack_dir: Path, raw_items: object
+    ) -> set[str]:
+        """Validate a selection and return only current ordinary pending files."""
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ValueError("索引项目不能为空")
+        if len(raw_items) > CAPTURE_DISPOSE_LIMIT:
+            raise ValueError("索引项目过多")
+        store = MemeStore(pack_dir)
+        catalog_by_filename = {
+            str(entry.get("filename")): entry
+            for entry in store.load_catalog().get("items", [])
+            if isinstance(entry, dict) and entry.get("filename")
+        }
+        duplicate_digests = {
+            str(event.get("sha256") or "").lower()
+            for event in load_capture_activity(pack_dir).get("events", [])
+            if isinstance(event, dict) and event.get("status") == "duplicate"
+        }
+        selected: set[str] = set()
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                raise ValueError("索引项目无效")
+            if str(raw_item.get("kind") or "").strip().lower() != "pending":
+                # Duplicate cards remain on the ignore path and are never
+                # sent to the classifier, even if a stale client includes one.
+                continue
+            filename = self._capture_dispose_filename(raw_item.get("filename"))
+            entry = catalog_by_filename.get(filename)
+            path = store.memes_dir / filename
+            if entry is None or bool(entry.get("indexed")) or not path.is_file():
+                continue
+            expected_digest = str(raw_item.get("sha256") or "").strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+                continue
+            actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if actual_digest != expected_digest or actual_digest in duplicate_digests:
+                continue
+            selected.add(filename)
+        return selected
 
     async def _api_capture_ignore_duplicates(self):
         try:
@@ -452,13 +512,19 @@ class CaptureIndexAPIMixin:
                     jsonify({"message": "请先将该资源包设为当前运行资源包后再忽略重复记录"}),
                     409,
                 )
-            blacklisted_count = self.capture_blacklist.add(digests)
-            ignored = mark_capture_events_ignored(pack_dir, digests=digests)
-            return jsonify({
-                "message": "已忽略重复记录并加入黑名单",
-                "ignored": ignored,
-                "blacklisted_count": blacklisted_count,
-            })
+            def mutate():
+                blacklisted_count = self.capture_blacklist.add(digests)
+                ignored = mark_capture_events_ignored(pack_dir, digests=digests)
+                return {
+                    "message": "已忽略重复记录并加入黑名单",
+                    "ignored": ignored,
+                    "blacklisted_count": blacklisted_count,
+                }
+
+            result = await self._capture_catalog_index_service().run_locked_pack_mutation(
+                pack_id, "忽略重复捕获记录", mutate
+            )
+            return jsonify(result)
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"message": str(exc)}), 400
         except Exception as exc:
@@ -621,7 +687,7 @@ class CaptureIndexAPIMixin:
                     "blacklisted_count": blacklisted_count,
                 }
 
-            return jsonify(await self.catalog_index_service.run_locked_pack_mutation(
+            return jsonify(await self._capture_catalog_index_service().run_locked_pack_mutation(
                 pack_id, "统一处置捕获表情", mutate
             ))
         except (FileNotFoundError, ValueError) as exc:
@@ -632,6 +698,101 @@ class CaptureIndexAPIMixin:
         except Exception as exc:
             logger.error("统一处置捕获表情失败: %s", exc, exc_info=True)
             return jsonify({"message": "统一处置捕获表情失败"}), 500
+
+    async def _api_capture_ignore_all_items(self):
+        """Ignore every pending/duplicate capture in the selected pack."""
+        try:
+            data = await request.get_json() or {}
+            if not isinstance(data, dict):
+                return jsonify({"message": "请求体无效"}), 400
+            pack_id = self._capture_pack_id(data)
+            pack_dir = (PACKS_DIR / pack_id).resolve()
+
+            def mutate():
+                store = MemeStore(pack_dir)
+                catalog = store.load_catalog()
+                events = load_capture_activity(pack_dir).get("events", [])
+                duplicate_filenames = {
+                    Path(str(event.get("filename") or "")).name
+                    for event in events
+                    if isinstance(event, dict) and event.get("status") == "duplicate"
+                }
+                digests: set[str] = set()
+                pending_names: set[str] = set()
+                for entry in catalog.get("items", []):
+                    if not isinstance(entry, dict) or bool(entry.get("indexed")):
+                        continue
+                    filename = str(entry.get("filename") or "")
+                    path = store.memes_dir / filename
+                    if not filename or not path.is_file() or filename in duplicate_filenames:
+                        continue
+                    pending_names.add(filename)
+                    digests.add(hashlib.sha256(path.read_bytes()).hexdigest())
+                for event in events:
+                    if not isinstance(event, dict) or event.get("status") != "duplicate":
+                        continue
+                    digest = str(event.get("sha256") or "").strip().lower()
+                    if re.fullmatch(r"[0-9a-f]{64}", digest):
+                        digests.add(digest)
+                if not digests:
+                    return {
+                        "message": "当前资源包没有待处理或待忽略表情",
+                        "ignored_count": 0,
+                        "disposed_count": 0,
+                        "blacklisted_count": 0,
+                    }
+                try:
+                    blacklisted_count = self.capture_blacklist.add(digests)
+                except Exception as exc:
+                    raise RuntimeError("写入捕获黑名单失败") from exc
+                deleted_names: set[str] = set()
+                for filename in pending_names:
+                    try:
+                        (store.memes_dir / filename).unlink()
+                    except OSError as exc:
+                        logger.warning("一键忽略待处理图片删除失败 filename=%s: %s", filename, exc)
+                        continue
+                    deleted_names.add(filename)
+                if deleted_names:
+                    metadata = {
+                        key: value
+                        for key, value in catalog.items()
+                        if key not in {"version", "updated_at", "items", "category"}
+                    }
+                    store.write_catalog(
+                        [
+                            entry
+                            for entry in catalog.get("items", [])
+                            if not (
+                                isinstance(entry, dict)
+                                and entry.get("filename") in deleted_names
+                            )
+                        ],
+                        metadata,
+                    )
+                mark_capture_events_ignored(
+                    pack_dir,
+                    digests=digests,
+                    statuses={"pending", "duplicate"},
+                )
+                return {
+                    "message": "已忽略当前资源包全部待处理和待忽略表情",
+                    "ignored_count": len(digests),
+                    "disposed_count": len(deleted_names),
+                    "blacklisted_count": blacklisted_count,
+                }
+
+            result = await self._capture_catalog_index_service().run_locked_pack_mutation(
+                pack_id, "一键忽略全部捕获表情", mutate
+            )
+            return jsonify(result)
+        except (FileNotFoundError, ValueError) as exc:
+            return jsonify({"message": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"message": str(exc)}), 500
+        except Exception as exc:
+            logger.error("一键忽略全部捕获表情失败: %s", exc, exc_info=True)
+            return jsonify({"message": "一键忽略全部捕获表情失败"}), 500
 
     async def _api_capture_index_status(self):
         try:

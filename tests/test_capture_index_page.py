@@ -33,7 +33,20 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn('size: "preview"', script)
         self.assertIn('apiPost("capture/reindex"', script)
         self.assertIn('apiPost("capture/items/dispose"', script)
+        self.assertIn('apiPost("capture/items/ignore-all"', script)
+        self.assertIn('apiPost("capture/index"', script)
         self.assertIn(".sections-stack", style)
+
+    def test_selection_index_and_pack_wide_ignore_controls_exist_in_both_pages(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            script = (page_dir / "script.js").read_text(encoding="utf-8")
+            self.assertIn('id="capture-select-index-button"', source)
+            self.assertIn('id="capture-ignore-all-button"', source)
+            self.assertIn("indexSelectedItems", script)
+            self.assertIn("ignoreAllCaptureItems", script)
+            self.assertIn('kind === "pending"', script)
+            self.assertIn('item.kind !== "indexed"', script)
 
     def test_indexed_pagination_sits_between_indexed_and_pending_sections(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -161,6 +174,7 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("toggleVisibleSelection", script)
             self.assertIn("disposalItemsForAction", script)
             self.assertNotIn("disposeSelectedItems", script)
+            self.assertIn('if (item.kind !== "indexed") return [item];', script)
 
     def test_pagination_and_unique_tag_card_contract_exists_in_both_pages(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
@@ -199,8 +213,8 @@ class CaptureIndexPageTests(unittest.TestCase):
 
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         expected_script_versions = {
-            ROOT / "pages" / "semantic": "20260815-resumable-reindex-1",
-            ROOT / "pages" / "a_manage" / "semantic": "20260815-resumable-reindex-1",
+            ROOT / "pages" / "semantic": "20260815-capture-workspace-1",
+            ROOT / "pages" / "a_manage" / "semantic": "20260815-capture-workspace-1",
         }
         for page_dir, script_version in expected_script_versions.items():
             source = (page_dir / "index.html").read_text(encoding="utf-8")
@@ -220,7 +234,7 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("evictThumbnailFile", script)
             self.assertIn('if (item.kind !== "duplicate")', script)
             self.assertIn('size: "original"', script)
-            self.assertIn('script.js?v=20260815-resumable-reindex-1', source)
+            self.assertIn('script.js?v=20260815-capture-workspace-1', source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):

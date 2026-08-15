@@ -411,7 +411,7 @@ async function runPage(scriptPath) {
   const unselectedIndexedPayload = disposeCalls[disposeCalls.length - 1].body;
   const selectionsPreservedAfterUnselectedAction =
     document.querySelector("#capture-selection-summary").textContent.includes("已整理 2 张") &&
-    document.querySelector("#capture-selection-summary").textContent.includes("待处理 2 张");
+    document.querySelector("#capture-selection-summary").textContent.includes("待处理 1 张");
 
   disposePartially = true;
   const indexedBatchAction = document.querySelector("#capture-indexed-items").children[0].children[1].children[0].dispatch("click");
@@ -421,7 +421,7 @@ async function runPage(scriptPath) {
   await new Promise((resolve) => setImmediate(resolve));
   disposeCalls = calls.filter((call) => call.endpoint === "capture/items/dispose");
   const indexedBatchPayload = disposeCalls[disposeCalls.length - 1].body;
-  const pendingSelectionPreservedAfterIndexedBatch = document.querySelector("#capture-selection-summary").textContent.includes("待处理 2 张");
+  const pendingSelectionPreservedAfterIndexedBatch = document.querySelector("#capture-selection-summary").textContent.includes("待处理 1 张");
   const partialFailureKeptSelected = document.querySelector("#capture-selection-summary").textContent.includes("已整理 1 张");
   const partialFailureMarkedCard = document.querySelector("#capture-indexed-items").children[0].className.includes("disposal-failed");
   const partialFailureCardStayedSelected = document.querySelector("#capture-indexed-items").children[0].classList.contains("selected");
@@ -1499,7 +1499,7 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertEqual(payload["pendingBatchPayload"]["pack_id"], "pack")
             self.assertEqual(
                 {item["kind"] for item in payload["pendingBatchPayload"]["items"]},
-                {"pending", "duplicate"},
+                {"pending"},
             )
             self.assertNotIn(
                 "indexed",

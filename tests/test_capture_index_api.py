@@ -463,6 +463,38 @@ class DisposeCaptureItemsTests(unittest.IsolatedAsyncioTestCase):
                     response = await instance._api_capture_dispose_items()
                 self.assertEqual(response[1], 400)
 
+    async def test_ignore_all_endpoint_ignores_pending_and_duplicate_items_pack_wide(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            instance, packs_dir, store, _indexed, pending, duplicate, duplicate_digest = self._fixture(
+                temporary
+            )
+            instance._capture_pack_id = lambda data=None: "pack"
+            pending_digest = store.image_digest(pending)
+
+            class Request:
+                async def get_json(self):
+                    return {"pack_id": "pack"}
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", packs_dir),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                response = await instance._api_capture_ignore_all_items()
+
+            self.assertEqual(response["ignored_count"], 2)
+            self.assertEqual(response["disposed_count"], 1)
+            self.assertFalse(pending.exists())
+            self.assertTrue(duplicate.exists())
+            statuses = {
+                event["sha256"]: event["status"]
+                for event in load_capture_activity(store.root)["events"]
+            }
+            self.assertEqual(statuses[pending_digest], "ignored")
+            self.assertEqual(statuses[duplicate_digest], "ignored")
+            self.assertTrue(instance.capture_blacklist.contains(pending_digest))
+            self.assertTrue(instance.capture_blacklist.contains(duplicate_digest))
+
 class ReindexPackTests(unittest.TestCase):
     def test_reindex_pack_updates_filenames_without_model_work(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -530,6 +562,60 @@ class ManualIndexApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response[1], 202)
             self.assertEqual(instance._library_index_state["status"], "queued")
             await instance._library_task
+
+    async def test_manual_index_only_queues_selected_pending_items(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            pending = store.save_image(b"selected-pending", "happy", ".png").path
+            untouched = store.save_image(b"untouched-pending", "sad", ".png").path
+            duplicate = store.save_image(b"duplicate-item", "happy", ".png").path
+            duplicate_digest = store.image_digest(duplicate)
+            record_capture_event(
+                pack_dir,
+                category="happy",
+                filename=duplicate.name,
+                digest=duplicate_digest,
+                status="duplicate",
+            )
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance.store = store
+            instance.catalog_index_service = CatalogIndexService(pack_dir.parent)
+            instance._library_task = None
+            instance._library_index_state = {"status": "completed", "message": "旧状态"}
+            instance._library_completed_key = ("old", ())
+            instance._library_retry_key = None
+            instance._library_retry_at = 0.0
+            instance._capture_pack_id = lambda data=None: str((data or {}).get("pack_id") or "pack")
+            instance._ensure_library_index = AsyncMock()
+            instance._log_library_task_failure = lambda task: None
+
+            class Request:
+                async def get_json(self):
+                    return {
+                        "pack_id": "pack",
+                        "items": [
+                            {
+                                "kind": "pending",
+                                "filename": pending.name,
+                                "sha256": store.image_digest(pending),
+                            },
+                            {"kind": "pending", "filename": untouched.name, "sha256": "0" * 64},
+                            {"kind": "duplicate", "sha256": duplicate_digest},
+                        ],
+                    }
+
+            with (
+                patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent),
+                patch.object(capture_index_api, "request", Request()),
+                patch.object(capture_index_api, "jsonify", side_effect=lambda payload: payload),
+            ):
+                response = await instance._api_capture_index()
+
+            self.assertEqual(response[1], 202)
+            await instance._library_task
+            selected = instance._ensure_library_index.await_args.kwargs["selected_filenames"]
+            self.assertEqual(selected, {pending.name})
 
 
 class ManualIndexStatusApiTests(unittest.IsolatedAsyncioTestCase):
@@ -695,11 +781,10 @@ class ReindexProgressApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_reindex_task_failure_is_exposed_in_state(self):
         instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
 
-        class FailingCatalogService:
-            async def run_locked_pack_mutation(self, *args, **kwargs):
-                raise RuntimeError("catalog exploded")
+        async def fail_during_reindex(*_args, **_kwargs):
+            raise RuntimeError("catalog exploded")
 
-        instance.catalog_index_service = FailingCatalogService()
+        instance._reindex_pack_catalog_with_progress = fail_during_reindex
         state = {
             "pack_id": "pack",
             "status": "running",
@@ -713,6 +798,54 @@ class ReindexProgressApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(state["status"], "error")
         self.assertIn("catalog exploded", state["message"])
+
+    async def test_reindex_does_not_hold_pack_lock_during_model_work(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            pack_dir.mkdir(parents=True)
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance.catalog_index_service = CatalogIndexService(pack_dir.parent)
+            started = asyncio.Event()
+            release = asyncio.Event()
+            state = {
+                "pack_id": "pack",
+                "status": "running",
+                "processed": 0,
+                "total": 1,
+                "changed_file_count": 0,
+                "message": "running",
+            }
+
+            async def fake_model_work(_pack_id, _state):
+                started.set()
+                await release.wait()
+                return {"processed": 1, "total": 1, "errors": 0, "reindexed": 1, "skipped": 0}
+
+            instance._reindex_pack_catalog_with_progress = fake_model_work
+            try:
+                with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent):
+                    task = asyncio.create_task(instance._run_reindex_task("pack", state))
+                    await asyncio.wait_for(started.wait(), timeout=1)
+                    mutation_ran = False
+
+                    def dispose_marker():
+                        nonlocal mutation_ran
+                        mutation_ran = True
+
+                    await asyncio.wait_for(
+                        instance.catalog_index_service.run_locked_pack_mutation(
+                            "pack", "dispose", dispose_marker
+                        ),
+                        timeout=0.2,
+                    )
+                    release.set()
+                    await task
+            finally:
+                release.set()
+                if "task" in locals() and not task.done():
+                    await task
+
+        self.assertTrue(mutation_ran)
 
     async def test_reindex_status_defaults_include_full_scan_counters(self):
         instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
