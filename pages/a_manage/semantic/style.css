@@ -38,6 +38,7 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .notice { min-height: 24px; margin: 14px 4px; color: #50706b; }
 .notice.error { color: #b33e3e; }
 .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.summary[hidden] { display: none; }
 .stat { display: grid; gap: 8px; padding: 16px 18px; }
 .stat span { color: #6c7f89; font-size: 13px; }
 .stat strong { font-size: 26px; color: #19765e; }
