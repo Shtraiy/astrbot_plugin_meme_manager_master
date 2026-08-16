@@ -21,6 +21,7 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("选择索引", changelog)
         self.assertIn("full_reindex_status", changelog)
         self.assertIn("检查点", changelog)
+        self.assertNotIn("## [Unreleased]", changelog)
 
     def test_runtime_registration_version_matches_manifest(self):
         metadata = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
