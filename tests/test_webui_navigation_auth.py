@@ -4,8 +4,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 A_MANAGE = ROOT / "pages" / "a_manage"
-REMAINING_PAGE_DIRS = ("catalog", "settings", "semantic")
-ASSET_VERSION = "20260817-remove-manage-1"
+REMAINING_PAGE_DIRS = ("semantic",)
+ASSET_VERSION = "20260817-transfer-1"
 
 
 class WebUINavigationAuthTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class WebUINavigationAuthTests(unittest.TestCase):
 
         for path in sources:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("data-nav-page", source, str(path))
+            self.assertNotIn("data-nav-page", source, str(path))
             self.assertNotIn('target="_top"', source, str(path))
             self.assertNotIn('href="/#/plugin-page/', source, str(path))
             self.assertNotIn('data-nav-page="a_manage"', source, str(path))
@@ -37,6 +37,13 @@ class WebUINavigationAuthTests(unittest.TestCase):
             self.assertTrue((page_root / "index.html").is_file(), page_name)
             self.assertTrue((page_root / "script.js").is_file(), page_name)
             self.assertTrue((page_root / "style.css").is_file(), page_name)
+
+    def test_settings_and_catalog_pages_are_removed(self):
+        for page_name in ("settings", "catalog"):
+            self.assertFalse(
+                (A_MANAGE / page_name / "index.html").is_file(),
+                f"{page_name} page must be removed",
+            )
 
     def test_entry_redirect_does_not_copy_static_asset_token(self):
         source = (ROOT / "pages" / "index.html").read_text(encoding="utf-8")
@@ -53,27 +60,23 @@ class WebUINavigationAuthTests(unittest.TestCase):
         self.assertNotIn("MemeManagerUI", source)
         self.assertNotIn("data-nav-page", source)
 
-    def test_capture_index_page_has_no_manage_page_links(self):
+    def test_capture_index_page_has_no_cross_page_links(self):
         html = (A_MANAGE / "semantic" / "index.html").read_text(encoding="utf-8")
         script = (A_MANAGE / "semantic" / "script.js").read_text(encoding="utf-8")
 
-        self.assertNotIn('data-nav-page="a_manage"', html)
-        self.assertNotIn('href="../index.html"', html)
-        self.assertNotIn("返回表情管理", html)
+        self.assertNotIn("设置中心", html)
+        self.assertNotIn("资源广场", html)
+        self.assertNotIn("settings/index.html", html)
+        self.assertNotIn("catalog/index.html", html)
+        self.assertNotIn('data-nav-page="settings"', html)
+        self.assertNotIn('data-nav-page="catalog"', html)
+        self.assertNotIn("allowedPages", script)
+        self.assertNotIn("applySecureNavLinks", script)
         self.assertNotIn('target="_top"', html)
-        self.assertNotIn('link.target = "_top"', script)
-        self.assertNotIn("nextUrl.hash", script)
         self.assertNotIn("asset_token", script)
-
-    def test_settings_assets_have_cache_busters(self):
-        source = (A_MANAGE / "settings" / "index.html").read_text(encoding="utf-8")
-        self.assertRegex(source, r'./style\.css\?v=[^" ]+')
-        self.assertRegex(source, r'./script\.js\?v=[^" ]+')
 
     def test_remaining_navigation_scripts_have_fresh_cache_busters(self):
         pages = {
-            A_MANAGE / "catalog" / "index.html": "script.js",
-            A_MANAGE / "settings" / "index.html": "script.js",
             A_MANAGE / "semantic" / "index.html": "script.js",
         }
 

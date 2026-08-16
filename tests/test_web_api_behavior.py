@@ -205,60 +205,6 @@ class WebApiBehaviorTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     instance._pack_import_session_paths("invalid")
 
-    def test_runtime_backup_base64_decoder_enforces_archive_limit(self):
-        with self.assertRaises(ValueError):
-            pack_api._decode_bounded_base64("A" * 100, limit=8)
-
-    def test_export_result_does_not_expose_local_archive_path(self):
-        result = pack_api._public_export_result(
-            {
-                "archive_path": r"C:\\private\\backup.zip",
-                "archive_filename": "backup.zip",
-            }
-        )
-        self.assertNotIn("archive_path", result)
-        self.assertEqual(result["archive_filename"], "backup.zip")
-
-    def test_community_routes_use_composition_root_service(self):
-        class Community:
-            def fetch(self, **kwargs):
-                return {"fetched_at": "now", "source_url": kwargs["index_url"], "index": {"packs": [{"id": "demo"}]}}
-
-            def cached(self):
-                return {"fetched_at": "cached", "source_url": "cache", "index": {"packs": []}}
-
-            def find_cached(self, pack_id):
-                return {"id": pack_id, "source": {"repo": "owner/repo"}}
-
-            def install(self, source, **kwargs):
-                return {"pack_id": "demo", "source": source}
-
-            def install_official_first(self, **kwargs):
-                return {"pack_id": "official-demo"}
-
-        async def get_json():
-            return {"pack_id": "demo", "set_as_default": True}
-
-        async def run_guarded(_operation, function, *args, **kwargs):
-            return function(*args, **kwargs)
-
-        instance = WebAPIMixin.__new__(WebAPIMixin)
-        instance.community_pack_service = Community()
-        instance._get_github_accelerator_url = lambda: ""
-        instance._run_guarded_runtime_file_operation = run_guarded
-        instance._reload_personas = lambda: None
-        from quart import request
-
-        request.get_json = get_json
-        fetched, fetched_status = asyncio_run(instance._api_fetch_community_index())
-        cached, cached_status = asyncio_run(instance._api_get_cached_community_index())
-        installed, install_status = asyncio_run(instance._api_install_community_pack())
-
-        self.assertEqual((fetched_status, cached_status, install_status), (200, 200, 200))
-        self.assertEqual(fetched["source_url"], web_api.COMMUNITY_INDEX_URL)
-        self.assertEqual(cached["fetched_at"], "cached")
-        self.assertEqual(installed["pack_id"], "demo")
-
     def _make_instance(self, memes_root: Path) -> WebAPIMixin:
         instance = WebAPIMixin.__new__(WebAPIMixin)
         instance._resolve_webui_pack_view_context = lambda: {

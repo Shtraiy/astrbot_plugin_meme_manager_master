@@ -28,6 +28,15 @@ REMOVED_MANAGE_ROUTES = (
     "packs/default",
     "packs/uninstall",
     "community/install_official_first",
+    "packs/export",
+    "packs/import",
+    "community/index/fetch",
+    "community/index/cache",
+    "community/install",
+    "settings/rules",
+    "settings/targets",
+    "settings/backup/export",
+    "settings/backup/import",
 )
 
 
@@ -38,8 +47,8 @@ class WebRouteCapabilityTests(unittest.TestCase):
         }
         for route in (
             "packs",
-            "packs/import",
-            "settings/rules",
+            "packs/import/stage",
+            "packs/import/apply",
             "capture/workspace",
             "capture/index",
             "capture/index/status",
@@ -50,6 +59,7 @@ class WebRouteCapabilityTests(unittest.TestCase):
             "capture/items/ignore-all",
             "meme_image_data",
             "packs/export/status",
+            "packs/export/download",
         ):
             self.assertIn(route, paths, f"default surface must register {route}")
 
@@ -81,7 +91,7 @@ class WebRouteCapabilityTests(unittest.TestCase):
         for route in (
             "packs",
             "packs/<pack_id>",
-            "settings/rules",
+            "packs/export/status",
             "meme_image_data",
         ):
             self.assertIn(route, paths)

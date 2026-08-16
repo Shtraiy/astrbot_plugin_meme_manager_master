@@ -2,6 +2,31 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
+## [v2.3.0] - 2026-08-17
+
+### 移除
+
+- 移除「设置中心」「资源广场」WebUI 页面及其专属前端资源。
+- 移除只被这两页使用的 Web API：`settings/rules`、`settings/targets`、`settings/backup/export`、`settings/backup/import`、`community/index/fetch`、`community/index/cache`、`community/install`，以及旧的 `packs/export`、`packs/import` 单步接口。
+- 移除对应 mixin handler 与不再使用的辅助（社区索引、选择规则、运行时备份、导出结果脱敏等）。
+
+### 新增
+
+- 表情索引页工具栏新增「导出当前资源包」：支持分享版与带向量自用备份，带向量模式仅在当前资源包具备完整向量时可选。
+- 表情索引页工具栏新增「导入资源包」：选择 zip 后预检格式/图片/分类/向量状态，确认导入时可设为默认。
+
+### 变更
+
+- WebUI 收敛为单一页面（表情索引），页面导航与跨页链接移除；AstrBot 插件页入口链路保持不变。
+- 表情包导出/导入流程从设置中心迁移至表情索引，功能不损失。
+- 统一插件清单与运行时注册版本为 v2.3.0。
+- 表情索引页面资源缓存版本升级为 `20260817-transfer-1`。
+
+### 验证
+
+- `python -m unittest discover -s tests`：全量通过。
+- `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 与 `git diff --check`：通过。
+
 ## [v2.2.1] - 2026-08-17
 
 ### 修复

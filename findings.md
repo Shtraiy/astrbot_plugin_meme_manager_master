@@ -60,6 +60,20 @@
 | 沙箱自动审批通道故障，git 提交与 shell 删除被拒 | 文件删除改用 apply_patch（受支持编辑通道），二进制字体移入系统临时目录待恢复；提交待用户批准 |
 | v2.2.0 删除管理页后 AstrBot 插件页无法打开 WebUI | AstrBot 仅发现 `pages/<page_name>/index.html` 一级页面；重建 `pages/a_manage/index.html` 轻量跳转页并恢复一级入口重定向，落点仍为表情索引（v2.2.1） |
 
+## Session 2026-08-17：移除设置中心与资源广场（v2.3.0）
+
+### Requirements
+- 设置中心与资源广场删除；表情包导出与导入移植到表情索引。
+- 选择规则、运行时备份、社区/官方资源广场安装随页面移除；`/恢复默认表情包` 命令保留。
+
+### Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 保留 `packs/export/status`、`packs/export/download`、`packs/import/stage`、`packs/import/apply` | 移植后的表情索引导出/导入依赖 |
+| 删除旧 `packs/export`、`packs/import` 单步接口 | 无页面调用，为历史遗留 |
+| 语义页移除跨页导航 | WebUI 收敛为单一页面，AstrBot 入口链路保持不变 |
+| 版本升级为 v2.3.0 | 页面与接口移除属于破坏性变更 |
+
 ### Requirements
 
 - 审查整个仓库的架构、技术债、测试质量和当前发布面。

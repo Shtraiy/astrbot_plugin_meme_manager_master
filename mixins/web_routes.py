@@ -99,9 +99,6 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         "packs/<pack_id>", "_api_get_pack_detail", ("GET",), "获取单个表情包详情"
     ),
     WebRouteSpec(
-        "packs/export", "_api_export_pack", ("POST",), "导出表情包压缩文件"
-    ),
-    WebRouteSpec(
         "packs/export/status",
         "_api_pack_export_status",
         ("GET",),
@@ -113,7 +110,6 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         ("GET",),
         "导出并下载表情包压缩文件",
     ),
-    WebRouteSpec("packs/import", "_api_import_pack", ("POST",), "导入表情包压缩文件"),
     WebRouteSpec(
         "packs/import/stage",
         "_api_stage_pack_import",
@@ -125,48 +121,6 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         "_api_apply_pack_import",
         ("POST",),
         "确认导入已预检的表情包",
-    ),
-    WebRouteSpec(
-        "community/index/fetch",
-        "_api_fetch_community_index",
-        ("POST",),
-        "拉取并缓存社区索引",
-    ),
-    WebRouteSpec(
-        "community/index/cache",
-        "_api_get_cached_community_index",
-        ("GET",),
-        "读取已缓存的社区索引",
-    ),
-    WebRouteSpec(
-        "community/install",
-        "_api_install_community_pack",
-        ("POST",),
-        "按社区 source 安装表情包",
-    ),
-    WebRouteSpec(
-        "settings/rules",
-        "_api_settings_rules",
-        ("GET", "POST"),
-        "获取或保存表情包选择规则",
-    ),
-    WebRouteSpec(
-        "settings/targets",
-        "_api_settings_targets",
-        ("GET",),
-        "获取规则 target 建议值",
-    ),
-    WebRouteSpec(
-        "settings/backup/export",
-        "_api_export_runtime_backup",
-        ("POST",),
-        "导出运行时全量备份",
-    ),
-    WebRouteSpec(
-        "settings/backup/import",
-        "_api_import_runtime_backup",
-        ("POST",),
-        "导入运行时全量备份",
     ),
 )
 

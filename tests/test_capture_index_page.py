@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SEMANTIC_PAGE = ROOT / "pages" / "a_manage" / "semantic"
-ASSET_VERSION = "20260817-remove-manage-1"
+ASSET_VERSION = "20260817-transfer-1"
 
 
 class CaptureIndexPageTests(unittest.TestCase):
@@ -241,6 +241,16 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn('v4HealthRing.style.setProperty("--v4-completion"', script)
         self.assertNotIn('v4Health.style.setProperty("--v4-completion"', script)
         self.assertNotIn("summary.innerHTML", script)
+
+    def test_export_import_controls_use_transfer_routes(self):
+        source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
+        script = (SEMANTIC_PAGE / "script.js").read_text(encoding="utf-8")
+        self.assertIn("capture-export-button", source)
+        self.assertIn("capture-import-button", source)
+        self.assertIn('apiGet("packs/export/status"', script)
+        self.assertIn('download("packs/export/download"', script)
+        self.assertIn('upload("packs/import/stage"', script)
+        self.assertIn('apiPost("packs/import/apply"', script)
 
 
 if __name__ == "__main__":

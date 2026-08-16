@@ -23,6 +23,15 @@
 - 修复：重建 `pages/a_manage/index.html` 轻量跳转页（iframe 内跳 `./semantic/index.html`），
   入口重定向恢复为 `/#/plugin-page/meme_manager_master/a_manage`。
 
+### 移除设置中心与资源广场，导出/导入移植（v2.3.0）
+
+- 用户确认：设置中心与资源广场删除；导出与导入移植到表情索引；规则/备份/社区安装随页面移除。
+- 删除 `pages/a_manage/settings/` 与 `pages/a_manage/catalog/`（字体文件移入临时目录备份）。
+- 删除 `settings/rules`、`settings/targets`、`settings/backup/*`、`community/*` 及旧
+  `packs/export`、`packs/import` 路由与 handler，清理 helper 与 import。
+- 表情索引工具栏新增导出（分享/带向量）与导入（预检/设为默认）。
+- 语义页移除跨页导航；页面缓存版本 `20260817-transfer-1`；版本号升至 v2.3.0。
+
 ## Session: 2026-08-15
 
 ### Phase 1: Requirements & Discovery

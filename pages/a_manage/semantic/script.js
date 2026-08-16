@@ -49,6 +49,18 @@ async function initCaptureIndexPage() {
   const confirmDescription = document.querySelector("#capture-confirm-description");
   const confirmCancel = document.querySelector("#capture-confirm-cancel");
   const confirmConfirm = document.querySelector("#capture-confirm-confirm");
+  const exportButton = document.querySelector("#capture-export-button");
+  const importButton = document.querySelector("#capture-import-button");
+  const importFileInput = document.querySelector("#capture-import-file");
+  const exportBackupCheckbox = document.querySelector("#capture-export-backup");
+  const exportHint = document.querySelector("#capture-export-hint");
+  const importPreview = document.querySelector("#capture-import-preview");
+  const importPreviewName = document.querySelector("#capture-import-preview-name");
+  const importPreviewMeta = document.querySelector("#capture-import-preview-meta");
+  const importSetDefault = document.querySelector("#capture-import-set-default");
+  const importConfirmButton = document.querySelector("#capture-import-confirm-button");
+  const importCancelButton = document.querySelector("#capture-import-cancel-button");
+  const transferMessage = document.querySelector("#capture-transfer-message");
   let selectedCategory = "";
   let reindexing = false;
   let reindexPollTimer = null;
@@ -70,6 +82,8 @@ async function initCaptureIndexPage() {
   const thumbnailCache = new Map();
   const thumbnailRequests = new Map();
   let thumbnailCacheBytes = 0;
+  let pendingImportToken = "";
+  let exportCapabilityRequestId = 0;
 
   if (!pageApi) {
     notice.textContent = "请从 AstrBot WebUI 的插件页面打开表情索引。";
@@ -77,29 +91,6 @@ async function initCaptureIndexPage() {
   }
 
   await pageApi.ready();
-  const allowedPages = new Set(["catalog", "settings", "semantic"]);
-  const currentParams = new URLSearchParams(window.location?.search || "");
-  document.querySelectorAll("a[data-nav-page]").forEach((link) => {
-    const pageName = link.getAttribute("data-nav-page");
-    if (!pageName || !allowedPages.has(pageName)) {
-      return;
-    }
-    const nextUrl = new URL(link.href, window.location.href);
-    const navView = link.getAttribute("data-nav-view") || "";
-    if (navView) {
-      nextUrl.searchParams.set("view", navView);
-    } else {
-      nextUrl.searchParams.delete("view");
-    }
-    const managedPackId = currentParams.get("managed_pack_id");
-    if (managedPackId) {
-      nextUrl.searchParams.set("managed_pack_id", managedPackId);
-    } else {
-      nextUrl.searchParams.delete("managed_pack_id");
-    }
-    link.removeAttribute("target");
-    link.href = nextUrl.toString();
-  });
 
   const apiGet = (path, params = {}) => pageApi.apiGet(path, params);
   const apiPost = (path, body = {}) => pageApi.apiPost(path, body);
@@ -979,6 +970,139 @@ async function initCaptureIndexPage() {
     }
   }
 
+  function setTransferMessage(message, type = "") {
+    if (!transferMessage) return;
+    transferMessage.textContent = String(message || "");
+    transferMessage.classList.toggle("success", type === "success");
+    transferMessage.classList.toggle("error", type === "error");
+  }
+
+  async function refreshExportCapability() {
+    const packId = String(packSelect?.value || "").trim();
+    const requestId = ++exportCapabilityRequestId;
+    if (!packId) {
+      if (exportBackupCheckbox) exportBackupCheckbox.disabled = true;
+      if (exportHint) exportHint.textContent = "当前没有可导出的资源包。";
+      return;
+    }
+    if (exportHint) exportHint.textContent = "正在检查导出能力…";
+    try {
+      const status = await apiGet("packs/export/status", { pack_id: packId });
+      if (requestId !== exportCapabilityRequestId) return;
+      const available = Boolean(status?.vector_backup_available);
+      if (exportBackupCheckbox) exportBackupCheckbox.disabled = !available;
+      if (!available && exportBackupCheckbox) exportBackupCheckbox.checked = false;
+      if (exportHint) {
+        exportHint.textContent = available
+          ? "当前资源包可导出带向量的自用备份。"
+          : "当前资源包没有完整向量；未勾选时将导出分享版。";
+      }
+    } catch (error) {
+      if (requestId !== exportCapabilityRequestId) return;
+      if (exportBackupCheckbox) exportBackupCheckbox.disabled = true;
+      if (exportHint) exportHint.textContent = "暂时无法读取导出能力，请稍后重试。";
+    }
+  }
+
+  async function exportCurrentPack() {
+    const packId = String(packSelect?.value || "").trim();
+    if (!packId) {
+      setTransferMessage("当前没有可导出的资源包。", "error");
+      return;
+    }
+    const mode = exportBackupCheckbox?.checked ? "backup" : "share";
+    setTransferMessage("正在生成压缩包，请不要关闭页面。");
+    try {
+      await pageApi.download("packs/export/download", { pack_id: packId, mode });
+      setTransferMessage(
+        mode === "backup"
+          ? "带向量自用备份已生成，已开始下载。"
+          : "分享版已生成，已开始下载。",
+        "success",
+      );
+    } catch (error) {
+      setTransferMessage(error?.message || String(error), "error");
+    }
+  }
+
+  function resetImportPreview() {
+    pendingImportToken = "";
+    if (importFileInput) importFileInput.value = "";
+    importPreview?.classList.add("hidden");
+    if (importPreviewName) importPreviewName.textContent = "";
+    if (importPreviewMeta) importPreviewMeta.textContent = "";
+    if (importSetDefault) importSetDefault.checked = false;
+  }
+
+  async function stageImportFile(file) {
+    if (!file) return;
+    if (!String(file.name || "").toLowerCase().endsWith(".zip")) {
+      setTransferMessage("请选择 zip 格式的表情包。", "error");
+      return;
+    }
+    pendingImportToken = "";
+    setTransferMessage("正在检查压缩包结构和兼容性…");
+    try {
+      const data = await pageApi.upload("packs/import/stage", file);
+      pendingImportToken = String(data?.import_token || "").trim();
+      if (!pendingImportToken) {
+        throw new Error("服务器没有返回导入凭证");
+      }
+      const formatLabels = {
+        v2: data?.export_mode === "backup" ? "新版带向量备份" : "新版分享包",
+        v1: "兼容版资源包",
+        legacy: "旧版无语义包 · 将自动转换",
+      };
+      if (importPreviewName) {
+        importPreviewName.textContent =
+          `${data?.name || data?.pack_id || "待导入表情包"} (${data?.pack_id || "未知 ID"})`;
+      }
+      if (importPreviewMeta) {
+        const format = formatLabels[data?.detected_format] || "已识别的表情包";
+        const vectors = data?.vectors_present ? "，含向量将校验" : "";
+        importPreviewMeta.textContent =
+          `${format} · ${Number(data?.image_count || 0)} 张图片 · ${Number(data?.category_count || 0)} 个分类${vectors}`;
+      }
+      importPreview?.classList.remove("hidden");
+      setTransferMessage("检查完成，请确认导入选项。", "success");
+    } catch (error) {
+      resetImportPreview();
+      setTransferMessage(error?.message || String(error), "error");
+    }
+  }
+
+  async function confirmPackImport() {
+    if (!pendingImportToken) {
+      setTransferMessage("请先选择并检查压缩包。", "error");
+      return;
+    }
+    setTransferMessage("正在安装表情包，请不要关闭页面。");
+    if (importConfirmButton) importConfirmButton.disabled = true;
+    try {
+      const data = await apiPost("packs/import/apply", {
+        import_token: pendingImportToken,
+        overwrite: false,
+        overwrite_manual_semantics: false,
+        set_as_default: Boolean(importSetDefault?.checked),
+      });
+      const importedPackId = String(data?.pack_id || "").trim();
+      const vectorHint = data?.vectors_restored
+        ? "，向量已恢复"
+        : data?.vector_warning
+          ? `；${data.vector_warning}`
+          : "";
+      resetImportPreview();
+      setTransferMessage(`已导入 ${data?.name || importedPackId}${vectorHint}`, "success");
+      await loadPacks();
+      await loadWorkspace();
+      void refreshExportCapability();
+    } catch (error) {
+      setTransferMessage(error?.message || String(error), "error");
+    } finally {
+      if (importConfirmButton) importConfirmButton.disabled = false;
+    }
+  }
+
   packSelect.addEventListener("change", () => {
     closeConfirmation(false);
     reindexPollGeneration += 1;
@@ -997,8 +1121,19 @@ async function initCaptureIndexPage() {
     reindexProgress.hidden = true;
     progressRow.classList.remove("active");
     void loadWorkspace();
+    void refreshExportCapability();
   });
   refreshButton.addEventListener("click", () => void loadWorkspace());
+  exportButton?.addEventListener("click", () => void exportCurrentPack());
+  importButton?.addEventListener("click", () => importFileInput?.click());
+  importFileInput?.addEventListener("change", () => {
+    void stageImportFile(importFileInput.files?.[0]);
+  });
+  importConfirmButton?.addEventListener("click", () => void confirmPackImport());
+  importCancelButton?.addEventListener("click", () => {
+    resetImportPreview();
+    setTransferMessage("");
+  });
   v4MetricButtons.forEach((button) => {
     button.addEventListener("click", () => setV4Filter(button.dataset.v4Filter || "all"));
   });
@@ -1088,6 +1223,7 @@ async function initCaptureIndexPage() {
 
   try {
     await loadPacks();
+    await refreshExportCapability();
     const initialWorkspace = await loadWorkspace();
     if (["queued", "running"].includes(initialWorkspace?.library_index?.status)) {
       indexing = true;

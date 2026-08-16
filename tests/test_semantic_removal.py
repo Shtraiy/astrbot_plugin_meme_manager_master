@@ -42,13 +42,5 @@ class SemanticRemovalTests(unittest.TestCase):
             any(path == "meme_image_semantic" or path.startswith("semantic/") for path in paths)
         )
 
-    def test_settings_scripts_have_no_unreachable_semantic_rebuild_logic(self):
-        source = (ROOT / "pages" / "a_manage" / "settings" / "script.js").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn("semantic_rebuild_packs", source)
-        self.assertNotIn('apiPost("removed"', source)
-
-
 if __name__ == "__main__":
     unittest.main()

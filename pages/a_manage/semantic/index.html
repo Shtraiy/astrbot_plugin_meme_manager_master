@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>表情索引</title>
-    <link rel="stylesheet" href="./style.css?v=20260817-remove-manage-1" />
+    <link rel="stylesheet" href="./style.css?v=20260817-transfer-1" />
   </head>
   <body>
     <header class="page-header">
@@ -13,10 +13,6 @@
         <h1>表情索引</h1>
         <p class="subtitle">按分类查看表情缩略图；全量语义重索引会扫描整个资源包，完整 v4 索引自动跳过，旧索引会重新识别。</p>
       </div>
-      <nav class="nav-actions" aria-label="页面导航">
-        <a href="../settings/index.html" data-nav-page="settings">设置中心</a>
-        <a href="../catalog/index.html" data-nav-page="catalog" data-nav-view="catalog">资源广场</a>
-      </nav>
     </header>
 
     <main class="layout">
@@ -24,6 +20,9 @@
         <label for="pack">资源包</label>
         <select id="pack" aria-label="选择资源包"></select>
         <button id="capture-refresh-button" type="button">刷新记录</button>
+        <button id="capture-export-button" type="button">导出当前资源包</button>
+        <button id="capture-import-button" type="button">导入资源包</button>
+        <input id="capture-import-file" type="file" accept=".zip" hidden />
         <div class="reindex-control">
           <button id="capture-reindex-button" type="button">全量语义重索引</button>
         </div>
@@ -41,6 +40,31 @@
         <button id="capture-ignore-all-button" type="button" disabled>
           一键忽略全部待处理和待忽略
         </button>
+      </section>
+
+      <section id="capture-transfer-panel" class="transfer-panel panel" aria-live="polite">
+        <div class="transfer-export-row">
+          <label class="transfer-option">
+            <input id="capture-export-backup" type="checkbox" disabled />
+            <span>带向量自用备份</span>
+          </label>
+          <p id="capture-export-hint" class="transfer-hint"></p>
+        </div>
+        <div id="capture-import-preview" class="transfer-import-preview" hidden>
+          <p id="capture-import-preview-name" class="transfer-hint"></p>
+          <p id="capture-import-preview-meta" class="transfer-hint"></p>
+          <label class="transfer-option">
+            <input id="capture-import-set-default" type="checkbox" />
+            <span>导入后设为默认</span>
+          </label>
+          <div class="transfer-actions">
+            <button id="capture-import-confirm-button" type="button" class="primary">
+              确认导入
+            </button>
+            <button id="capture-import-cancel-button" type="button">取消</button>
+          </div>
+        </div>
+        <p id="capture-transfer-message" class="transfer-message"></p>
       </section>
 
       <div class="capture-progress-row">
@@ -127,6 +151,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260817-remove-manage-1"></script>
+    <script type="module" src="./script.js?v=20260817-transfer-1"></script>
   </body>
 </html>

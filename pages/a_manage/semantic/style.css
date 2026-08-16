@@ -125,3 +125,12 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 .v4-health-metrics button.active, .v4-health-metrics button[aria-pressed="true"] { border-color: #2f80ed; background: #edf5ff; box-shadow: 0 6px 16px rgba(47, 128, 237, .14); }
 .v4-health-metrics button:focus-visible { outline: 3px solid rgba(47, 128, 237, .45); outline-offset: 2px; }
 @media (max-width: 760px) { .v4-health { grid-template-columns: auto 1fr; gap: 14px; } .v4-health-metrics { grid-column: 1 / -1; } }
+.transfer-panel { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.transfer-export-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.transfer-option { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
+.transfer-hint { margin: 0; color: #607381; font-size: 13px; line-height: 1.5; }
+.transfer-import-preview { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid #d7e8dd; border-radius: 10px; background: #f4fbf7; }
+.transfer-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.transfer-message { margin: 0; font-size: 13px; }
+.transfer-message.success { color: #1f7a4d; }
+.transfer-message.error { color: #c0392b; }
