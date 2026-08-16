@@ -17,6 +17,7 @@
 - 修复全量语义重索引占用整包处置锁的问题；模型请求期间删除/忽略可立即执行，提交时会校验最新文件指纹并避免旧结果复活已处置图片。
 - 收紧自动偷取和 `/偷取` 的视觉筛选：截图、聊天截图、网页/UI、文档、海报、普通照片和低置信度结果默认拒绝。
 - 收紧表情包偷取识别：视觉模型必须输出 0–100 的 meme_score，低于 70 或属于普通照片、截图、信息图等非表情包图片时直接拒绝保存。
+- 统一插件清单与运行时注册版本为 v2.1.7，避免 AstrBot WebUI 显示或更新检测使用旧版本号。
 
 ### 变更
 
@@ -28,7 +29,7 @@
 ### 验证
 
 - 捕获工作台 API、双页面契约/运行时、全量重索引和偷取筛选专项回归：通过。
-- `python -m unittest discover -s tests -v`：运行 359 项，1 项既有兼容性用例跳过。
+- `python -m unittest discover -s tests -v`：运行 366 项，1 项既有兼容性用例跳过。
 - `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 和 `git diff --check`：通过。
 - 自动化页面回归已覆盖删除后补齐、页码回退、跨页选择、部分失败保留与缩略图缓存边界/失效；当前环境无法访问局域网 AstrBot WebUI，长页面滚动与真实浏览器交互仍需人工复核。
 

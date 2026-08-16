@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-08-16",
+    "mode": "Health Dashboard",
+    "score": 92,
+    "findings": {
+      "critical": 0,
+      "warning": 1,
+      "suggestion": 3
+    },
+    "scope": "full repository"
+  }
+]

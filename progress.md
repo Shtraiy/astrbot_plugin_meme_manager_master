@@ -191,3 +191,30 @@
 | What's the goal? | 用稳定主分类隔离候选，并让模型看到图片文字及其语义 |
 | What have I learned? | 当前 28 个标签全部进入 tag index，辅助标签会污染自动路由 |
 | What have I done? | 完成主分类、语义索引、主分类选图、版本日志和全量单元测试 |
+
+## Session: 2026-08-16 — Project Metadata and Release Audit
+
+### Phase 1: Inventory and health diagnosis
+- **Status:** complete
+- Actions taken:
+  - Loaded Brooks-Lint health, planning-with-files, and writing-plans instructions.
+  - Confirmed `metadata.yaml` v2.1.7 versus `main.py` registration v2.1.0.
+  - Confirmed both semantic WebUI page copies contain the current indexing controls and cache-busting parameters.
+  - Restored the pre-existing planning files after an attempted template initialization would have overwritten them.
+- Files created/modified:
+  - `task_plan.md` (updated)
+  - `findings.md` (updated)
+  - `progress.md` (updated)
+
+### Error Log Addendum
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-08-16 | Existing tracked planning files were initially overwritten by template content | 1 | Recovered each file from `HEAD` and appended the current audit section using `apply_patch` |
+
+### Audit Completion — 2026-08-16
+- **Status:** complete。
+- **Metadata:** `main.py @register` 已从 2.1.0 对齐到 `metadata.yaml` 的 v2.1.7；README 和 `metadata.yaml` 本身无需改动。
+- **Regression coverage:** `tests/test_release_metadata.py` 新增运行时注册版本与 manifest 一致性测试；先验证失败，再修复后通过。
+- **Release log:** `CHANGELOG.md` 记录版本一致性修复，并将全量测试数更新为 366。
+- **Health dashboard:** 92/100；0 critical、1 warning、3 suggestions。主要开放建议是继续拆分大型编排模块，降低双 WebUI 副本和兼容 facade 的维护成本，并清理测试中的异步 ResourceWarning。
+- **Verification:** 全量 unittest 366 项通过、1 项跳过（10.251 秒）；compileall、schema、architecture、12 个 JavaScript 文件和 `git diff --check` 均通过。测试输出包含一个非失败的既有 asyncio ResourceWarning，以及一个用于诊断路径的预期 provider 超时堆栈。

@@ -4,10 +4,10 @@
 将当前多标签平铺的表情包索引重构为少量稳定主分类 + 辅助语义信息，并把手动重索引升级为可幂等跳过 v4 条目、增量修复旧条目的全量语义检查，发布 v2.1.6。
 
 ## Next Step
-完成交付前静态检查、提交本地变更，并等待用户决定是否推送远端。
+完成全项目健康审查，修正元数据/注册版本不一致，并同步发布日志后运行全量验证。
 
 ## Current Phase
-Phase 5
+Phase 6
 
 ## Phases
 
@@ -87,6 +87,22 @@ Phase 5
 | 读取仓库内 `data/.../builtin-default/memes_data.json` 失败 | 1 | 当前 pack 使用 flat `memes/index.json`，继续依据实际代码追踪 |
 | 只读代码审查代理在多次 30 秒等待后仍未返回 | 1 | 关闭审查代理；以本地完整测试、编译和 diff 检查作为最终证据，并在交付中明确说明 |
 | Git 暂存首次因 `.git/index.lock` 权限被拒绝 | 1 | 使用受限 Git 权限仅暂存并提交设计文档，未包含代码改动 |
+| 审查计划文件已存在却被模板初始化覆盖 | 1 | 从 `HEAD` 读取并恢复原文件，再追加本次审查记录 |
 
 ## Notes
 - 遵循系统调试流程：先复现/追踪根因，再写失败测试和修复。
+
+## Addendum: 2026-08-16 — Project Metadata and Release Audit
+
+### Phase 6: Requirements & Discovery
+- [x] 对全项目运行健康审查并记录 R/T 风险
+- [x] 对齐 `metadata.yaml` 与 `main.py @register` 版本
+- [x] 更新 CHANGELOG/发布元数据并补充一致性测试（README 与 metadata.yaml 已是当前版本，无需改动）
+- [x] 完成全量验证并交付审查报告
+- **Status:** complete
+
+### Phase 6 Results
+- 修复运行时注册版本 2.1.0 与 manifest v2.1.7 不一致的问题。
+- 新增版本一致性回归测试，并记录在 CHANGELOG。
+- Brooks 健康评分：92/100（0 critical、1 warning、3 suggestions）。
+- 全量验证：366 项通过、1 项跳过；compileall、schema、architecture、12 个 JavaScript 文件和 diff 检查通过。

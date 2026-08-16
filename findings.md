@@ -37,6 +37,76 @@
 ## Visual/Browser Findings
 - 无。
 
+## Project Metadata and Release Audit — 2026-08-16
+
+### Requirements
+
+- 审查整个仓库的架构、技术债、测试质量和当前发布面。
+- 更新实际会影响安装/版本展示的元数据不一致。
+- 更新 README 与 CHANGELOG，使当前 v4 索引、选择索引、忽略全部和严格偷取评分门槛有明确记录。
+
+### Confirmed Findings
+
+- `metadata.yaml` declares `version: v2.1.7`.
+- The initial audit found that `main.py` passed `"2.1.0"` to AstrBot's `@register` decorator; this was corrected to 2.1.7.
+- `origin/main` points to the current local release commit `600b292`.
+- The semantic pages exist in both `pages/semantic/` and `pages/a_manage/semantic/`; both contain the current selection-index, ignore-all, v4 reindex and cache-busting contracts.
+- The repository contains 62 test modules and uses `unittest`/`IsolatedAsyncioTestCase`; the current full suite completes in 10.251 seconds.
+
+### Health Review Evidence
+
+| Dimension | Evidence | Status |
+|-----------|---------------------|----------------|
+| Code Quality | Runtime registration now matches `metadata.yaml`; dedicated regression test passes | complete |
+| Architecture | `check_architecture.py` passes; large orchestration modules remain a maintainability risk | warning |
+| Tech Debt | Dual semantic page copies and compatibility facades remain intentional maintenance surfaces | suggestion |
+| Test Quality | 366 tests pass, 1 is skipped, full suite completes in 10.251 seconds; one non-failing asyncio `ResourceWarning` is emitted | suggestion |
+
+### Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Use `metadata.yaml` v2.1.7 as the release baseline and align `@register` | It is the checked-in plugin manifest and the current published release metadata. |
+| Add a regression test for version consistency | Prevents the same installation/update ambiguity from returning silently. |
+
+### Health Dashboard — 2026-08-16
+
+Score: **92/100** using the balanced Brooks-Lint baseline (0 critical, 1 warning, 3 suggestions).
+
+```mermaid
+graph TD
+  Main["main.py / AstrBot entry"] --> Capture["capture.py"]
+  Main --> Manager["manager_base.py"]
+  Capture --> Collector["collector.py"]
+  Capture --> Pipeline["capture_pipeline.py"]
+  Capture --> Storage["storage.py"]
+  Manager --> WebApi["mixins/web_api.py"]
+  WebApi --> CaptureApi["mixins/capture_index_api.py"]
+  WebApi --> PackApi["mixins/pack_api.py"]
+  WebApi --> EmojiApi["mixins/emoji_api.py"]
+  WebApi --> PackStorage["backend/pack_storage.py"]
+  CaptureApi --> Indexing["indexing.py"]
+  CaptureApi --> Storage
+  Selection["meme_selection.py"] --> SelectionState["infrastructure/selection_state.py"]
+  Selection --> Storage
+  WebUI["pages/semantic + pages/a_manage/semantic"] --> WebApi
+```
+
+#### Open Findings
+
+| ID | Symptom → Source → Consequence | Remedy | Severity |
+|----|--------------------------------|--------|----------|
+| A1 | Large orchestration modules (`capture.py`, `backend/semantic_storage.py`, `backend/pack_storage.py`) concentrate many responsibilities and long functions → future changes require broad regression coverage | Continue extracting provider gateways, catalog workflows and transport adapters behind existing ports; keep architecture guard green | Warning |
+| D1 | The semantic WebUI is maintained in two page copies → UI contract changes must be mirrored | Keep the parity tests; consider generating the second surface from a shared template when the page contract stabilizes | Suggestion |
+| D2 | Compatibility facades and legacy storage paths remain in the runtime → cleanup and behavior ownership are less obvious | Retire facades only after downstream compatibility is measured and migration coverage is retained | Suggestion |
+| T1 | The full suite emits a non-failing ProactorEventLoop `ResourceWarning`; one semantic diagnostic test also prints an intentional provider-timeout traceback → test output is noisier and async cleanup is less explicit | Close test-created loops/tasks explicitly and keep expected provider failures isolated from normal test output | Suggestion |
+
+#### Resolved Finding
+
+- **M1:** `metadata.yaml`/README declared v2.1.7 while `main.py @register` declared 2.1.0. The runtime value is now 2.1.7 and `tests/test_release_metadata.py` prevents regression.
+
+The dashboard is based on the repository-wide inventory and current verification commands; the dependency graph is intentionally a high-level map of the main runtime paths.
+
 ## Refactor Results — 2026-08-15
 
 - `backend/tagging.py` 新增 12 个 `PRIMARY_CATEGORIES`，主分类与旧 28 标签体系分离；`semantic_tags` 最多保留 2 个，不参与自动路由。
