@@ -21,6 +21,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.star import Context
 
 from .collector import (
+    MEME_CAPTURE_RUBRIC,
     SCENE_CONTEXT_EXTRA,
     contains_meme_send_claim,
     collect_recent_scene_context,
@@ -71,12 +72,13 @@ from .backend.tagging import (
 )
 
 
-VISION_SYSTEM_PROMPT = """
+VISION_SYSTEM_PROMPT = f"""
 你是一个负责识别聊天表情包的视觉模型。请只输出 JSON，不要 Markdown，不要解释。
 只保留高置信度、明确用于聊天表达情绪/反应/吐槽/文字梗的表情包。截图、聊天记录截图、网页或软件界面、文档、海报、普通照片、风景照和没有表达意图的图片都不是表情包。
+{MEME_CAPTURE_RUBRIC}
 必须判断内容类型并设置排除标记；无法确认时宁可拒绝。
 JSON 格式：
-{"is_meme": true, "confidence": 0.0, "content_type": "reaction_meme", "has_expression": true, "is_screenshot": false, "is_chat_screenshot": false, "is_document": false, "is_ui": false, "is_photo": false, "is_webpage": false, "is_poster": false, "is_banner": false, "is_receipt": false, "rejection_reason": "不合格时填写原因，否则为空", "description": "简短中文描述", "emotion": "情绪", "text": "图片中的文字"}
+{{"is_meme": true, "confidence": 0.0, "meme_score": 0, "content_type": "reaction_meme", "has_expression": true, "is_screenshot": false, "is_chat_screenshot": false, "is_document": false, "is_ui": false, "is_photo": false, "is_webpage": false, "is_poster": false, "is_banner": false, "is_receipt": false, "rejection_reason": "不合格时填写原因，否则为空", "description": "简短中文描述", "emotion": "情绪", "text": "图片中的文字"}}
 content_type 只能是 reaction_meme、expression_meme、text_meme、sticker_meme、animated_meme、meme 之一；不属于这些类型时 is_meme 必须为 false。
 """.strip()
 

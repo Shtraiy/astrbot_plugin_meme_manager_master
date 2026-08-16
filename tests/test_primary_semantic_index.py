@@ -81,6 +81,12 @@ class PrimarySemanticIndexTests(unittest.TestCase):
             self.assertIn("is_ui", prompt)
             self.assertIn("rejection_reason", prompt)
             self.assertIn("高置信度", prompt)
+            self.assertIn("meme_score", prompt)
+            self.assertIn("0–100", prompt)
+            self.assertIn("普通照片", prompt)
+            self.assertIn("聊天记录截图", prompt)
+            self.assertIn("脱离原始场景", prompt)
+            self.assertIn("无法确认时宁可拒绝", prompt)
 
 
 if __name__ == "__main__":
