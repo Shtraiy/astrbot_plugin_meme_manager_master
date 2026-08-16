@@ -13,6 +13,7 @@ install_runtime_stubs()
 install_package_alias()
 
 from meme_manager_master.capture_pipeline import CapturePipeline  # noqa: E402
+from collector import should_skip_meme_result
 
 
 class _Config:
@@ -21,14 +22,24 @@ class _Config:
 
 
 class CapturePipelineTests(unittest.TestCase):
-    def _pipeline(self, *, store, payload, blacklist, events, calls):
+    def _pipeline(
+        self,
+        *,
+        store,
+        payload,
+        blacklist,
+        events,
+        calls,
+        vision=None,
+        should_skip=None,
+    ):
         async def loader(_source: str):
             calls["loader"] += 1
             return payload
 
         async def recognize(_event, _temp_path, _message_text):
             calls["recognize"] += 1
-            return {"description": "描述", "emotion": "开心", "text": "", "tags": []}
+            return vision or {"description": "描述", "emotion": "开心", "text": "", "tags": []}
 
         async def classify(_event, _vision, _categories, _message_text, _message_outline):
             calls["classify"] += 1
@@ -44,7 +55,7 @@ class CapturePipelineTests(unittest.TestCase):
             loader=loader,
             recognize_single=recognize,
             classify_single=classify,
-            should_skip=lambda _vision: False,
+            should_skip=should_skip or (lambda _vision: False),
             catalog_entry_builder=lambda path, category, vision, scene: {
                 "filename": path.name,
                 "description": vision.get("description", ""),
@@ -55,6 +66,36 @@ class CapturePipelineTests(unittest.TestCase):
             bind_saved_result=lambda _event, _path: None,
             capture_blacklist=blacklist,
         )
+
+    def test_low_score_capture_is_not_saved_or_recorded(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as temporary:
+                store = MemeStore(Path(temporary) / "pack")
+                payload = SimpleNamespace(content=b"low-score-image", extension=".png")
+                events = []
+                vision = {
+                    "is_meme": True,
+                    "confidence": 0.99,
+                    "meme_score": 69,
+                    "content_type": "reaction_meme",
+                    "has_expression": True,
+                }
+                pipeline = self._pipeline(
+                    store=store,
+                    payload=payload,
+                    blacklist=None,
+                    events=events,
+                    calls={"loader": 0, "recognize": 0, "classify": 0},
+                    vision=vision,
+                    should_skip=should_skip_meme_result,
+                )
+                statuses = await pipeline.process_batch(None, ["source"], "message", "outline")
+                return statuses, events, store.image_paths()
+
+        statuses, events, images = asyncio.run(run())
+        self.assertEqual(statuses, ["not_meme"])
+        self.assertEqual(events, [])
+        self.assertEqual(images, [])
 
     def test_blacklisted_payload_is_rejected_before_temp_file_and_models(self):
         async def run():

@@ -41,6 +41,7 @@ _CAPTURE_REJECTED_CONTENT_TYPES = {
     "banner",
     "conversation",
 }
+MEME_SCORE_THRESHOLD = 70.0
 
 
 def filter_reply_hook_available(event) -> bool:
@@ -243,6 +244,19 @@ def vision_failure_result() -> dict[str, Any]:
     }
 
 
+def normalize_meme_score(value: Any) -> float | None:
+    """Normalize a model-provided meme score, failing closed on bad values."""
+    if isinstance(value, bool):
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(score) or not 0.0 <= score <= 100.0:
+        return None
+    return score
+
+
 def should_skip_meme_result(
     vision: Any,
     rejection_confidence: float = 0.7,
@@ -270,6 +284,10 @@ def should_skip_meme_result(
     except (TypeError, ValueError):
         return True
     if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        return True
+
+    meme_score = normalize_meme_score(vision.get("meme_score"))
+    if meme_score is None or meme_score < MEME_SCORE_THRESHOLD:
         return True
 
     if not is_meme or confidence < rejection_confidence:
