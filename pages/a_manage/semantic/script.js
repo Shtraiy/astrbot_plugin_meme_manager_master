@@ -4,6 +4,7 @@ async function initCaptureIndexPage() {
   const notice = document.querySelector("#notice");
   const summary = document.querySelector("#capture-summary");
   const v4Health = document.querySelector("#capture-v4-health");
+  const v4HealthRing = document.querySelector("#capture-v4-health .v4-health-ring");
   const v4RingValue = document.querySelector("#capture-v4-ring-value");
   const v4HealthHeading = document.querySelector("#capture-v4-health-heading");
   const v4HealthMessage = document.querySelector("#capture-v4-health-message");
@@ -167,7 +168,7 @@ async function initCaptureIndexPage() {
   }
 
   function renderV4Health(v4 = {}) {
-    if (!v4Health) return;
+    if (!v4Health || !v4HealthRing) return;
     const completion = v4.completion_percent == null
       ? null
       : Math.min(Math.max(Number(v4.completion_percent), 0), 100);
@@ -179,7 +180,7 @@ async function initCaptureIndexPage() {
     };
     const [heading, message] = labels[status] || labels.partial;
     v4Health.dataset.status = status;
-    v4Health.style.setProperty("--v4-completion", `${completion ?? 0}%`);
+    v4HealthRing.style.setProperty("--v4-completion", `${completion ?? 0}%`);
     v4RingValue.textContent = completion == null ? "—" : `${completion}%`;
     v4HealthHeading.textContent = heading;
     v4HealthMessage.textContent = message;

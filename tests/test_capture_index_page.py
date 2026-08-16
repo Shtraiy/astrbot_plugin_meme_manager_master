@@ -300,6 +300,8 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("currentV4Filter", script)
             self.assertIn("params.v4_status = currentV4Filter", script)
             self.assertIn("button.dataset.v4Filter", script)
+            self.assertIn('v4HealthRing.style.setProperty("--v4-completion"', script)
+            self.assertNotIn('v4Health.style.setProperty("--v4-completion"', script)
             self.assertNotIn("summary.innerHTML", script)
 
 
