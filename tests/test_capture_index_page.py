@@ -213,12 +213,12 @@ class CaptureIndexPageTests(unittest.TestCase):
 
     def test_interaction_assets_use_a_fresh_cache_busting_version(self):
         expected_script_versions = {
-            ROOT / "pages" / "semantic": "20260815-capture-workspace-1",
-            ROOT / "pages" / "a_manage" / "semantic": "20260815-capture-workspace-1",
+            ROOT / "pages" / "semantic": "20260816-v4-health-1",
+            ROOT / "pages" / "a_manage" / "semantic": "20260816-v4-health-1",
         }
         for page_dir, script_version in expected_script_versions.items():
             source = (page_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn('style.css?v=20260812-unified-disposal-1', source)
+            self.assertIn('style.css?v=20260816-v4-health-1', source)
             self.assertIn(f'script.js?v={script_version}', source)
             self.assertNotIn("20260803-", source)
 
@@ -234,7 +234,7 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("evictThumbnailFile", script)
             self.assertIn('if (item.kind !== "duplicate")', script)
             self.assertIn('size: "original"', script)
-            self.assertIn('script.js?v=20260815-capture-workspace-1', source)
+            self.assertIn('script.js?v=20260816-v4-health-1', source)
 
     def test_delete_control_is_a_corner_icon_with_success_feedback(self):
         for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
