@@ -218,3 +218,23 @@
 - **Release log:** `CHANGELOG.md` 记录版本一致性修复，并将全量测试数更新为 366。
 - **Health dashboard:** 92/100；0 critical、1 warning、3 suggestions。主要开放建议是继续拆分大型编排模块，降低双 WebUI 副本和兼容 facade 的维护成本，并清理测试中的异步 ResourceWarning。
 - **Verification:** 全量 unittest 366 项通过、1 项跳过（10.251 秒）；compileall、schema、architecture、12 个 JavaScript 文件和 `git diff --check` 均通过。测试输出包含一个非失败的既有 asyncio ResourceWarning，以及一个用于诊断路径的预期 provider 超时堆栈。
+
+## Session: 2026-08-16 — v4 Health Workspace Implementation
+
+### Implementation Results
+- 后端 `capture/workspace` 新增 `summary.v4`：完整、需重建、待分类、重复、已检查总数、完整率和整体状态；支持 `v4_status` 筛选。
+- 两份索引页面加入 v4 健康卡片和状态气泡；数字使用等宽数字与居中布局，状态按钮提供键盘焦点和 `aria-pressed` 反馈。
+- 前端保留旧缩略图卡片、分类气泡、分页、选择索引、忽略全部和删除/忽略操作；旧摘要节点隐藏保留，避免兼容运行时断裂。
+- 页面资源缓存版本升级到 `20260816-v4-health-1`，清单和运行时注册版本升级为 v2.1.8。
+
+### Verification
+- `python -m unittest discover -s tests -v`：369 项通过，1 项跳过，11.114 秒。
+- `python -m compileall -q .`：通过。
+- `python scripts/generate_conf_schema.py --check`：schema is in sync。
+- `python scripts/check_architecture.py`：architecture checks passed。
+- 所有 `pages/**/*.js`：`node --check` 通过；`git diff --check` 通过，仅有 Git 的 LF/CRLF 提示。
+- 测试输出仍包含一个既有非失败的 asyncio `ResourceWarning` 和一个预期 provider 超时诊断堆栈。
+
+### Delivery
+- 本地提交：`eca68f3`、`df9b659`、`911888e`、`66e7642`。
+- 当前分支为 `main`，未执行推送；待用户另行授权后再处理远端。

@@ -139,3 +139,22 @@ The dashboard is based on the repository-wide inventory and current verification
 - `_run_reindex_task` 必须单独处理 `asyncio.CancelledError`，写入 paused 状态后再继续抛出取消信号，避免把正常关闭误记录为完成或错误。
 - `reindex_flat_catalog` 的旧 SHA 必须绑定在每个 source entry 上；循环外变量会把最后一张图片的 SHA 写到其他条目，造成错误重识别。
 - 页面回到 WebUI 后除了恢复轮询，还必须恢复 `managed_pack_id`，否则多资源包场景会对错误资源包请求状态，看起来像任务消失。
+
+## V4 Health Workspace Findings — 2026-08-16
+
+### Root cause
+- 实际生产页面的 `renderWorkspace()` 仍只绘制旧的“已索引/待分类/重复/完成标签”四格摘要；此前看到的 v4 卡片属于预览，不是 AstrBot 实际加载的 `pages/semantic` 页面源代码。
+
+### Decisions
+- 将 v4 健康卡片直接嵌入现有捕获工作区，保留原缩略图卡片和所有处置交互。
+- `summary.v4` 以资源包全量统计为准，分页只影响卡片列表；`v4_status` 只筛选列表，不改变健康卡片的总数。
+- 旧 `capture-summary` 节点隐藏保留，兼容现有运行时测试与外部页面装配，不再作为可见主摘要。
+- 两份页面继续保持同步，并通过页面结构/运行时契约测试防止再次出现“预览与生产源不一致”。
+
+### Risk notes
+- 语义页面仍有两份维护副本；当前以同步提交和契约测试降低漂移风险，后续可考虑共享模板生成。
+- 全量测试仍有既有 asyncio 资源警告与预期超时诊断输出，但均不影响测试结果。
+
+### Evidence
+- v4 API 专项测试覆盖完整、需重建、待分类、重复和状态筛选。
+- 双页面契约、Node 语法、运行时缩略图回归、369 项全量测试、compile/schema/architecture/diff 门禁均通过。

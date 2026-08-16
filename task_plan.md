@@ -106,3 +106,19 @@ Phase 6
 - 新增版本一致性回归测试，并记录在 CHANGELOG。
 - Brooks 健康评分：92/100（0 critical、1 warning、3 suggestions）。
 - 全量验证：366 项通过、1 项跳过；compileall、schema、architecture、12 个 JavaScript 文件和 diff 检查通过。
+
+## Addendum: 2026-08-16 — v4 Health Workspace
+
+### Phase 7: Implementation and delivery
+- [x] 暴露 `summary.v4` 与 `v4_status` 工作区 API 契约
+- [x] 在两份索引页面加入 v4 环形完整率、状态气泡和响应式布局
+- [x] 接入状态筛选，同时保留缩略图预览、分类气泡、分页和处置操作
+- [x] 对齐 v2.1.8 清单、运行时注册、README、CHANGELOG 和页面缓存版本
+- [x] 完成 369 项测试通过、1 项跳过及 compile/schema/architecture/Node/diff 门禁
+- **Status:** complete；已创建本地提交，未推送远端
+
+### Local commits
+- `eca68f3` — `feat: expose v4 workspace health summary`
+- `df9b659` — `feat: add v4 health panel to capture workspace`
+- `911888e` — `feat: connect v4 health filters to capture workspace`
+- `66e7642` — `chore: release v2.1.8 v4 health workspace`
