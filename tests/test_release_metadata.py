@@ -7,20 +7,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseMetadataTests(unittest.TestCase):
-    def test_release_is_v218_and_mentions_v4_health_workspace(self):
+    def test_release_is_v220_and_mentions_removed_manage_page(self):
         metadata = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: v2.1.8", metadata)
-        self.assertIn("version-v2.1.8", readme)
-        self.assertIn("## [v2.1.8] - 2026-08-16", changelog)
-        self.assertIn("全量语义重索引", changelog)
-        self.assertIn("完整 v4", changelog)
-        self.assertIn("v4 健康面板", changelog)
-        self.assertIn("选择索引", changelog)
-        self.assertIn("full_reindex_status", changelog)
-        self.assertIn("检查点", changelog)
+        self.assertIn("version: v2.2.0", metadata)
+        self.assertIn("version-v2.2.0", readme)
+        self.assertIn("## [v2.2.0] - 2026-08-17", changelog)
+        self.assertIn("移除表情包管理 WebUI 页面", changelog)
+        self.assertIn("入口即表情索引", readme)
         self.assertNotIn("## [Unreleased]", changelog)
 
     def test_runtime_registration_version_matches_manifest(self):

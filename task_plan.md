@@ -122,3 +122,18 @@ Phase 6
 - `df9b659` — `feat: add v4 health panel to capture workspace`
 - `911888e` — `feat: connect v4 health filters to capture workspace`
 - `66e7642` — `chore: release v2.1.8 v4 health workspace`
+
+## Addendum: 2026-08-17 — 移除表情包管理页面与死接口
+
+### Goal
+将 WebUI 收敛为表情索引、设置中心、资源广场三页，删除表情包管理页及其专用后端 API 与顶层旧版页面副本，入口改为直接进入表情索引。
+
+### 状态
+
+- [x] 设计文档与实施计划
+- [x] 路由/页面测试先行（红 → 绿）
+- [x] 后端路由与 handler 删除
+- [x] 前端页面与旧版副本删除
+- [x] README / CHANGELOG / 版本（v2.2.0）
+- [x] 全量验证门禁
+- [ ] 本地 git 提交（需用户批准）

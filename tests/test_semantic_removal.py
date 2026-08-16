@@ -42,42 +42,12 @@ class SemanticRemovalTests(unittest.TestCase):
             any(path == "meme_image_semantic" or path.startswith("semantic/") for path in paths)
         )
 
-    def test_manage_page_has_no_semantic_controls(self):
-        html = (ROOT / "pages" / "a_manage" / "index.html").read_text(encoding="utf-8")
-        self.assertNotIn("pack-semantic-status", html)
-        self.assertNotIn("rebuild-pack-vectors-btn", html)
-
-    def test_manage_page_has_no_stale_semantic_preview_markup(self):
-        html = (ROOT / "pages" / "a_manage" / "index.html").read_text(encoding="utf-8")
-        self.assertNotIn("image-preview-semantic", html)
-        self.assertNotIn("image-preview-edit-form", html)
-        self.assertNotIn("image-preview-save-vector-btn", html)
-
-    def test_manage_scripts_do_not_call_semantic_endpoints(self):
-        paths = ("emoji.js", "pack.js", "script.js")
-        source = "\n".join(
-            (ROOT / "pages" / "a_manage" / path).read_text(encoding="utf-8")
-            for path in paths
-        )
-        self.assertNotIn("semantic/", source)
-
-    def test_manage_scripts_have_no_removed_semantic_placeholders(self):
-        source = "\n".join(
-            (ROOT / "pages" / "a_manage" / path).read_text(encoding="utf-8")
-            for path in ("emoji.js", "pack.js", "script.js")
-        )
-        self.assertNotIn("功能已移除", source)
-        self.assertNotIn('apiGet("removed"', source)
-        self.assertNotIn('apiPost("removed"', source)
-
     def test_settings_scripts_have_no_unreachable_semantic_rebuild_logic(self):
-        for script_path in (
-            ROOT / "pages" / "settings" / "script.js",
-            ROOT / "pages" / "a_manage" / "settings" / "script.js",
-        ):
-            source = script_path.read_text(encoding="utf-8")
-            self.assertNotIn("semantic_rebuild_packs", source)
-            self.assertNotIn('apiPost("removed"', source)
+        source = (ROOT / "pages" / "a_manage" / "settings" / "script.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("semantic_rebuild_packs", source)
+        self.assertNotIn('apiPost("removed"', source)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ async function initCatalogPage() {
     "https://raw.githubusercontent.com/anka-afk/astrbot-meme-pack-index/main/community-index.json";
 
   function applySecureNavLinks() {
-    const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
+    const allowedPages = new Set(["catalog", "settings", "semantic"]);
     const currentParams = new URLSearchParams(window.location.search);
     document.querySelectorAll("a[data-nav-page]").forEach((link) => {
       const pageName = link.getAttribute("data-nav-page");

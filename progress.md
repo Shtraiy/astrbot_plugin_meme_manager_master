@@ -1,5 +1,20 @@
 # Progress Log
 
+## Session: 2026-08-17
+
+### 移除表情包管理页面与死接口
+
+- **Status:** 实现与全量验证完成；git 提交待用户批准。
+- 与用户确认三项决策：完全砍掉管理页能力（不合并到索引页）、后端死接口一并删除、
+  顶层旧版页面副本一并删除。
+- 按 brainstorming → writing-plans → executing-plans 流程实施，测试先行。
+- 删除 `pages/a_manage/` 管理页专属前端（`index.html`、`api.js`、`state.js`、
+  `dialogs.js`、`emoji.js`、`pack.js`、`script.js`、样式与字体）。
+- 删除顶层旧版副本 `pages/semantic/`、`pages/settings/`、`pages/catalog/`。
+- 删除 22 条 Web 路由及对应 handler，保留共享接口与底层后端函数。
+- 入口重定向改为 `/#/plugin-page/meme_manager_master/a_manage/semantic`。
+- 更新 README、CHANGELOG、版本号至 v2.2.0。
+
 ## Session: 2026-08-15
 
 ### Phase 1: Requirements & Discovery

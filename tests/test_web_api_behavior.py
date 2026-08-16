@@ -56,7 +56,6 @@ def _install_web_stubs() -> None:
 _install_web_stubs()
 
 from meme_manager_master.mixins.web_api import WebAPIMixin  # noqa: E402
-from meme_manager_master.mixins import emoji_api  # noqa: E402
 from meme_manager_master.mixins import pack_api  # noqa: E402
 from meme_manager_master.mixins import web_api  # noqa: E402
 
@@ -220,36 +219,6 @@ class WebApiBehaviorTests(unittest.TestCase):
         self.assertNotIn("archive_path", result)
         self.assertEqual(result["archive_filename"], "backup.zip")
 
-    def test_invalid_webui_upload_returns_bad_request(self):
-        from quart import request
-
-        class AwaitableFiles(dict):
-            def __await__(self):
-                async def resolve():
-                    return self
-
-                return resolve().__await__()
-
-        request.files = AwaitableFiles(
-            {"file": types.SimpleNamespace(filename="fake.png")}
-        )
-        instance = WebAPIMixin.__new__(WebAPIMixin)
-        instance.category_manager = types.SimpleNamespace(sync_with_filesystem=lambda: None)
-
-        async def run_mutation(_operation, mutate):
-            return mutate()
-
-        instance._run_default_pack_mutation = run_mutation
-        original = emoji_api.add_emoji_to_category
-        emoji_api.add_emoji_to_category = lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            ValueError("上传文件不是有效图片")
-        )
-        try:
-            _payload, status = asyncio_run(instance._api_add_emoji("happy"))
-        finally:
-            emoji_api.add_emoji_to_category = original
-        self.assertEqual(status, 400)
-
     def test_community_routes_use_composition_root_service(self):
         class Community:
             def fetch(self, **kwargs):
@@ -284,50 +253,11 @@ class WebApiBehaviorTests(unittest.TestCase):
         fetched, fetched_status = asyncio_run(instance._api_fetch_community_index())
         cached, cached_status = asyncio_run(instance._api_get_cached_community_index())
         installed, install_status = asyncio_run(instance._api_install_community_pack())
-        request.get_json = lambda: _async_value({"set_as_default": True})
-        official, official_status = asyncio_run(instance._api_install_official_first_pack())
 
-        self.assertEqual((fetched_status, cached_status, install_status, official_status), (200, 200, 200, 200))
+        self.assertEqual((fetched_status, cached_status, install_status), (200, 200, 200))
         self.assertEqual(fetched["source_url"], web_api.COMMUNITY_INDEX_URL)
         self.assertEqual(cached["fetched_at"], "cached")
         self.assertEqual(installed["pack_id"], "demo")
-        self.assertEqual(official["pack_id"], "official-demo")
-
-    def test_get_emojis_without_managed_pack_does_not_raise_binding_error(self):
-        from quart import request
-
-        async def scan_default_folder():
-            return {"happy": ["smile.png"]}
-
-        original_scan = emoji_api.scan_emoji_folder
-        emoji_api.scan_emoji_folder = scan_default_folder
-        try:
-            request.args = {}
-            instance = WebAPIMixin.__new__(WebAPIMixin)
-            payload = asyncio_run(instance._api_get_emojis())
-        finally:
-            emoji_api.scan_emoji_folder = original_scan
-
-        self.assertEqual(payload, {"happy": ["smile.png"]})
-
-    def test_get_emojis_from_managed_pack_returns_images(self):
-        from quart import request
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            pack_dir = Path(temp_dir) / "demo"
-            category_dir = pack_dir / "memes" / "happy"
-            category_dir.mkdir(parents=True)
-            (category_dir / "smile.png").write_bytes(b"image")
-            request.args = {"managed_pack_id": "demo"}
-            instance = WebAPIMixin.__new__(WebAPIMixin)
-            with patch.object(web_api, "PACKS_DIR", Path(temp_dir)):
-                payload = asyncio_run(instance._api_get_emojis())
-
-        self.assertEqual(len(payload), 1)
-        tag, filenames = next(iter(payload.items()))
-        self.assertEqual(tag, "开心")
-        self.assertEqual(len(filenames), 1)
-        self.assertTrue(filenames[0].startswith("meme_"))
 
     def _make_instance(self, memes_root: Path) -> WebAPIMixin:
         instance = WebAPIMixin.__new__(WebAPIMixin)
@@ -341,26 +271,6 @@ class WebApiBehaviorTests(unittest.TestCase):
             name and Path(name).name == name and name not in {".", ".."}
         )
         return instance
-
-    def test_invalid_category_returns_400(self):
-        from quart import request
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            instance = self._make_instance(Path(temp_dir))
-            request.args = {"category": "../outside", "filename": "a.png"}
-            payload, status = asyncio_run(instance._api_serve_meme_image())
-            self.assertEqual(status, 400)
-            self.assertIn("message", payload)
-
-    def test_missing_file_returns_404(self):
-        from quart import request
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            instance = self._make_instance(Path(temp_dir))
-            request.args = {"category": "happy", "filename": "ghost.png"}
-            payload, status = asyncio_run(instance._api_serve_meme_image())
-            self.assertEqual(status, 404)
-            self.assertIn("message", payload)
 
     def test_image_data_rejects_missing_file_without_missing_helper_error(self):
         from quart import request
@@ -406,15 +316,6 @@ class WebApiBehaviorTests(unittest.TestCase):
             payload, status = asyncio_run(instance._api_get_meme_image_data())
             self.assertEqual(status, 413)
             self.assertNotIn(str(memes_root), str(payload))
-
-    def test_error_payload_does_not_leak_absolute_path(self):
-        from quart import request
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            instance = self._make_instance(Path(temp_dir))
-            request.args = {"category": "happy", "filename": "ghost.png"}
-            _payload, status = asyncio_run(instance._api_serve_meme_image())
-            self.assertEqual(status, 404)
 
     def test_guarded_runtime_pack_mutation_refreshes_active_capture_store(self):
         """Catch import, install, or restore succeeding while capture keeps an old pack."""
@@ -550,10 +451,6 @@ async def _cancel_guarded_operation(run_operation, operation):
     except asyncio.CancelledError:
         return True
     return False
-
-
-async def _async_value(value):
-    return value
 
 
 def asyncio_run(awaitable):

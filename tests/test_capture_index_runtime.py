@@ -1452,7 +1452,6 @@ async function runCrossPackReindexConfirmationScenario(scriptPath) {
 class CaptureIndexRuntimeTests(unittest.TestCase):
     def test_delete_and_reindex_runtime_states_for_both_page_copies(self):
         scripts = [
-            str(ROOT / "pages" / "semantic" / "script.js"),
             str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
         ]
         result = run_node_harness(NODE_RUNTIME_HARNESS, scripts)
@@ -1535,7 +1534,6 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
 
     def test_thumbnail_cache_boundaries_for_both_page_copies(self):
         scripts = [
-            str(ROOT / "pages" / "semantic" / "script.js"),
             str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
         ]
         result = run_node_harness(NODE_CACHE_BOUNDARY_HARNESS, scripts)
@@ -1551,7 +1549,6 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
 
     def test_thumbnail_cache_invalidation_for_both_page_copies(self):
         scripts = [
-            str(ROOT / "pages" / "semantic" / "script.js"),
             str(ROOT / "pages" / "a_manage" / "semantic" / "script.js"),
         ]
         result = run_node_harness(NODE_CACHE_INVALIDATION_HARNESS, scripts)

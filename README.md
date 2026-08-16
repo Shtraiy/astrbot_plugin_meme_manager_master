@@ -2,7 +2,7 @@
 
 # 表情包管理大师
 
-[![version](https://img.shields.io/badge/version-v2.1.8-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
+[![version](https://img.shields.io/badge/version-v2.2.0-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.5.7-orange.svg)](https://github.com/Soulter/AstrBot)
 
 **让表情包管理、收集与选图更简单**
@@ -15,8 +15,8 @@
 
 ## 📌 主要能力
 
-- 在 AstrBot WebUI 的插件页面直接打开“表情包管理大师”。
-- 按分类浏览、上传、删除、移动和批量管理图片。
+- 在 AstrBot WebUI 的插件页面直接打开“表情包管理大师”，入口即表情索引工作台。
+- 表情索引工作台按分类浏览缩略图、处置捕获图片并维护 v4 语义索引；手动上传、删除、移动与分类维护通过聊天命令完成。
 - 捕获索引工作台支持已整理与待处理表情的统一批量处置：已整理项删除并拉黑，普通待分类项忽略、删除并拉黑，重复项忽略并拉黑但保留已有图片。
 - 手动忽略或从索引工作台删除的图片会写入插件级精确 SHA-256 永久黑名单；后续自动收集会在识图前和保存前拦截，所有资源包共享。
 - 使用 pack 运行时保存表情包，支持默认包、导入导出和会话/人格选包规则。
@@ -31,9 +31,9 @@
 
 ## 🖥️ WebUI
 
-安装并启用插件后，在 AstrBot WebUI 的“插件”页面打开“表情包管理大师”。页面由插件 `pages/` 目录提供，后端 API 使用 AstrBot 的 `context.register_web_api` 注册，不需要额外端口。
+安装并启用插件后，在 AstrBot WebUI 的“插件”页面打开“表情包管理大师”，直接进入表情索引工作台。页面由插件 `pages/` 目录提供，后端 API 使用 AstrBot 的 `context.register_web_api` 注册，不需要额外端口。
 
-管理页面支持分类浏览、图片上传、图片预览、删除、移动、分类描述编辑和 pack 切换；表情索引页提供 v4 健康面板、状态气泡筛选、已整理区独立分页和跨页累积选择。普通管理页的删除行为不写入捕获黑名单。自动选图只按主分类建立候选集合，图片语义字段仅用于模型判断；旧目录无法无歧义推断主分类时会标记为 `needs_reindex`，需要点击“全量语义重索引”完成语义重建后才会进入自动发送候选。
+表情索引页提供 v4 健康面板、状态气泡筛选、已整理区独立分页和跨页累积选择，支持删除并拉黑、忽略、批量处置与全量语义重索引；设置中心提供选择规则与运行时备份，资源广场提供官方/社区表情包安装。手动上传、分类改名/描述编辑、默认包切换等操作由聊天命令提供。自动选图只按主分类建立候选集合，图片语义字段仅用于模型判断；旧目录无法无歧义推断主分类时会标记为 `needs_reindex`，需要点击“全量语义重索引”完成语义重建后才会进入自动发送候选。
 
 ## 📦 数据结构
 
@@ -77,7 +77,6 @@ python scripts/generate_conf_schema.py --check
 git diff --check
 ```
 
-WebUI 管理页脚本按依赖顺序拆分为 `state.js`、`api.js`、`dialogs.js`、
-`pack.js`、`emoji.js` 与入口 `script.js`，共享命名空间
-`window.MemeManagerUI`；本地用 `node --check pages/a_manage/*.js` 做语法
-检查，页面交互仍需在 AstrBot WebUI 中手动验证。
+WebUI 由 `pages/a_manage/` 下的表情索引、设置中心、资源广场三个自包含页面组成；
+本地对所有页面脚本运行 `node --check` 做语法检查，页面交互仍需在 AstrBot WebUI
+中手动验证。

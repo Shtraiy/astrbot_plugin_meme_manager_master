@@ -77,7 +77,7 @@ async function initCaptureIndexPage() {
   }
 
   await pageApi.ready();
-  const allowedPages = new Set(["a_manage", "catalog", "settings", "semantic"]);
+  const allowedPages = new Set(["catalog", "settings", "semantic"]);
   const currentParams = new URLSearchParams(window.location?.search || "");
   document.querySelectorAll("a[data-nav-page]").forEach((link) => {
     const pageName = link.getAttribute("data-nav-page");

@@ -2,6 +2,28 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
+## [v2.2.0] - 2026-08-17
+
+### 移除
+
+- 移除表情包管理 WebUI 页面及其专属前端资源（`pages/a_manage/` 下的管理页、`state.js`、`api.js`、`dialogs.js`、`emoji.js`、`pack.js`、`script.js` 与配套样式/字体）。
+- 移除顶层旧版页面副本 `pages/semantic/`、`pages/settings/`、`pages/catalog/`，页面只保留 `pages/a_manage/` 一套。
+- 移除只被管理页使用的 Web API：`emoji/*`、`emotions`、`category/*`、`sync/*`、`meme_image`、`packs/default`、`packs/uninstall`、`community/install_official_first`。
+- 移除对应 mixin handler（`EmojiAPIMixin` 仅保留图片预览接口）与相关回归测试；底层后端函数、聊天命令与共享接口全部保留。
+
+### 变更
+
+- WebUI 入口改为直接进入表情索引工作台；表情索引、设置中心、资源广场的导航不再包含管理页链接。
+- 手动上传、分类改名/描述编辑、默认包切换等操作改由聊天命令提供（`/添加表情`、`/查看图库`、`/恢复默认表情包`、`/清空指定类型`、`/图库统计`）。
+- 统一插件清单与运行时注册版本为 v2.2.0。
+- 三份页面资源缓存版本升级为 `20260817-remove-manage-1`。
+
+### 验证
+
+- `python -m unittest discover -s tests`：全量通过。
+- `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 与 `git diff --check`：通过。
+- 路由契约、页面导航、捕获索引页、pack 行为与语义移除专项回归：通过。
+
 ## [v2.1.8] - 2026-08-16
 
 ### 新增

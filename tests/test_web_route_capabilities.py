@@ -4,14 +4,39 @@ from mixins.web_routes import enabled_route_specs
 
 
 DEFAULT_CAPABILITIES = {"core", "catalog_index"}
+
+REMOVED_MANAGE_ROUTES = (
+    "emoji",
+    "emoji/<category>",
+    "emoji/add/<category>",
+    "emoji/delete",
+    "emoji/batch_delete",
+    "emoji/move",
+    "emoji/batch_move",
+    "emoji/batch_copy",
+    "emoji/clear_all",
+    "emotions",
+    "category/delete",
+    "category/clear",
+    "category/restore",
+    "category/rename",
+    "category/update_description",
+    "category/remove_from_config",
+    "sync/status",
+    "sync/config",
+    "meme_image",
+    "packs/default",
+    "packs/uninstall",
+    "community/install_official_first",
+)
+
+
 class WebRouteCapabilityTests(unittest.TestCase):
     def test_default_surface_registers_ordinary_catalog_routes(self):
         paths = {
             spec.path for spec in enabled_route_specs(DEFAULT_CAPABILITIES)
         }
         for route in (
-            "emoji",
-            "emotions",
             "packs",
             "packs/import",
             "settings/rules",
@@ -23,8 +48,22 @@ class WebRouteCapabilityTests(unittest.TestCase):
             "capture/duplicates/ignore",
             "capture/items/dispose",
             "capture/items/ignore-all",
+            "meme_image_data",
+            "packs/export/status",
         ):
             self.assertIn(route, paths, f"default surface must register {route}")
+
+    def test_removed_manage_routes_are_not_registered(self):
+        for capabilities in (DEFAULT_CAPABILITIES, {"core"}):
+            paths = {
+                spec.path for spec in enabled_route_specs(capabilities)
+            }
+            for route in REMOVED_MANAGE_ROUTES:
+                self.assertNotIn(
+                    route,
+                    paths,
+                    f"{route} must not be registered for {capabilities}",
+                )
 
     def test_semantic_routes_are_removed_from_every_capability_surface(self):
         paths = {
@@ -39,7 +78,12 @@ class WebRouteCapabilityTests(unittest.TestCase):
         paths = {
             spec.path for spec in enabled_route_specs({"core"})
         }
-        for route in ("emoji", "emoji/add/<category>", "packs", "settings/rules"):
+        for route in (
+            "packs",
+            "packs/<pack_id>",
+            "settings/rules",
+            "meme_image_data",
+        ):
             self.assertIn(route, paths)
 
     def test_route_specs_are_frozen_and_typed(self):

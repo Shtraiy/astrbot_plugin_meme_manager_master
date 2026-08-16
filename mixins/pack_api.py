@@ -45,13 +45,10 @@ from ..backend.pack_storage import (
     import_pack_archive,
     import_runtime_backup,
     inspect_pack_archive,
-    install_first_official_pack_from_index,
     install_pack_from_github_source,
     list_installed_packs,
     load_cached_community_index,
     save_selection_rules,
-    set_default_pack,
-    uninstall_pack,
 )
 from ..storage import (
     IMAGE_EXTENSIONS,
@@ -143,27 +140,6 @@ class PackAPIMixin:
         except Exception as e:
             logger.error(f"获取表情包详情失败: {e}", exc_info=True)
             return jsonify({"message": f"获取表情包详情失败: {str(e)}"}), 500
-
-    async def _api_set_default_pack(self):
-        try:
-            data = await request.get_json()
-            pack_id = str((data or {}).get("pack_id") or "").strip()
-            if not pack_id:
-                return jsonify({"message": "pack_id 不能为空"}), 400
-            service = self._pack_runtime()
-            result = service.set_default(pack_id) if service is not None else set_default_pack(pack_id)
-            refresh_store = getattr(self, "_refresh_store_for_active_pack", None)
-            if callable(refresh_store):
-                refresh_store()
-            self._reload_personas()
-            return jsonify({"message": "默认表情包设置成功", **result}), 200
-        except FileNotFoundError as e:
-            return jsonify({"message": str(e)}), 404
-        except ValueError as e:
-            return jsonify({"message": str(e)}), 400
-        except Exception as e:
-            logger.error(f"设置默认表情包失败: {e}", exc_info=True)
-            return jsonify({"message": f"设置默认表情包失败: {str(e)}"}), 500
 
     async def _api_export_pack(self):
         try:
@@ -455,32 +431,6 @@ class PackAPIMixin:
             logger.error("确认导入表情包失败: %s", exc, exc_info=True)
             return jsonify({"message": "确认导入表情包失败"}), 500
 
-    async def _api_uninstall_pack(self):
-        try:
-            data = await request.get_json()
-            pack_id = str((data or {}).get("pack_id") or "").strip()
-            if not pack_id:
-                return jsonify({"message": "pack_id 不能为空"}), 400
-            transfer = getattr(self, "pack_transfer_service", None)
-            uninstall_operation = transfer.uninstall if transfer is not None else uninstall_pack
-            result = await self._run_guarded_pack_file_operation(
-                pack_id,
-                "卸载资源包",
-                uninstall_operation,
-                pack_id,
-            )
-            self._reload_personas()
-            return jsonify({"message": "卸载成功", **result}), 200
-        except FileNotFoundError as e:
-            return jsonify({"message": str(e)}), 404
-        except RuntimeError as e:
-            return jsonify({"message": str(e)}), 409
-        except ValueError as e:
-            return jsonify({"message": str(e)}), 400
-        except Exception as e:
-            logger.error(f"卸载表情包失败: {e}", exc_info=True)
-            return jsonify({"message": f"卸载表情包失败: {str(e)}"}), 500
-
     async def _api_fetch_community_index(self):
         try:
             index_url = COMMUNITY_INDEX_URL
@@ -586,45 +536,6 @@ class PackAPIMixin:
         except Exception as e:
             logger.error(f"安装社区表情包失败: {e}", exc_info=True)
             return jsonify({"message": f"安装社区表情包失败: {str(e)}"}), 500
-
-    async def _api_install_official_first_pack(self):
-        data = None
-        try:
-            data = await request.get_json()
-            payload = data or {}
-            overwrite = bool(payload.get("overwrite", False))
-            set_as_default = bool(payload.get("set_as_default", True))
-
-            service = self._community_packs()
-            install_operation = (
-                service.install_official_first
-                if service is not None
-                else install_first_official_pack_from_index
-            )
-            result = await self._run_guarded_runtime_file_operation(
-                "安装官方资源包",
-                install_operation,
-                index_url=COMMUNITY_INDEX_URL,
-                overwrite=overwrite,
-                set_as_default=set_as_default,
-                github_accelerator_url=self._get_github_accelerator_url(),
-            )
-            self._reload_personas()
-            return jsonify({"message": "官方表情包安装成功", **result}), 200
-        except FileExistsError as e:
-            return jsonify({"message": str(e)}), 409
-        except RuntimeError as e:
-            return jsonify({"message": str(e)}), 409
-        except (FileNotFoundError, ValueError) as e:
-            logger.warning(
-                "安装官方首个表情包失败: %s | payload=%s",
-                e,
-                data,
-            )
-            return jsonify({"message": str(e)}), 400
-        except Exception as e:
-            logger.error(f"安装官方首个表情包失败: {e}", exc_info=True)
-            return jsonify({"message": f"安装官方首个表情包失败: {str(e)}"}), 500
 
     async def _api_settings_rules(self):
         if request.method == "GET":
