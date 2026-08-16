@@ -22,6 +22,7 @@ from astrbot.api.star import Context
 
 from .collector import (
     MEME_CAPTURE_RUBRIC,
+    normalize_meme_score,
     SCENE_CONTEXT_EXTRA,
     contains_meme_send_claim,
     collect_recent_scene_context,
@@ -2107,7 +2108,7 @@ class CaptureMixin:
             vision.get("visible_text") or vision.get("text") or ""
         ).strip()[:120]
         description = str(vision.get("description", "") or "").strip()[:120]
-        return {
+        entry = {
             "id": path.stem,
             "filename": path.name,
             "category": primary_category,
@@ -2135,6 +2136,10 @@ class CaptureMixin:
             "index_source": "capture",
             "captured_at": int(time.time()),
         }
+        meme_score = normalize_meme_score(vision.get("meme_score"))
+        if meme_score is not None:
+            entry["meme_score"] = meme_score
+        return entry
 
     @staticmethod
     def _library_index_metadata(provider_id: str) -> dict:

@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,6 +9,7 @@ install_runtime_stubs()
 install_package_alias()
 
 from meme_manager_master.capture import (
+    CaptureMixin,
     LIBRARY_INDEX_PROMPT_VERSION,
     LIBRARY_INDEX_VERSION,
     VISION_SYSTEM_PROMPT,
@@ -87,6 +89,19 @@ class PrimarySemanticIndexTests(unittest.TestCase):
             self.assertIn("聊天记录截图", prompt)
             self.assertIn("脱离原始场景", prompt)
             self.assertIn("无法确认时宁可拒绝", prompt)
+
+    def test_capture_catalog_entry_keeps_normalized_meme_score(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reaction.png"
+            path.write_bytes(b"image")
+            entry = CaptureMixin._catalog_entry_from_vision(
+                path,
+                "尴尬",
+                {"meme_score": "86.5", "description": "反应"},
+                {},
+            )
+
+        self.assertEqual(entry["meme_score"], 86.5)
 
 
 if __name__ == "__main__":
