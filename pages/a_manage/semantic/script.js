@@ -231,8 +231,9 @@ async function initCaptureIndexPage() {
         const refreshed = await loadWorkspace();
         if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
         if (refreshed) {
-          notice.textContent = state.message || "重索引已完成";
-          notice.classList.toggle("error", state.status === "completed_with_errors");
+          const completedWithErrors = state.status === "completed_with_errors";
+          notice.textContent = completedWithErrors ? (state.message || "重索引完成，但存在失败项") : "";
+          notice.classList.toggle("error", completedWithErrors);
         }
         return;
       }

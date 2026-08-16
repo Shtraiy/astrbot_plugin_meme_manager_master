@@ -396,6 +396,7 @@ async function runPage(scriptPath) {
   const reindexPayload = calls.find((call) => call.endpoint === "capture/reindex").body;
   const reindexButton = document.querySelector("#capture-reindex-button");
   const reindexNotice = document.querySelector("#notice").textContent;
+  const reindexProgressLabel = document.querySelector("#capture-reindex-progress-label").textContent;
 
   await document.querySelector("#capture-selection-mode-button").dispatch("click");
   await document.querySelector("#capture-select-pending-button").dispatch("click");
@@ -456,6 +457,7 @@ async function runPage(scriptPath) {
     reindexPayload,
     reindexRestored: !reindexButton.disabled && reindexButton.getAttribute("aria-busy") === "false",
     reindexNotice,
+    reindexProgressLabel,
     refilledAfterDelete,
     clampedAfterDelete,
     selectionPreservedOnPageTwo,
@@ -1473,7 +1475,8 @@ class CaptureIndexRuntimeTests(unittest.TestCase):
             self.assertGreaterEqual(payload["workspaceCalls"], 9)
             self.assertEqual(payload["reindexPayload"]["pack_id"], "pack")
             self.assertTrue(payload["reindexRestored"])
-            self.assertIn("重索引已完成", payload["reindexNotice"])
+            self.assertEqual(payload["reindexNotice"], "")
+            self.assertIn("重索引已完成", payload["reindexProgressLabel"])
             self.assertEqual(payload["ignorePayload"]["pack_id"], "pack")
             self.assertEqual(
                 payload["ignorePayload"]["items"],
