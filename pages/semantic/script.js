@@ -3,6 +3,17 @@ async function initCaptureIndexPage() {
   const packSelect = document.querySelector("#pack");
   const notice = document.querySelector("#notice");
   const summary = document.querySelector("#capture-summary");
+  const v4Health = document.querySelector("#capture-v4-health");
+  const v4RingValue = document.querySelector("#capture-v4-ring-value");
+  const v4HealthHeading = document.querySelector("#capture-v4-health-heading");
+  const v4HealthMessage = document.querySelector("#capture-v4-health-message");
+  const v4MetricNodes = {
+    complete: document.querySelector("#capture-v4-complete strong"),
+    needs_rebuild: document.querySelector("#capture-v4-needs-rebuild strong"),
+    pending: document.querySelector("#capture-v4-pending strong"),
+    duplicate: document.querySelector("#capture-v4-duplicate strong"),
+  };
+  const v4MetricButtons = [...document.querySelectorAll("[data-v4-filter]")];
   const folders = document.querySelector("#capture-folders");
   const indexedItems = document.querySelector("#capture-indexed-items");
   const pendingItems = document.querySelector("#capture-pending-items");
@@ -51,6 +62,7 @@ async function initCaptureIndexPage() {
   let mutationInProgress = false;
   let disposalOperationGeneration = 0;
   let currentPage = 1;
+  let currentV4Filter = "all";
   let workspaceRequestGeneration = 0;
   const THUMBNAIL_CACHE_MAX_ENTRIES = 512;
   const THUMBNAIL_CACHE_MAX_BYTES = 64 * 1024 * 1024;
@@ -153,6 +165,41 @@ async function initCaptureIndexPage() {
     reindexProgressCount.textContent = `${processed}/${Number(state?.total || 0)}`;
     reindexProgressBar.max = total;
     reindexProgressBar.value = processed;
+  }
+
+  function renderV4Health(v4 = {}) {
+    if (!v4Health) return;
+    const completion = v4.completion_percent == null
+      ? null
+      : Math.min(Math.max(Number(v4.completion_percent), 0), 100);
+    const status = String(v4.status || "empty");
+    const labels = {
+      empty: ["尚未开始 v4 检查", "完整率只统计已整理和需重建的图片。"],
+      complete: ["v4 索引已完整", "当前资源包中的已检查图片都符合 v4 契约。"],
+      partial: ["v4 索引需要关注", "完整率只统计已整理和需重建的图片；点击状态可筛选。"],
+    };
+    const [heading, message] = labels[status] || labels.partial;
+    v4Health.dataset.status = status;
+    v4Health.style.setProperty("--v4-completion", `${completion ?? 0}%`);
+    v4RingValue.textContent = completion == null ? "—" : `${completion}%`;
+    v4HealthHeading.textContent = heading;
+    v4HealthMessage.textContent = message;
+    for (const [key, node] of Object.entries(v4MetricNodes)) {
+      if (node) node.textContent = String(Math.max(Number(v4[key] || 0), 0));
+    }
+    for (const button of v4MetricButtons) {
+      const active = currentV4Filter === button.dataset.v4Filter;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+  }
+
+  function setV4Filter(filter) {
+    const allowed = new Set(["complete", "needs_rebuild", "pending", "duplicate"]);
+    const nextFilter = allowed.has(filter) ? filter : "all";
+    currentV4Filter = currentV4Filter === nextFilter ? "all" : nextFilter;
+    currentPage = 1;
+    void loadWorkspace();
   }
 
   async function pollReindexStatus(generation = reindexPollGeneration) {
@@ -825,6 +872,7 @@ async function initCaptureIndexPage() {
     currentWorkspace = data;
     currentPage = Number(data.pagination?.page || currentPage);
     const stats = data.summary || {};
+    renderV4Health(stats.v4 || {});
     summary.replaceChildren();
     for (const [label, value] of [
       ["已索引", stats.indexed || 0],
@@ -911,6 +959,7 @@ async function initCaptureIndexPage() {
       const params = { pack_id: packId };
       if (selectedCategory) params.category = selectedCategory;
       params.page = currentPage;
+      if (currentV4Filter !== "all") params.v4_status = currentV4Filter;
       const data = await apiGet("capture/workspace", params);
       if (generation !== workspaceRequestGeneration || packSelect.value !== packId) return;
       renderWorkspace(data);
@@ -946,6 +995,7 @@ async function initCaptureIndexPage() {
     stopReindexPolling();
     stopIndexPolling();
     selectedCategory = "";
+    currentV4Filter = "all";
     currentPage = 1;
     setSelectionMode(false);
     reindexing = false;
@@ -956,6 +1006,9 @@ async function initCaptureIndexPage() {
     void loadWorkspace();
   });
   refreshButton.addEventListener("click", () => void loadWorkspace());
+  v4MetricButtons.forEach((button) => {
+    button.addEventListener("click", () => setV4Filter(button.dataset.v4Filter || "all"));
+  });
   paginationPrev?.addEventListener("click", () => {
     if (currentPage > 1) {
       void goToIndexedPage(currentPage - 1);

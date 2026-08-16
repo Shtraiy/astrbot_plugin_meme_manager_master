@@ -288,6 +288,18 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("style.css?v=20260816-v4-health-1", source)
             self.assertIn("script.js?v=20260816-v4-health-1", source)
 
+    def test_v4_health_runtime_contract_exists_in_both_page_copies(self):
+        for script_path in (
+            ROOT / "pages" / "semantic" / "script.js",
+            ROOT / "pages" / "a_manage" / "semantic" / "script.js",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn("renderV4Health", script)
+            self.assertIn("currentV4Filter", script)
+            self.assertIn("params.v4_status = currentV4Filter", script)
+            self.assertIn("button.dataset.v4Filter", script)
+            self.assertNotIn("summary.innerHTML", script)
+
 
 if __name__ == "__main__":
     unittest.main()
