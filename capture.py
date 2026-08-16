@@ -59,6 +59,8 @@ from .capture_blacklist import CaptureBlacklist
 from .config import PLUGIN_DATA_DIR
 from .health import MemeManagerHealth, check_meme_manager_master_health
 from .indexing import (
+    LIBRARY_INDEX_PROMPT_VERSION,
+    LIBRARY_INDEX_VERSION,
     catalog_needs_write,
     full_reindex_entry_is_current,
     normalize_library_results,
@@ -132,8 +134,6 @@ OUTGOING_DECISION_SYSTEM_PROMPT = """
 """.strip()
 
 
-LIBRARY_INDEX_VERSION = 4
-LIBRARY_INDEX_PROMPT_VERSION = "library-semantic-primary-v1"
 LIBRARY_INDEX_LLM_TIMEOUT = 120.0
 LIBRARY_INDEX_BATCH_RETRIES = 1
 LIBRARY_INDEX_SINGLE_RETRIES = 1

@@ -134,6 +134,75 @@ class CaptureIndexApiTests(unittest.TestCase):
         self.assertEqual(workspace["indexed_items"][0]["filename"], indexed.name)
         self.assertEqual(workspace["pending_items"][0]["filename"], pending.name)
 
+    def test_workspace_v4_summary_and_status_filter(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pack_dir = Path(temp_dir) / "pack"
+            store = MemeStore(pack_dir)
+            complete = store.save_image(b"complete-v4", "awkward", ".png").path
+            needs_rebuild = store.save_image(b"needs-rebuild", "awkward", ".png").path
+            pending = store.save_image(b"pending-v4", "awkward", ".png").path
+            duplicate = store.save_image(b"duplicate-v4", "awkward", ".png").path
+            catalog = store.load_catalog()
+            complete_fields = {
+                "indexed": True,
+                "index_version": 4,
+                "index_prompt_version": "library-semantic-primary-v1",
+                "primary_category": "尴尬",
+                "primary_category_status": "ready",
+                "semantic_summary": "角色沉默。",
+                "visible_text": "",
+                "text_meaning": "",
+                "use_cases": ["无语"],
+                "avoid_cases": [],
+                "classification_confidence": 0.94,
+                "semantic_tags": ["反应"],
+            }
+            for item in catalog["items"]:
+                if item["filename"] == complete.name:
+                    item.update(complete_fields)
+                elif item["filename"] == needs_rebuild.name:
+                    item.update({**complete_fields, "index_version": 3})
+                elif item["filename"] == pending.name:
+                    item["indexed"] = False
+                elif item["filename"] == duplicate.name:
+                    item.update(complete_fields)
+            store.write_catalog(catalog["items"])
+            record_capture_event(
+                pack_dir,
+                category="awkward",
+                filename=duplicate.name,
+                digest=store.image_digest(duplicate),
+                status="duplicate",
+            )
+
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance._library_index_state = {"status": "idle"}
+            instance.store = store
+
+            with patch.object(capture_index_api, "PACKS_DIR", pack_dir.parent):
+                workspace = instance._capture_workspace_for_pack("pack")
+                needs_rebuild_workspace = instance._capture_workspace_for_pack(
+                    "pack", v4_status="needs_rebuild"
+                )
+
+        self.assertEqual(
+            workspace["summary"]["v4"],
+            {
+                "complete": 1,
+                "needs_rebuild": 1,
+                "pending": 1,
+                "duplicate": 1,
+                "checked_total": 2,
+                "completion_percent": 50,
+                "status": "partial",
+            },
+        )
+        self.assertEqual(
+            [item["filename"] for item in needs_rebuild_workspace["indexed_items"]],
+            [needs_rebuild.name],
+        )
+        self.assertEqual(needs_rebuild_workspace["pending_items"], [])
+
     def test_workspace_does_not_expose_absolute_paths(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pack_dir = Path(temp_dir) / "pack"

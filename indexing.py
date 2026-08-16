@@ -6,6 +6,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+
+LIBRARY_INDEX_VERSION = 4
+LIBRARY_INDEX_PROMPT_VERSION = "library-semantic-primary-v1"
+
 try:
     from .backend.tagging import (
         normalize_primary_category,

@@ -16,6 +16,11 @@ from ..capture_activity import (
 from ..config import PACKS_DIR, get_active_pack_paths
 from ..backend.tagging import canonical_tag
 from ..backend.catalog_index_service import CatalogIndexService
+from ..indexing import (
+    LIBRARY_INDEX_PROMPT_VERSION,
+    LIBRARY_INDEX_VERSION,
+    full_reindex_entry_is_current,
+)
 from ..storage import IMAGE_EXTENSIONS, MemeStore
 
 
@@ -74,8 +79,25 @@ class CaptureIndexAPIMixin:
         category: str = "",
         *,
         page: int = 1,
+        v4_status: str = "all",
     ) -> dict:
-        return self._flat_capture_workspace_for_pack(pack_id, category, page=page)
+        return self._flat_capture_workspace_for_pack(
+            pack_id, category, page=page, v4_status=v4_status
+        )
+
+    @staticmethod
+    def _v4_status_for_entry(entry: dict) -> str:
+        if not entry.get("indexed"):
+            return "pending"
+        digest = str(entry.get("sha256") or "")
+        if full_reindex_entry_is_current(
+            entry,
+            digest,
+            index_version=LIBRARY_INDEX_VERSION,
+            prompt_version=LIBRARY_INDEX_PROMPT_VERSION,
+        ):
+            return "complete"
+        return "needs_rebuild"
 
     def _flat_capture_workspace_for_pack(
         self,
@@ -83,8 +105,12 @@ class CaptureIndexAPIMixin:
         category: str = "",
         *,
         page: int = 1,
+        v4_status: str = "all",
     ) -> dict:
         """Build the capture workspace from flat files and virtual tags."""
+        v4_status = str(v4_status or "all").strip().lower()
+        if v4_status not in {"all", "complete", "needs_rebuild", "pending", "duplicate"}:
+            raise ValueError("v4_status 无效")
         selected_tag = canonical_tag(category) if str(category or "").strip() else None
         if category and not selected_tag:
             raise ValueError("invalid tag")
@@ -98,6 +124,7 @@ class CaptureIndexAPIMixin:
         activity = load_capture_activity(pack_dir)
         indexed_by_filename: dict[str, dict] = {}
         pending_by_filename: dict[str, dict] = {}
+        entry_v4_status: dict[str, str] = {}
         folders: list[dict] = []
         tag_counts: dict[str, dict[str, int]] = {}
         for entry in store.load_catalog().get("items", []):
@@ -108,6 +135,8 @@ class CaptureIndexAPIMixin:
             if filename != str(entry.get("filename")) or not path.is_file():
                 continue
             indexed = bool(entry.get("indexed"))
+            item_v4_status = self._v4_status_for_entry(entry)
+            entry_v4_status[filename] = item_v4_status
             modified_at = int(path.stat().st_mtime)
             tags = sorted({
                 normalized
@@ -128,6 +157,7 @@ class CaptureIndexAPIMixin:
                     "filename": filename,
                     "relative_path": f"memes/{filename}",
                     "indexed": indexed,
+                    "v4_status": item_v4_status,
                     "captured_at": int(entry.get("captured_at") or modified_at),
                 }
                 if not indexed:
@@ -171,6 +201,7 @@ class CaptureIndexAPIMixin:
                 "relative_path": f"memes/{filename}",
                 "indexed": False,
                 "duplicate": True,
+                "v4_status": "duplicate",
                 "activity_status": "duplicate",
                 "duplicate_of": event.get("duplicate_of", ""),
                 "captured_at": event.get("captured_at", 0),
@@ -185,6 +216,53 @@ class CaptureIndexAPIMixin:
         indexed_items = sorted(indexed_by_filename.values(), key=self._capture_item_time, reverse=True)
         pending_items = sorted(pending_by_filename.values(), key=self._capture_item_time, reverse=True)
         duplicate_count = sum(1 for item in pending_items if item.get("duplicate"))
+        duplicate_filenames = {
+            str(item.get("filename") or "")
+            for item in pending_items
+            if item.get("duplicate")
+        }
+        v4_complete = sum(
+            1
+            for filename, status in entry_v4_status.items()
+            if status == "complete" and filename not in duplicate_filenames
+        )
+        v4_needs_rebuild = sum(
+            1
+            for filename, status in entry_v4_status.items()
+            if status == "needs_rebuild" and filename not in duplicate_filenames
+        )
+        v4_pending = sum(
+            1
+            for filename, status in entry_v4_status.items()
+            if status == "pending" and filename not in duplicate_filenames
+        )
+        v4_checked_total = v4_complete + v4_needs_rebuild
+        v4_completion_percent = (
+            round(v4_complete / v4_checked_total * 100) if v4_checked_total else None
+        )
+        v4_summary_status = (
+            "none"
+            if not v4_checked_total
+            else "complete"
+            if not v4_needs_rebuild
+            else "partial"
+        )
+        v4_summary = {
+            "complete": v4_complete,
+            "needs_rebuild": v4_needs_rebuild,
+            "pending": v4_pending,
+            "duplicate": duplicate_count,
+            "checked_total": v4_checked_total,
+            "completion_percent": v4_completion_percent,
+            "status": v4_summary_status,
+        }
+        if v4_status != "all":
+            indexed_items = [
+                item for item in indexed_items if item.get("v4_status") == v4_status
+            ]
+            pending_items = [
+                item for item in pending_items if item.get("v4_status") == v4_status
+            ]
         state = dict(getattr(self, "_library_index_state", {}) or {})
         active_store = getattr(self, "store", None)
         state["active_pack"] = bool(
@@ -205,6 +283,7 @@ class CaptureIndexAPIMixin:
                 "duplicate": duplicate_count,
                 "complete_folders": sum(1 for folder in visible_folders if folder["complete"]),
                 "folder_total": len(visible_folders),
+                "v4": v4_summary,
             },
             "folders": folders,
             "duplicate_digests": duplicate_digests,
@@ -386,7 +465,12 @@ class CaptureIndexAPIMixin:
             pack_id = self._capture_pack_id()
             category = str(request.args.get("category") or "").strip()
             page = request.args.get("page", "1")
-            return jsonify(self._capture_workspace_for_pack(pack_id, category, page=page))
+            v4_status = str(request.args.get("v4_status") or "all").strip()
+            return jsonify(
+                self._capture_workspace_for_pack(
+                    pack_id, category, page=page, v4_status=v4_status
+                )
+            )
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"message": str(exc)}), 400
         except Exception as exc:
