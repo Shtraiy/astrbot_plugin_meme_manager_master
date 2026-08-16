@@ -278,5 +278,16 @@ class CaptureIndexPageTests(unittest.TestCase):
             self.assertIn("valueElement.textContent", script)
 
 
+    def test_v4_health_panel_contract_exists_in_both_pages(self):
+        for page_dir in (ROOT / "pages" / "semantic", ROOT / "pages" / "a_manage" / "semantic"):
+            source = (page_dir / "index.html").read_text(encoding="utf-8")
+            self.assertIn('id="capture-v4-health"', source)
+            self.assertIn('id="capture-v4-ring-value"', source)
+            self.assertIn('data-v4-filter="needs_rebuild"', source)
+            self.assertIn('aria-live="polite"', source)
+            self.assertIn("style.css?v=20260816-v4-health-1", source)
+            self.assertIn("script.js?v=20260816-v4-health-1", source)
+
+
 if __name__ == "__main__":
     unittest.main()

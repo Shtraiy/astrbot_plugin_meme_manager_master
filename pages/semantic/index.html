@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>表情索引</title>
-    <link rel="stylesheet" href="./style.css?v=20260812-unified-disposal-1" />
+    <link rel="stylesheet" href="./style.css?v=20260816-v4-health-1" />
   </head>
   <body>
     <header class="page-header">
@@ -55,7 +55,23 @@
       </div>
 
       <p id="notice" class="notice" aria-live="polite"></p>
-      <section id="capture-summary" class="summary" aria-live="polite"></section>
+      <section id="capture-v4-health" class="v4-health panel" aria-labelledby="capture-v4-health-heading" aria-live="polite">
+        <div class="v4-health-ring" aria-hidden="true">
+          <span id="capture-v4-ring-value">—</span>
+          <small>v4</small>
+        </div>
+        <div class="v4-health-copy">
+          <p class="kicker">Index Health / V4 Contract</p>
+          <h2 id="capture-v4-health-heading">尚未开始 v4 检查</h2>
+          <p id="capture-v4-health-message">完整率只统计已整理和需重建的图片。</p>
+        </div>
+        <div class="v4-health-metrics" role="list" aria-label="v4 索引状态">
+          <button id="capture-v4-complete" type="button" data-v4-filter="complete" role="listitem" aria-pressed="false"><span>v4 完整</span><strong>0</strong></button>
+          <button id="capture-v4-needs-rebuild" type="button" data-v4-filter="needs_rebuild" role="listitem" aria-pressed="false"><span>需重建</span><strong>0</strong></button>
+          <button id="capture-v4-pending" type="button" data-v4-filter="pending" role="listitem" aria-pressed="false"><span>待分类</span><strong>0</strong></button>
+          <button id="capture-v4-duplicate" type="button" data-v4-filter="duplicate" role="listitem" aria-pressed="false"><span>重复待忽略</span><strong>0</strong></button>
+        </div>
+      </section>
       <section id="capture-folders" class="folders" aria-live="polite"></section>
       <section id="capture-category-filters" class="category-filters" aria-label="按分类查看"></section>
 
@@ -111,6 +127,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260815-capture-workspace-1"></script>
+    <script type="module" src="./script.js?v=20260816-v4-health-1"></script>
   </body>
 </html>

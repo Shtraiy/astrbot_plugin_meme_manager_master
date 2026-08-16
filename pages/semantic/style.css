@@ -187,3 +187,43 @@ h1 { font-size: clamp(32px, 5vw, 58px); }
 @media (prefers-reduced-motion: reduce) {
   .card { transform: none; transition: none; }
 }
+
+.v4-health {
+  display: grid;
+  grid-template-columns: auto minmax(190px, 1fr) minmax(360px, 1.7fr);
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 14px;
+  padding: 20px 22px;
+}
+.v4-health-ring {
+  --v4-completion: 0%;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  background: conic-gradient(#218a73 var(--v4-completion), #dcece7 0);
+  color: #173b3a;
+  font-variant-numeric: tabular-nums;
+}
+.v4-health-ring::after { position: absolute; inset: 9px; border-radius: 50%; background: #fff; content: ""; }
+.v4-health-ring span, .v4-health-ring small { position: relative; z-index: 1; }
+.v4-health-ring span { margin-top: -2px; font-size: 30px; font-weight: 800; line-height: 1; }
+.v4-health-ring small { margin-top: -28px; color: #6d7d87; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.v4-health-copy h2 { color: #173b3a; font-size: 20px; }
+.v4-health-copy > p:last-child { margin: 8px 0 0; color: #607381; font-size: 13px; line-height: 1.5; }
+.v4-health-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.v4-health-metrics button { display: grid; place-items: center; gap: 6px; min-height: 74px; padding: 10px 8px; text-align: center; font-variant-numeric: tabular-nums; }
+.v4-health-metrics button span { color: #607381; font-size: 12px; }
+.v4-health-metrics button strong { color: #173b3a; font-size: 24px; line-height: 1; }
+.v4-health-metrics button[data-v4-filter="needs_rebuild"] strong { color: #b36a1d; }
+.v4-health-metrics button[data-v4-filter="pending"] strong { color: #a16a22; }
+.v4-health-metrics button[data-v4-filter="duplicate"] strong { color: #8a6171; }
+.v4-health-metrics button.active, .v4-health-metrics button[aria-pressed="true"] { border-color: #2f80ed; background: #edf5ff; box-shadow: 0 6px 16px rgba(47, 128, 237, .14); }
+.v4-health-metrics button:focus-visible { outline: 3px solid rgba(47, 128, 237, .45); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .v4-health { grid-template-columns: auto 1fr; gap: 14px; }
+  .v4-health-metrics { grid-column: 1 / -1; }
+}
