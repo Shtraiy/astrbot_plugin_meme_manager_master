@@ -42,8 +42,16 @@ class WebUINavigationAuthTests(unittest.TestCase):
         source = (ROOT / "pages" / "index.html").read_text(encoding="utf-8")
 
         self.assertNotIn("asset_token", source)
-        self.assertIn("plugin-page/meme_manager_master/a_manage/semantic", source)
+        self.assertIn("plugin-page/meme_manager_master/a_manage", source)
+        self.assertNotIn("a_manage/semantic", source)
         self.assertNotIn('"a_manage"', source)
+
+    def test_a_manage_entry_redirects_to_semantic_workspace(self):
+        source = (A_MANAGE / "index.html").read_text(encoding="utf-8")
+        self.assertIn("./semantic/index.html", source)
+        self.assertNotIn("emoji-categories", source)
+        self.assertNotIn("MemeManagerUI", source)
+        self.assertNotIn("data-nav-page", source)
 
     def test_capture_index_page_has_no_manage_page_links(self):
         html = (A_MANAGE / "semantic" / "index.html").read_text(encoding="utf-8")

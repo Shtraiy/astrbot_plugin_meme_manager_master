@@ -7,15 +7,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseMetadataTests(unittest.TestCase):
-    def test_release_is_v220_and_mentions_removed_manage_page(self):
+    def test_release_is_v221_and_mentions_removed_manage_page(self):
         metadata = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: v2.2.0", metadata)
-        self.assertIn("version-v2.2.0", readme)
-        self.assertIn("## [v2.2.0] - 2026-08-17", changelog)
-        self.assertIn("移除表情包管理 WebUI 页面", changelog)
+        self.assertIn("version: v2.2.1", metadata)
+        self.assertIn("version-v2.2.1", readme)
+        self.assertIn("## [v2.2.1] - 2026-08-17", changelog)
+        self.assertIn("恢复 AstrBot 插件页面入口", changelog)
         self.assertIn("入口即表情索引", readme)
         self.assertNotIn("## [Unreleased]", changelog)
 

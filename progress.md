@@ -15,6 +15,14 @@
 - 入口重定向改为 `/#/plugin-page/meme_manager_master/a_manage/semantic`。
 - 更新 README、CHANGELOG、版本号至 v2.2.0。
 
+### 修复：插件页面入口（v2.2.1）
+
+- 用户反馈 v2.2.0 推送后 AstrBot 插件页无法打开 WebUI。
+- 根因：AstrBot 只发现 `pages/<page_name>/index.html` 一级页面；删除管理页与顶层副本后
+  `pages/` 下无可发现页面，二级路径 `a_manage/semantic` 也不被识别。
+- 修复：重建 `pages/a_manage/index.html` 轻量跳转页（iframe 内跳 `./semantic/index.html`），
+  入口重定向恢复为 `/#/plugin-page/meme_manager_master/a_manage`。
+
 ## Session: 2026-08-15
 
 ### Phase 1: Requirements & Discovery

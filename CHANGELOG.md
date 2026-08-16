@@ -2,6 +2,18 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
+## [v2.2.1] - 2026-08-17
+
+### 修复
+
+- 恢复 AstrBot 插件页面入口：重建 `pages/a_manage/index.html` 作为轻量跳转页，打开插件页面后直接进入表情索引工作台；修复 v2.2.0 移除管理页后 `pages/` 下无可发现页面导致 WebUI 无法打开的问题。
+- 插件页入口重定向恢复为一级路径 `/#/plugin-page/meme_manager_master/a_manage`。
+
+### 验证
+
+- `python -m unittest discover -s tests`：全量通过。
+- `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 与 `git diff --check`：通过。
+
 ## [v2.2.0] - 2026-08-17
 
 ### 移除

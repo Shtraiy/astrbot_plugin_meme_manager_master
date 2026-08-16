@@ -58,6 +58,7 @@
 | Issue | Resolution |
 |-------|------------|
 | 沙箱自动审批通道故障，git 提交与 shell 删除被拒 | 文件删除改用 apply_patch（受支持编辑通道），二进制字体移入系统临时目录待恢复；提交待用户批准 |
+| v2.2.0 删除管理页后 AstrBot 插件页无法打开 WebUI | AstrBot 仅发现 `pages/<page_name>/index.html` 一级页面；重建 `pages/a_manage/index.html` 轻量跳转页并恢复一级入口重定向，落点仍为表情索引（v2.2.1） |
 
 ### Requirements
 
