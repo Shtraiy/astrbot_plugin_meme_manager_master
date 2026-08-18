@@ -2,7 +2,7 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
-## [Unreleased]
+## [v2.4.1] - 2026-08-18
 
 ### 移除
 
@@ -18,7 +18,9 @@
 
 ### 验证
 
-- 新增下载安全、导出凭证与详情脱敏回归测试；本地环境缺少 `bandit`/`pip-audit`，安全扫描仍由 CI 的 security job 执行。
+- `python -m unittest discover -s tests`：364 项通过，1 项既有兼容性用例跳过。
+- `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、全部页面 JavaScript `node --check` 与 `git diff --check`：通过。
+- 本地环境缺少 `bandit`/`pip-audit`，依赖安全扫描由 CI 的 security job 执行。
 
 ## [v2.4.0] - 2026-08-18
 

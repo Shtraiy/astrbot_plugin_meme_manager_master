@@ -2,7 +2,7 @@
 
 # 表情包管理大师
 
-[![version](https://img.shields.io/badge/version-v2.4.0-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
+[![version](https://img.shields.io/badge/version-v2.4.1-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.5.7-orange.svg)](https://github.com/Soulter/AstrBot)
 
 **让表情包管理、收集与选图更简单**

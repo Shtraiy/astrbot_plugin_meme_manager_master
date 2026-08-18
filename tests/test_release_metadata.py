@@ -12,17 +12,12 @@ class ReleaseMetadataTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: v2.4.0", metadata)
-        self.assertIn("version-v2.4.0", readme)
-        self.assertIn("## [v2.4.0] - 2026-08-18", changelog)
+        self.assertIn("version: v2.4.1", metadata)
+        self.assertIn("version-v2.4.1", readme)
+        self.assertIn("## [v2.4.1] - 2026-08-18", changelog)
         self.assertIn("移除「设置中心」「资源广场」", changelog)
         self.assertIn("入口即表情索引", readme)
-        if "## [Unreleased]" in changelog:
-            self.assertLess(
-                changelog.index("## [Unreleased]"),
-                changelog.index("## [v2.4.0]"),
-                "Unreleased 变更必须位于最新发布节之前",
-            )
+        self.assertNotIn("## [Unreleased]", changelog)
 
     def test_runtime_registration_version_matches_manifest(self):
         metadata = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
