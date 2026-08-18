@@ -60,6 +60,7 @@ class WebRouteCapabilityTests(unittest.TestCase):
             "meme_image_data",
             "packs/export/status",
             "packs/export/download",
+            "packs/export/prepare",
         ):
             self.assertIn(route, paths, f"default surface must register {route}")
 

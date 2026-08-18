@@ -989,7 +989,12 @@ async function initCaptureIndexPage() {
     const mode = exportBackupCheckbox?.checked ? "backup" : "share";
     setTransferMessage("正在生成压缩包，请不要关闭页面。");
     try {
-      await pageApi.download("packs/export/download", { pack_id: packId, mode });
+      const prepared = await apiPost("packs/export/prepare", { pack_id: packId, mode });
+      const downloadToken = String(prepared?.download_token || "").trim();
+      if (!downloadToken) {
+        throw new Error("导出失败：未获得下载凭证，请重试。");
+      }
+      await pageApi.download("packs/export/download", { token: downloadToken });
       setTransferMessage(
         mode === "backup"
           ? "带向量自用备份已生成，已开始下载。"

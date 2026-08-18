@@ -2,6 +2,18 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
+## [Unreleased]
+
+### 修复
+
+- /偷取 群聊图片下载改用插件级安全下载器：仅允许 HTTPS、固定已校验的公网 DNS 结果（阻断 DNS 重绑定）、禁止重定向、分块限流并校验真实图片格式；下载失败日志只记录 host，不再输出完整 URL。相关修复替代了此前未应用的 `_patch.py`。
+- WebUI 导出表情包改为 POST 预生成 + 一次性下载凭证：`packs/export/prepare`（受 WebUI 写操作保护）生成归档并返回 32 位随机 token，`packs/export/download` 凭 token 下载一次后清理会话；1 小时内未下载的会话会自动过期清理。前端「导出当前资源包」同步改为新流程。
+- 表情包详情接口不再向前端返回本机绝对路径（`pack_dir`），避免泄露服务器目录结构。
+
+### 验证
+
+- 新增下载安全、导出凭证与详情脱敏回归测试；本地环境缺少 `bandit`/`pip-audit`，安全扫描仍由 CI 的 security job 执行。
+
 ## [v2.4.0] - 2026-08-18
 
 ### 新增

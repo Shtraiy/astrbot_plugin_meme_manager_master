@@ -4,17 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from ipaddress import ip_address
 import random
 import re
-import socket
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-import aiohttp
 from astrbot.api import logger
 import astrbot.api.message_components as Comp
 from astrbot.api.event import AstrMessageEvent, MessageChain
@@ -44,6 +41,7 @@ from .collector import (
 )
 from .meme_selection import MemeSelectionService
 from .capture_pipeline import CapturePipeline
+from .backend.image_download import download_image
 from .capture_components.vision_gateway import (
     decode_base64_image,
     decode_data_url_image,
@@ -2335,69 +2333,23 @@ class CaptureMixin:
             return False
         return any(candidate == root or root in candidate.parents for root in resolved_roots)
 
-    async def _remote_target_is_public(self, source: str) -> bool:
-        """Resolve a remote image host and reject private, local, or unroutable IPs."""
-        if not is_safe_remote_image_url(source):
-            return False
-        parsed = urlparse(source)
-        hostname = parsed.hostname
-        if not hostname:
-            return False
-        try:
-            port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
-            addresses = await asyncio.to_thread(
-                socket.getaddrinfo,
-                hostname,
-                port,
-                type=socket.SOCK_STREAM,
-            )
-        except (OSError, ValueError):
-            return False
-        resolved = {
-            str(info[4][0]).split("%", 1)[0]
-            for info in addresses
-            if info and len(info) > 4 and info[4]
-        }
-        if not resolved:
-            return False
-        try:
-            return all(ip_address(address).is_global for address in resolved)
-        except ValueError:
-            return False
-
     async def _download_image(self, source: str, limit: int) -> ImagePayload | None:
-        if not await self._remote_target_is_public(source):
-            logger.warning("[meme_manager_master] 拒绝访问不安全的远程图片地址: %s", source)
+        host = urlparse(source).netloc
+        if not is_safe_remote_image_url(source):
+            logger.warning(
+                "[meme_manager_master] 拒绝访问不安全的远程图片地址: host=%s",
+                host,
+            )
             return None
-        timeout = aiohttp.ClientTimeout(total=self.runtime_config.download_timeout)
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(source, allow_redirects=False) as response:
-                    response.raise_for_status()
-                    content_length = int(response.headers.get("Content-Length", "0") or 0)
-                    if content_length > limit:
-                        logger.warning("[meme_manager_master] 远程图片超过大小限制: %s", source)
-                        return None
-                    chunks: list[bytes] = []
-                    total = 0
-                    async for chunk in response.content.iter_chunked(64 * 1024):
-                        total += len(chunk)
-                        if total > limit:
-                            logger.warning("[meme_manager_master] 远程图片超过大小限制: %s", source)
-                            return None
-                        chunks.append(chunk)
-                    content = b"".join(chunks)
-                    payload = self._payload_from_content(content, limit)
-                    if payload is None:
-                        logger.warning(
-                            "[meme_manager_master] downloaded content is not a valid image: %s content_type=%s",
-                            source,
-                            response.headers.get("Content-Type", ""),
-                        )
-                    return payload
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-            logger.warning("[meme_manager_master] 下载图片失败 %s: %s", source, exc)
+        downloaded = await download_image(
+            source,
+            limit,
+            timeout_seconds=self.runtime_config.download_timeout,
+        )
+        if downloaded is None:
+            logger.warning("[meme_manager_master] 下载图片失败: host=%s", host)
             return None
+        return ImagePayload(downloaded.content, downloaded.extension)
 
     @staticmethod
     def _decode_data_url(source: str, limit: int) -> ImagePayload | None:

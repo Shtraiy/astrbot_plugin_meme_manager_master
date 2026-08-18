@@ -20,9 +20,11 @@ from ..backend.pack_storage import (
     inspect_pack_archive,
     list_installed_packs,
 )
+from ..config import BACKUP_DIR, TEMP_DIR
 
 MAX_PACK_ARCHIVE_BYTES = 1024 * 1024 * 1024
 MAX_PACK_UPLOAD_REQUEST_BYTES = MAX_PACK_ARCHIVE_BYTES + 1024 * 1024
+PACK_EXPORT_SESSION_TTL_SECONDS = 60 * 60
 
 
 
@@ -49,7 +51,9 @@ class PackAPIMixin:
         try:
             service = self._pack_runtime()
             result = service.detail(pack_id) if service is not None else get_pack_detail(pack_id)
-            return jsonify(result)
+            sanitized = dict(result)
+            sanitized.pop("pack_dir", None)
+            return jsonify(sanitized)
         except FileNotFoundError as e:
             return jsonify({"message": str(e)}), 404
         except RuntimeError as e:
@@ -73,12 +77,58 @@ class PackAPIMixin:
             logger.error("读取表情包导出能力失败: %s", exc, exc_info=True)
             return jsonify({"message": "读取表情包导出能力失败"}), 500
 
-    async def _api_download_pack(self):
+    def _pack_export_session_paths(self, token: str) -> tuple[Path, Path]:
+        normalized = str(token or "").strip().lower()
+        if len(normalized) != 32 or any(
+            character not in "0123456789abcdef" for character in normalized
+        ):
+            raise ValueError("导出凭证无效，请重新导出")
+        session_dir = TEMP_DIR / "pack_export_sessions"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        return session_dir / f"{normalized}.zip", session_dir / f"{normalized}.json"
+
+    def _cleanup_pack_export_sessions(self) -> None:
+        """Remove expired export sessions so no archive lingers indefinitely."""
+        session_dir = TEMP_DIR / "pack_export_sessions"
+        if not session_dir.is_dir():
+            return
+        expire_before = time.time() - PACK_EXPORT_SESSION_TTL_SECONDS
+        for path in session_dir.iterdir():
+            try:
+                if path.is_file() and path.stat().st_mtime < expire_before:
+                    path.unlink()
+            except OSError:
+                continue
+
+    def _load_pack_export_session(self, token: str) -> dict:
+        _session_archive_path, metadata_path = self._pack_export_session_paths(token)
+        if not metadata_path.is_file():
+            raise ValueError("导出凭证已失效，请重新导出")
         try:
-            pack_id = str(request.args.get("pack_id") or "").strip()
-            export_mode = str(request.args.get("mode") or "share").strip().lower()
+            session_data = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("导出凭证损坏，请重新导出") from exc
+        if not isinstance(session_data, dict):
+            raise ValueError("导出凭证损坏，请重新导出")
+        return session_data
+
+    async def _api_pack_export_prepare(self):
+        session_token = None
+        metadata_path = None
+        succeeded = False
+        try:
+            self._cleanup_pack_export_sessions()
+            data = await request.get_json() or {}
+            if not isinstance(data, dict):
+                return jsonify({"message": "请求体无效"}), 400
+            pack_id = str(data.get("pack_id") or "").strip()
+            export_mode = str(data.get("mode") or "share").strip().lower()
+            if not pack_id:
+                return jsonify({"message": "pack_id 不能为空"}), 400
             transfer = getattr(self, "pack_transfer_service", None)
-            export_operation = transfer.export if transfer is not None else export_pack_archive
+            export_operation = (
+                transfer.export if transfer is not None else export_pack_archive
+            )
             result = await self._run_guarded_pack_file_operation(
                 pack_id,
                 "导出资源包",
@@ -86,12 +136,46 @@ class PackAPIMixin:
                 pack_id,
                 export_mode=export_mode,
             )
-            return await send_file(
-                result["archive_path"],
-                mimetype="application/zip",
-                as_attachment=True,
-                attachment_filename=result["archive_filename"],
+            archive_path = Path(result["archive_path"])
+            backup_root = BACKUP_DIR.resolve(strict=False)
+            try:
+                archive_path.resolve(strict=False).relative_to(backup_root)
+            except ValueError as exc:
+                raise ValueError("导出文件位置无效") from exc
+            if (
+                not archive_path.is_file()
+                or archive_path.suffix.lower() != ".zip"
+            ):
+                raise ValueError("导出压缩包生成失败")
+            session_token = secrets.token_hex(16)
+            _session_zip_path, metadata_path = self._pack_export_session_paths(
+                session_token
             )
+            archive_filename = str(
+                result.get("archive_filename") or archive_path.name
+            )
+            session_data = {
+                "pack_id": pack_id,
+                "mode": export_mode,
+                "archive_path": str(archive_path.resolve(strict=False)),
+                "archive_filename": archive_filename,
+                "created_at": time.time(),
+                "expires_at": time.time() + PACK_EXPORT_SESSION_TTL_SECONDS,
+            }
+            metadata_path.write_text(
+                json.dumps(session_data, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            succeeded = True
+            return jsonify(
+                {
+                    "message": "导出压缩包已生成，开始下载",
+                    "download_token": session_token,
+                    "archive_filename": archive_filename,
+                    "pack_id": pack_id,
+                    "mode": export_mode,
+                }
+            ), 200
         except FileNotFoundError as exc:
             return jsonify({"message": str(exc)}), 404
         except RuntimeError as exc:
@@ -99,8 +183,67 @@ class PackAPIMixin:
         except ValueError as exc:
             return jsonify({"message": str(exc)}), 400
         except Exception as exc:
-            logger.error("下载表情包失败: %s", exc, exc_info=True)
-            return jsonify({"message": "下载表情包失败"}), 500
+            logger.error("生成导出压缩包失败: %s", exc, exc_info=True)
+            return jsonify({"message": "生成导出压缩包失败"}), 500
+        finally:
+            if not succeeded and metadata_path is not None:
+                try:
+                    metadata_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    async def _api_pack_export_download(self):
+        token = str(request.args.get("token") or "").strip()
+        metadata_path = None
+        try:
+            self._cleanup_pack_export_sessions()
+            if not token:
+                return jsonify({"message": "缺少下载凭证"}), 400
+            _session_zip_path, metadata_path = self._pack_export_session_paths(token)
+            session_data = self._load_pack_export_session(token)
+            expires_at = float(session_data.get("expires_at") or 0)
+            if time.time() > expires_at:
+                raise ValueError("导出凭证已过期，请重新导出")
+            archive_path = Path(
+                str(session_data.get("archive_path") or "")
+            ).resolve(strict=False)
+            backup_root = BACKUP_DIR.resolve(strict=False)
+            try:
+                archive_path.relative_to(backup_root)
+            except ValueError as exc:
+                raise ValueError("导出凭证无效") from exc
+            if not archive_path.is_file() or archive_path.suffix.lower() != ".zip":
+                raise ValueError("导出文件不存在，请重新导出")
+            archive_filename = str(
+                session_data.get("archive_filename") or archive_path.name
+            )
+            response = await send_file(
+                archive_path,
+                mimetype="application/zip",
+                as_attachment=True,
+                attachment_filename=archive_filename,
+            )
+
+            def _cleanup_session() -> None:
+                for path in (metadata_path,):
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+            call_on_close = getattr(response, "call_on_close", None)
+            if callable(call_on_close):
+                call_on_close(_cleanup_session)
+            else:
+                _cleanup_session()
+            return response
+        except FileNotFoundError as exc:
+            return jsonify({"message": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
+        except Exception as exc:
+            logger.error("下载导出压缩包失败: %s", exc, exc_info=True)
+            return jsonify({"message": "下载导出压缩包失败"}), 500
 
     async def _api_stage_pack_import(self):
         archive_path = None

@@ -17,7 +17,12 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("## [v2.4.0] - 2026-08-18", changelog)
         self.assertIn("移除「设置中心」「资源广场」", changelog)
         self.assertIn("入口即表情索引", readme)
-        self.assertNotIn("## [Unreleased]", changelog)
+        if "## [Unreleased]" in changelog:
+            self.assertLess(
+                changelog.index("## [Unreleased]"),
+                changelog.index("## [v2.4.0]"),
+                "Unreleased 变更必须位于最新发布节之前",
+            )
 
     def test_runtime_registration_version_matches_manifest(self):
         metadata = (ROOT / "metadata.yaml").read_text(encoding="utf-8")

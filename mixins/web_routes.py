@@ -105,10 +105,18 @@ ROUTES: tuple[WebRouteSpec, ...] = (
         "获取表情包可导出能力",
     ),
     WebRouteSpec(
+        "packs/export/prepare",
+        "_api_pack_export_prepare",
+        ("POST",),
+        "预生成表情包导出压缩文件",
+        capability="core",
+    ),
+    WebRouteSpec(
         "packs/export/download",
-        "_api_download_pack",
+        "_api_pack_export_download",
         ("GET",),
-        "导出并下载表情包压缩文件",
+        "凭一次性凭证下载表情包压缩文件",
+        capability="core",
     ),
     WebRouteSpec(
         "packs/import/stage",
