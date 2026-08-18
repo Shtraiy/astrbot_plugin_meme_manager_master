@@ -116,6 +116,30 @@ def mark_capture_events_indexed(
         return changed
 
 
+def mark_capture_events_blacklisted(
+    pack_dir: Path,
+    *,
+    digests: set[str],
+    blacklisted_at: int | None = None,
+) -> int:
+    """Resolve duplicate activity after its digest enters the auto blacklist."""
+    if not digests:
+        return 0
+    with _lock_for(pack_dir):
+        data = load_capture_activity(pack_dir)
+        changed = 0
+        timestamp = int(blacklisted_at or time.time())
+        for event in data["events"]:
+            if event.get("status") != "duplicate" or event.get("sha256") not in digests:
+                continue
+            event["status"] = "blacklisted"
+            event["blacklisted_at"] = timestamp
+            changed += 1
+        if changed:
+            _write_atomic(_path(pack_dir), data)
+        return changed
+
+
 def mark_capture_events_ignored(
     pack_dir: Path,
     *,

@@ -129,6 +129,10 @@ class CaptureBoundaryTests(unittest.TestCase):
 
 
 class ManagerInitStructureTests(unittest.TestCase):
+    def test_manager_does_not_compose_retired_backup_facade(self):
+        source = (ROOT / "manager_base.py").read_text(encoding="utf-8")
+        self.assertNotIn("PackBackupService", source)
+
     def test_manager_composes_stable_application_services(self):
         source = (ROOT / "manager_base.py").read_text(encoding="utf-8")
         self.assertIn("self.pack_service = PackService", source)

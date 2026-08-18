@@ -1834,9 +1834,9 @@ def import_runtime_backup(
         if not backup_packs_dir.is_dir() and not backup_registry.is_file():
             raise ValueError("备份包中没有可恢复的数据")
 
-        current_blacklist = CaptureBlacklist(PLUGIN_DATA_DIR).load()
+        current_blacklist = CaptureBlacklist(PLUGIN_DATA_DIR).manual_entries()
         backup_blacklist = (
-            CaptureBlacklist(backup_root).load()
+            CaptureBlacklist(backup_root).manual_entries()
             if backup_blacklist_path.is_file()
             else set()
         )
@@ -2085,13 +2085,11 @@ def import_runtime_backup(
 # adapters can migrate incrementally without changing import paths.
 try:
     from .community_pack_source import CommunityPackSource
-    from .pack_backup import PackBackup
     from .pack_paths import PackPaths
     from .pack_runtime import PackRuntime
     from .pack_transfer import PackTransfer
 except ImportError:  # standalone imports from repository root
     from backend.community_pack_source import CommunityPackSource
-    from backend.pack_backup import PackBackup
     from backend.pack_paths import PackPaths
     from backend.pack_runtime import PackRuntime
     from backend.pack_transfer import PackTransfer

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from capture_blacklist import CaptureBlacklist
+from capture_activity import load_capture_activity, record_capture_event
 
 
 class CaptureBlacklistTests(unittest.TestCase):
@@ -86,6 +87,62 @@ class CaptureBlacklistTests(unittest.TestCase):
 
             self.assertEqual(results, [(True, "saved")])
             self.assertTrue(blacklist.contains(digest))
+
+    def test_auto_blacklist_tracks_source_and_can_be_pruned_without_touching_manual_entries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            blacklist = CaptureBlacklist(Path(temporary))
+            manual_digest = "d" * 64
+            auto_digest = "e" * 64
+            blacklist.add({manual_digest})
+            self.assertEqual(
+                blacklist.add_auto(auto_digest, pack_id="pack", filename="meme.png"),
+                1,
+            )
+            self.assertTrue(blacklist.contains(auto_digest))
+            self.assertEqual(blacklist.manual_entries(), {manual_digest})
+            self.assertEqual(
+                blacklist.auto_entries(),
+                {auto_digest: [{"pack_id": "pack", "filename": "meme.png"}]},
+            )
+
+            self.assertEqual(
+                blacklist.prune_auto_sources(lambda _pack_id, _filename: False),
+                1,
+            )
+            self.assertTrue(blacklist.contains(manual_digest))
+            self.assertFalse(blacklist.contains(auto_digest))
+            self.assertEqual(blacklist.auto_entries(), {})
+
+    def test_reconcile_pack_migrates_legacy_duplicates_and_prunes_deleted_sources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pack_dir = root / "pack"
+            source = pack_dir / "memes" / "source.png"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"source")
+            digest = "e" * 64
+            record_capture_event(
+                pack_dir,
+                category="happy",
+                filename=source.name,
+                digest=digest,
+                status="duplicate",
+            )
+            blacklist = CaptureBlacklist(root / "plugin-data")
+
+            result = blacklist.reconcile_pack(pack_dir)
+
+            self.assertEqual(result["migrated"], 1)
+            self.assertEqual(result["blacklisted_events"], 1)
+            self.assertEqual(
+                load_capture_activity(pack_dir)["events"][0]["status"],
+                "blacklisted",
+            )
+            self.assertIn(digest, blacklist.auto_entries())
+
+            source.unlink()
+            self.assertEqual(blacklist.reconcile_pack(pack_dir)["pruned"], 1)
+            self.assertEqual(blacklist.auto_entries(), {})
 
 
 if __name__ == "__main__":

@@ -14,7 +14,6 @@ from astrbot.api.star import Context, Star
 from .application.services import (
     CatalogService,
     CommunityPackService,
-    PackBackupService,
     PackRuntimeService,
     PackService,
     PackTransferService,
@@ -86,7 +85,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         self.catalog_service = CatalogService(MemeStoreCatalogRepository())
         self.pack_runtime_service = PackRuntimeService(legacy_pack_storage)
         self.pack_transfer_service = PackTransferService(legacy_pack_storage)
-        self.pack_backup_service = PackBackupService(legacy_pack_storage)
         self.community_pack_service = CommunityPackService(legacy_pack_storage)
 
         # 上传与待发送状态

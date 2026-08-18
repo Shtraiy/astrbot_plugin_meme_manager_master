@@ -4,25 +4,48 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>表情索引</title>
-    <link rel="stylesheet" href="./style.css?v=20260817-transfer-1" />
+    <link rel="stylesheet" href="./style.css?v=20260818-workspace-layout-1" />
   </head>
   <body>
-    <header class="page-header">
-      <div>
+    <header class="workspace-header">
+      <div class="page-header-copy">
         <p class="eyebrow">Capture &amp; Catalog Workspace</p>
         <h1>表情索引</h1>
-        <p class="subtitle">按分类查看表情缩略图；全量语义重索引会扫描整个资源包，完整 v4 索引自动跳过，旧索引会重新识别。</p>
+        <p class="subtitle">按分类查看表情缩略图；语义重索引会扫描整个资源包，旧索引会重新识别。</p>
       </div>
+      <section class="toolbar panel" aria-label="资源包操作">
+        <div class="toolbar-pack-control">
+          <label for="pack">资源包</label>
+          <select id="pack" aria-label="选择资源包"></select>
+        </div>
+        <div class="toolbar-actions">
+          <button id="capture-refresh-button" type="button">刷新记录</button>
+          <div class="export-mode-control" role="group" aria-label="导出方式">
+            <span class="toolbar-control-label">导出方式</span>
+            <label class="export-mode-option">
+              <input type="radio" name="capture-export-mode" value="share" checked />
+              <span>分享版</span>
+            </label>
+            <label class="export-mode-option">
+              <input id="capture-export-backup" type="radio" name="capture-export-mode" value="backup" disabled />
+              <span>自用备份</span>
+            </label>
+            <span id="capture-export-hint" class="transfer-hint"></span>
+          </div>
+          <button id="capture-export-button" type="button">导出当前资源包</button>
+          <button id="capture-import-button" type="button">导入资源包</button>
+        </div>
+        <input id="capture-import-file" type="file" accept=".zip" hidden />
+      </section>
     </header>
 
     <main class="layout">
-      <section class="toolbar panel">
-        <label for="pack">资源包</label>
-        <select id="pack" aria-label="选择资源包"></select>
-        <button id="capture-refresh-button" type="button">刷新记录</button>
-        <button id="capture-export-button" type="button">导出当前资源包</button>
-        <button id="capture-import-button" type="button">导入资源包</button>
-        <input id="capture-import-file" type="file" accept=".zip" hidden />
+      <section id="workspace-action-bar" class="workspace-action-bar panel" aria-label="索引操作">
+        <div class="action-bar-copy">
+          <span class="kicker">Workspace Actions</span>
+          <strong>整理资源包里的表情</strong>
+          <span>按分类查看，并处理待分类和重复项。</span>
+        </div>
         <div class="reindex-control">
           <button id="capture-reindex-button" type="button">全量语义重索引</button>
         </div>
@@ -34,22 +57,11 @@
           <button id="capture-select-index-button" type="button" class="primary" hidden disabled>选择索引</button>
           <button id="capture-clear-selection-button" type="button" hidden disabled>清空选择</button>
         </div>
-        <button id="capture-index-button" type="button" class="primary">
-          分类索引待处理项
-        </button>
-        <button id="capture-ignore-all-button" type="button" disabled>
-          一键忽略全部待处理和待忽略
-        </button>
+        <button id="capture-index-button" type="button" class="primary">分类索引待处理项</button>
+        <button id="capture-ignore-all-button" type="button" disabled>一键忽略全部待处理和待忽略</button>
       </section>
 
-      <section id="capture-transfer-panel" class="transfer-panel panel" aria-live="polite">
-        <div class="transfer-export-row">
-          <label class="transfer-option">
-            <input id="capture-export-backup" type="checkbox" disabled />
-            <span>带向量自用备份</span>
-          </label>
-          <p id="capture-export-hint" class="transfer-hint"></p>
-        </div>
+      <section id="capture-transfer-panel" class="transfer-panel" aria-live="polite">
         <div id="capture-import-preview" class="transfer-import-preview" hidden>
           <p id="capture-import-preview-name" class="transfer-hint"></p>
           <p id="capture-import-preview-meta" class="transfer-hint"></p>
@@ -58,9 +70,7 @@
             <span>导入后设为默认</span>
           </label>
           <div class="transfer-actions">
-            <button id="capture-import-confirm-button" type="button" class="primary">
-              确认导入
-            </button>
+            <button id="capture-import-confirm-button" type="button" class="primary">确认导入</button>
             <button id="capture-import-cancel-button" type="button">取消</button>
           </div>
         </div>
@@ -78,54 +88,36 @@
       </div>
 
       <p id="notice" class="notice" aria-live="polite"></p>
-      <section id="capture-v4-health" class="v4-health panel" aria-labelledby="capture-v4-health-heading" aria-live="polite">
-        <div class="v4-health-ring" aria-hidden="true">
-          <span id="capture-v4-ring-value">—</span>
-          <small>v4</small>
-        </div>
-        <div class="v4-health-copy">
-          <p class="kicker">Index Health / V4 Contract</p>
-          <h2 id="capture-v4-health-heading">尚未开始 v4 检查</h2>
-          <p id="capture-v4-health-message">完整率只统计已整理和需重建的图片。</p>
-        </div>
-        <div class="v4-health-metrics" role="list" aria-label="v4 索引状态">
-          <button id="capture-v4-complete" type="button" data-v4-filter="complete" role="listitem" aria-pressed="false"><span>v4 完整</span><strong>0</strong></button>
-          <button id="capture-v4-needs-rebuild" type="button" data-v4-filter="needs_rebuild" role="listitem" aria-pressed="false"><span>需重建</span><strong>0</strong></button>
-          <button id="capture-v4-pending" type="button" data-v4-filter="pending" role="listitem" aria-pressed="false"><span>待分类</span><strong>0</strong></button>
-          <button id="capture-v4-duplicate" type="button" data-v4-filter="duplicate" role="listitem" aria-pressed="false"><span>重复待忽略</span><strong>0</strong></button>
-        </div>
-      </section>
-      <section id="capture-folders" class="folders" aria-live="polite"></section>
-      <section id="capture-summary" class="summary" aria-live="polite" hidden></section>
-      <section id="capture-category-filters" class="category-filters" aria-label="按分类查看"></section>
 
-      <section class="sections-stack">
-        <article class="panel column" aria-labelledby="capture-indexed-heading">
+      <section id="capture-catalog-panel" class="catalog-panel panel" aria-label="表情目录">
+        <div class="catalog-heading">
+          <div>
+            <span class="kicker">Emoji Catalog</span>
+            <h2>表情目录</h2>
+          </div>
+          <span id="capture-items-count" class="badge">0 张</span>
+        </div>
+        <section id="capture-view-filters" class="category-filters" aria-label="按状态查看">
+          <button type="button" class="category-filter active" data-capture-view="all" aria-pressed="true">全部表情</button>
+          <button type="button" class="category-filter" data-capture-view="classified" aria-pressed="false">已分类</button>
+          <button type="button" class="category-filter" data-capture-view="unclassified" aria-pressed="false">未分类</button>
+        </section>
+        <section id="capture-category-filters" class="category-filters" aria-label="按分类查看"></section>
+        <article class="column catalog-column" aria-labelledby="capture-items-heading">
           <div class="column-heading">
             <div>
-              <span class="kicker">近期分类索引</span>
-              <h2 id="capture-indexed-heading" tabindex="-1">已经整理好的表情</h2>
+              <span class="kicker">当前视图</span>
+              <h3 id="capture-items-heading" tabindex="-1">全部表情</h3>
             </div>
-            <span id="capture-indexed-count" class="badge">0</span>
           </div>
-          <div id="capture-indexed-items" class="cards"></div>
+          <div id="capture-items" class="cards"></div>
         </article>
-        <nav id="capture-pagination" class="capture-pagination panel" aria-label="已整理表情分页" hidden>
+        <nav id="capture-pagination" class="capture-pagination" aria-label="表情分页" hidden>
           <button id="capture-pagination-prev" type="button">上一页</button>
           <div id="capture-pagination-pages" class="capture-pagination-pages"></div>
           <button id="capture-pagination-next" type="button">下一页</button>
           <span id="capture-pagination-summary" class="capture-pagination-summary"></span>
         </nav>
-        <article class="panel column pending-column">
-          <div class="column-heading">
-            <div>
-              <span class="kicker">刚偷取</span>
-              <h2>等待分类处理</h2>
-            </div>
-            <span id="capture-pending-count" class="badge warm">0</span>
-          </div>
-          <div id="capture-pending-items" class="cards"></div>
-        </article>
       </section>
     </main>
 
@@ -151,6 +143,6 @@
       <button id="preview-close" type="button" aria-label="关闭预览">×</button>
       <img id="preview-image" alt="表情包预览" />
     </div>
-    <script type="module" src="./script.js?v=20260817-transfer-1"></script>
+    <script type="module" src="./script.js?v=20260818-workspace-layout-1"></script>
   </body>
 </html>

@@ -2,24 +2,8 @@ async function initCaptureIndexPage() {
   const pageApi = window.AstrBotPluginPage;
   const packSelect = document.querySelector("#pack");
   const notice = document.querySelector("#notice");
-  const summary = document.querySelector("#capture-summary");
-  const v4Health = document.querySelector("#capture-v4-health");
-  const v4HealthRing = document.querySelector("#capture-v4-health .v4-health-ring");
-  const v4RingValue = document.querySelector("#capture-v4-ring-value");
-  const v4HealthHeading = document.querySelector("#capture-v4-health-heading");
-  const v4HealthMessage = document.querySelector("#capture-v4-health-message");
-  const v4MetricNodes = {
-    complete: document.querySelector("#capture-v4-complete strong"),
-    needs_rebuild: document.querySelector("#capture-v4-needs-rebuild strong"),
-    pending: document.querySelector("#capture-v4-pending strong"),
-    duplicate: document.querySelector("#capture-v4-duplicate strong"),
-  };
-  const v4MetricButtons = [...document.querySelectorAll("[data-v4-filter]")];
-  const folders = document.querySelector("#capture-folders");
-  const indexedItems = document.querySelector("#capture-indexed-items");
-  const pendingItems = document.querySelector("#capture-pending-items");
-  const indexedCount = document.querySelector("#capture-indexed-count");
-  const pendingCount = document.querySelector("#capture-pending-count");
+  const items = document.querySelector("#capture-items");
+  const itemsCount = document.querySelector("#capture-items-count");
   const refreshButton = document.querySelector("#capture-refresh-button");
   const reindexButton = document.querySelector("#capture-reindex-button");
   const progressRow = document.querySelector(".capture-progress-row");
@@ -35,7 +19,8 @@ async function initCaptureIndexPage() {
   const clearSelectionButton = document.querySelector("#capture-clear-selection-button");
   const ignoreAllButton = document.querySelector("#capture-ignore-all-button");
   const selectionSummary = document.querySelector("#capture-selection-summary");
-  const indexedHeading = document.querySelector("#capture-indexed-heading");
+  const itemsHeading = document.querySelector("#capture-items-heading");
+  const viewFilters = [...document.querySelectorAll("[data-capture-view]")];
   const categoryFilters = document.querySelector("#capture-category-filters");
   const pagination = document.querySelector("#capture-pagination");
   const paginationPrev = document.querySelector("#capture-pagination-prev");
@@ -63,10 +48,7 @@ async function initCaptureIndexPage() {
   const transferMessage = document.querySelector("#capture-transfer-message");
   let selectedCategory = "";
   let reindexing = false;
-  let reindexPollTimer = null;
-  let reindexPollGeneration = 0;
   let indexing = false;
-  let indexPollTimer = null;
   let pendingConfirmation = null;
   let currentWorkspace = null;
   let selectionMode = false;
@@ -75,7 +57,7 @@ async function initCaptureIndexPage() {
   let mutationInProgress = false;
   let disposalOperationGeneration = 0;
   let currentPage = 1;
-  let currentV4Filter = "all";
+  let currentView = "all";
   let workspaceRequestGeneration = 0;
   const THUMBNAIL_CACHE_MAX_ENTRIES = 512;
   const THUMBNAIL_CACHE_MAX_BYTES = 64 * 1024 * 1024;
@@ -94,6 +76,41 @@ async function initCaptureIndexPage() {
 
   const apiGet = (path, params = {}) => pageApi.apiGet(path, params);
   const apiPost = (path, body = {}) => pageApi.apiPost(path, body);
+  function createPollingController() {
+    let timer = null;
+    let generation = 0;
+    return {
+      nextGeneration() {
+        generation += 1;
+        return generation;
+      },
+      current() {
+        return generation;
+      },
+      isCurrent(value) {
+        return value === generation;
+      },
+      schedule(callback, delay = 500) {
+        if (timer !== null) window.clearTimeout(timer);
+        timer = window.setTimeout(() => {
+          timer = null;
+          callback();
+        }, delay);
+      },
+      stop() {
+        if (timer !== null) window.clearTimeout(timer);
+        timer = null;
+        generation += 1;
+      },
+    };
+  }
+  const reindexPolling = createPollingController();
+  const indexPolling = createPollingController();
+  function setTaskBusy(button, busy) {
+    if (!button) return;
+    button.disabled = Boolean(busy);
+    button.setAttribute("aria-busy", String(Boolean(busy)));
+  }
   const showError = (error) => {
     notice.textContent = String(error?.message || error || "操作失败");
     notice.classList.add("error");
@@ -116,20 +133,6 @@ async function initCaptureIndexPage() {
       confirmMask.setAttribute("aria-hidden", "false");
       confirmConfirm.focus?.();
     });
-  }
-
-  function stopReindexPolling() {
-    if (reindexPollTimer !== null) {
-      window.clearTimeout(reindexPollTimer);
-      reindexPollTimer = null;
-    }
-  }
-
-  function stopIndexPolling() {
-    if (indexPollTimer !== null) {
-      window.clearTimeout(indexPollTimer);
-      indexPollTimer = null;
-    }
   }
 
   function renderReindexProgress(state) {
@@ -158,70 +161,40 @@ async function initCaptureIndexPage() {
     reindexProgressBar.value = processed;
   }
 
-  function renderV4Health(v4 = {}) {
-    if (!v4Health || !v4HealthRing) return;
-    const completion = v4.completion_percent == null
-      ? null
-      : Math.min(Math.max(Number(v4.completion_percent), 0), 100);
-    const status = String(v4.status || "empty");
-    const labels = {
-      empty: ["尚未开始 v4 检查", "完整率只统计已整理和需重建的图片。"],
-      complete: ["v4 索引已完整", "当前资源包中的已检查图片都符合 v4 契约。"],
-      partial: ["v4 索引需要关注", "完整率只统计已整理和需重建的图片；点击状态可筛选。"],
-    };
-    const [heading, message] = labels[status] || labels.partial;
-    v4Health.dataset.status = status;
-    v4HealthRing.style.setProperty("--v4-completion", `${completion ?? 0}%`);
-    v4RingValue.textContent = completion == null ? "—" : `${completion}%`;
-    v4HealthHeading.textContent = heading;
-    v4HealthMessage.textContent = message;
-    for (const [key, node] of Object.entries(v4MetricNodes)) {
-      if (node) node.textContent = String(Math.max(Number(v4[key] || 0), 0));
-    }
-    for (const button of v4MetricButtons) {
-      const active = currentV4Filter === button.dataset.v4Filter;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
-    }
-  }
-
-  function setV4Filter(filter) {
-    const allowed = new Set(["complete", "needs_rebuild", "pending", "duplicate"]);
-    const nextFilter = allowed.has(filter) ? filter : "all";
-    currentV4Filter = currentV4Filter === nextFilter ? "all" : nextFilter;
+  function setView(view) {
+    const allowed = new Set(["all", "classified", "unclassified"]);
+    const nextView = allowed.has(view) ? view : "all";
+    currentView = currentView === nextView ? "all" : nextView;
     currentPage = 1;
     void loadWorkspace();
   }
 
-  async function pollReindexStatus(generation = reindexPollGeneration) {
+  async function pollReindexStatus(generation = reindexPolling.current()) {
     const packId = packSelect.value;
     if (!packId) return;
     try {
       const state = await apiGet("capture/reindex/status", { pack_id: packId });
-      if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
+      if (!reindexPolling.isCurrent(generation) || packSelect.value !== packId) return;
       renderReindexProgress(state);
       if (["queued", "running"].includes(state.status)) {
         reindexing = true;
-        reindexButton.disabled = true;
-        reindexButton.setAttribute("aria-busy", "true");
-        reindexPollTimer = window.setTimeout(() => void pollReindexStatus(generation), 500);
+        setTaskBusy(reindexButton, true);
+        reindexPolling.schedule(() => void pollReindexStatus(generation));
         return;
       }
       if (state.status === "error") {
         reindexing = false;
-        reindexButton.disabled = false;
-        reindexButton.setAttribute("aria-busy", "false");
+        setTaskBusy(reindexButton, false);
         showError(new Error(state.message || "重索引失败"));
         return;
       }
       if (["completed", "completed_with_errors"].includes(state.status)) {
         const shouldClearThumbnails = reindexing;
         reindexing = false;
-        reindexButton.disabled = false;
-        reindexButton.setAttribute("aria-busy", "false");
+        setTaskBusy(reindexButton, false);
         if (shouldClearThumbnails) clearThumbnailCache();
         const refreshed = await loadWorkspace();
-        if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
+        if (!reindexPolling.isCurrent(generation) || packSelect.value !== packId) return;
         if (refreshed) {
           const completedWithErrors = state.status === "completed_with_errors";
           notice.textContent = completedWithErrors ? (state.message || "重索引完成，但存在失败项") : "";
@@ -230,43 +203,43 @@ async function initCaptureIndexPage() {
         return;
       }
       reindexing = false;
-      reindexButton.disabled = false;
-      reindexButton.setAttribute("aria-busy", "false");
+      setTaskBusy(reindexButton, false);
     } catch (error) {
-      if (generation !== reindexPollGeneration || packSelect.value !== packId) return;
+      if (!reindexPolling.isCurrent(generation) || packSelect.value !== packId) return;
       reindexing = false;
-      reindexButton.disabled = false;
-      reindexButton.setAttribute("aria-busy", "false");
+      setTaskBusy(reindexButton, false);
       showError(error);
     }
   }
 
-  async function pollIndexStatus() {
-    if (!packSelect.value || !indexing) return;
+  async function pollIndexStatus(generation = indexPolling.current()) {
+    const packId = packSelect.value;
+    if (!packId || !indexing) return;
     try {
-      const state = await apiGet("capture/index/status", { pack_id: packSelect.value });
+      const state = await apiGet("capture/index/status", { pack_id: packId });
+      if (!indexPolling.isCurrent(generation) || packSelect.value !== packId) return;
       if (["queued", "running"].includes(state.status)) {
         notice.textContent = state.message || "分类索引处理中……";
         notice.classList.remove("error");
-        indexPollTimer = window.setTimeout(() => void pollIndexStatus(), 500);
+        setTaskBusy(indexButton, true);
+        indexPolling.schedule(() => void pollIndexStatus(generation));
         return;
       }
       indexing = false;
-      indexPollTimer = null;
+      setTaskBusy(indexButton, false);
       if (state.status === "error") {
-        indexButton.disabled = false;
         showError(new Error(state.message || "分类索引失败"));
         return;
       }
       const data = await loadWorkspace();
-      if (data) {
+      if (data && indexPolling.isCurrent(generation) && packSelect.value === packId) {
         notice.textContent = state.message || "分类索引已完成";
         notice.classList.remove("error");
       }
     } catch (error) {
+      if (!indexPolling.isCurrent(generation) || packSelect.value !== packId) return;
       indexing = false;
-      indexPollTimer = null;
-      indexButton.disabled = false;
+      setTaskBusy(indexButton, false);
       showError(error);
     }
   }
@@ -457,10 +430,11 @@ async function initCaptureIndexPage() {
   }
 
   function visibleSelectionItems(kind) {
-    const source = kind === "indexed"
-      ? (currentWorkspace?.indexed_items || [])
-      : (currentWorkspace?.pending_items || []);
-    return source.map(selectionItem).filter(Boolean);
+    const source = currentWorkspace?.items || [];
+    const visible = kind === "indexed"
+      ? source.filter((item) => item.indexed && !item.duplicate)
+      : source.filter((item) => !item.indexed || item.duplicate);
+    return visible.map(selectionItem).filter(Boolean);
   }
 
   function allSelected(items) {
@@ -555,19 +529,19 @@ async function initCaptureIndexPage() {
     return matching.length ? matching : [item];
   }
 
-  async function goToIndexedPage(page) {
+  async function goToItemsPage(page) {
     currentPage = page;
     await loadWorkspace({ preserveSelection: true });
-    indexedHeading?.focus?.({ preventScroll: true });
-    indexedHeading?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    itemsHeading?.focus?.({ preventScroll: true });
+    itemsHeading?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }
 
   function renderPagination(paginationData = {}) {
-    const indexed = paginationData.indexed || {};
-    const totalPages = Math.max(1, Number(indexed.total_pages || 1));
+    const visibleItems = paginationData.items || paginationData.indexed || {};
+    const totalPages = Math.max(1, Number(visibleItems.total_pages || 1));
     currentPage = Math.min(Math.max(1, Number(paginationData.page || currentPage)), totalPages);
     if (!pagination || !paginationPages || !paginationSummary) return;
-    pagination.hidden = Number(indexed.total || 0) === 0;
+    pagination.hidden = Number(visibleItems.total || 0) === 0;
     paginationPages.replaceChildren();
     if (pagination.hidden) return;
 
@@ -593,12 +567,12 @@ async function initCaptureIndexPage() {
       button.setAttribute("aria-current", page === currentPage ? "page" : "false");
       button.disabled = page === currentPage || mutationInProgress;
       button.addEventListener("click", () => {
-        void goToIndexedPage(page);
+        void goToItemsPage(page);
       });
       paginationPages.append(button);
       previousPage = page;
     });
-    paginationSummary.textContent = `第 ${currentPage}/${totalPages} 页 · 已整理共 ${Number(indexed.total || 0)} 张`;
+    paginationSummary.textContent = `第 ${currentPage}/${totalPages} 页 · 当前视图共 ${Number(visibleItems.total || 0)} 张`;
   }
 
   async function disposeCaptureItems(items, button) {
@@ -676,9 +650,10 @@ async function initCaptureIndexPage() {
     const confirmation = `将分类索引选中的 ${selectedPending.length} 张待处理表情；重复待忽略项不会参与，其他图片保持不变。`;
     if (!(await requestConfirmation(confirmation, "选择索引"))) return;
     const packId = packSelect.value;
+    const generation = indexPolling.nextGeneration();
     indexing = true;
     selectIndexButton.disabled = true;
-    indexButton.disabled = true;
+    setTaskBusy(indexButton, true);
     try {
       const result = await apiPost("capture/index", {
         pack_id: packId,
@@ -688,11 +663,13 @@ async function initCaptureIndexPage() {
           sha256: normalizeDigest(item.sha256),
         })),
       });
+      if (!indexPolling.isCurrent(generation) || packSelect.value !== packId) return;
       selectedPending.forEach((item) => selectedItems.delete(selectionKey(item)));
       notice.textContent = result.message || "已开始索引选中的待处理表情";
       await loadWorkspace({ preserveSelection: true });
-      void pollIndexStatus();
+      void pollIndexStatus(generation);
     } catch (error) {
+      if (!indexPolling.isCurrent(generation) || packSelect.value !== packId) return;
       indexing = false;
       await loadWorkspace({ preserveSelection: true });
       showError(error);
@@ -746,6 +723,7 @@ async function initCaptureIndexPage() {
     card.className = `card thumbnail-loading${item.duplicate ? " duplicate" : ""}${failed ? " disposal-failed" : ""}`;
     card.dataset.category = item.category || item.tag || "";
     card.dataset.filename = item.filename || "";
+    card.dataset.kind = item.duplicate ? "duplicate" : item.indexed ? "indexed" : "pending";
     card.dataset.selectionKey = disposalKey;
     const digest = normalizeDigest(item.sha256);
     const thumbnailLocation = getImageLocation(item);
@@ -853,34 +831,16 @@ async function initCaptureIndexPage() {
   }
 
   function renderWorkspace(data) {
-    currentWorkspace = data;
+    const fallbackItems = [
+      ...(data.indexed_items || []),
+      ...(data.pending_items || []),
+    ];
+    currentWorkspace = {
+      ...data,
+      items: Array.isArray(data.items) ? data.items : fallbackItems,
+    };
     currentPage = Number(data.pagination?.page || currentPage);
     const stats = data.summary || {};
-    renderV4Health(stats.v4 || {});
-    summary.replaceChildren();
-    for (const [label, value] of [
-      ["已索引", stats.indexed || 0],
-      ["待分类", stats.pending || 0],
-      ["重复", stats.duplicate || 0],
-      ["完成标签", `${stats.complete_folders || 0}/${stats.folder_total || 0}`],
-    ]) {
-      const item = document.createElement("div");
-      item.className = "stat panel";
-      const labelElement = document.createElement("span");
-      labelElement.textContent = label;
-      const valueElement = document.createElement("strong");
-      valueElement.textContent = String(value);
-      item.append(labelElement, valueElement);
-      summary.append(item);
-    }
-
-    folders.replaceChildren();
-    for (const folder of data.folders || []) {
-      const chip = document.createElement("span");
-      chip.className = `folder-chip${folder.complete ? " complete" : ""}`;
-      chip.textContent = `${folder.category} · ${folder.indexed}/${folder.total}`;
-      folders.append(chip);
-    }
 
     categoryFilters.replaceChildren();
     const allCategories = document.createElement("button");
@@ -906,23 +866,39 @@ async function initCaptureIndexPage() {
       categoryFilters.append(button);
     }
 
-    const indexed = data.indexed_items || [];
-    const pending = data.pending_items || [];
-    indexedCount.textContent = `${stats.indexed || 0} 张`;
-    pendingCount.textContent = `${(stats.pending || 0) + (stats.duplicate || 0)} 条`;
-    indexedItems.replaceChildren();
-    pendingItems.replaceChildren();
-    if (indexed.length) indexed.forEach((item) => renderCard(item, indexedItems));
-    else renderEmpty(indexedItems, "暂无已完成的偷取索引");
-    if (pending.length) pending.forEach((item) => renderCard(item, pendingItems));
-    else renderEmpty(pendingItems, "当前没有待处理偷取图片");
+    const viewLabels = {
+      all: "全部表情",
+      classified: "已分类",
+      unclassified: "未分类",
+    };
+    const visibleItems = currentWorkspace.items;
+    const totalItems = Number(data.pagination?.items?.total ?? visibleItems.length);
+    viewFilters.forEach((button) => {
+      const active = button.dataset.captureView === currentView;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    itemsHeading.textContent = viewLabels[currentView] || viewLabels.all;
+    itemsCount.textContent = `${totalItems} 张`;
+    items.replaceChildren();
+    if (visibleItems.length) {
+      visibleItems.forEach((item) => renderCard(item, items));
+    } else {
+      const emptyMessage = currentView === "unclassified"
+        ? "当前没有未分类表情"
+        : currentView === "classified"
+          ? "当前没有已分类表情"
+          : "当前没有表情";
+      renderEmpty(items, emptyMessage);
+    }
     renderPagination(data.pagination);
 
     const state = data.library_index || {};
     const indexInProgress = indexing || ["queued", "running"].includes(state.status);
-    indexButton.disabled =
-      indexInProgress || !state.active_pack || !(stats.pending);
+    setTaskBusy(indexButton, indexInProgress);
+    indexButton.disabled = indexInProgress || !state.active_pack || !(stats.pending);
     indexButton.textContent = indexInProgress ? "分类索引中……" : "分类索引待处理项";
+    setTaskBusy(reindexButton, reindexing);
     reindexButton.disabled = reindexing || indexing;
     notice.textContent = indexing && state.status === "idle"
       ? "已提交分类索引，正在启动……"
@@ -943,7 +919,7 @@ async function initCaptureIndexPage() {
       const params = { pack_id: packId };
       if (selectedCategory) params.category = selectedCategory;
       params.page = currentPage;
-      if (currentV4Filter !== "all") params.v4_status = currentV4Filter;
+      params.view = currentView;
       const data = await apiGet("capture/workspace", params);
       if (generation !== workspaceRequestGeneration || packSelect.value !== packId) return;
       renderWorkspace(data);
@@ -994,13 +970,13 @@ async function initCaptureIndexPage() {
       if (!available && exportBackupCheckbox) exportBackupCheckbox.checked = false;
       if (exportHint) {
         exportHint.textContent = available
-          ? "当前资源包可导出带向量的自用备份。"
-          : "当前资源包没有完整向量；未勾选时将导出分享版。";
+          ? "保留语义数据，仅适合本机恢复。"
+          : "当前资源包没有完整语义数据，仅支持分享版。";
       }
     } catch (error) {
       if (requestId !== exportCapabilityRequestId) return;
       if (exportBackupCheckbox) exportBackupCheckbox.disabled = true;
-      if (exportHint) exportHint.textContent = "暂时无法读取导出能力，请稍后重试。";
+      if (exportHint) exportHint.textContent = "暂时无法读取导出能力，默认使用分享版。";
     }
   }
 
@@ -1105,19 +1081,19 @@ async function initCaptureIndexPage() {
 
   packSelect.addEventListener("change", () => {
     closeConfirmation(false);
-    reindexPollGeneration += 1;
+    reindexPolling.stop();
+    indexPolling.stop();
     disposalOperationGeneration += 1;
     mutationInProgress = false;
     clearThumbnailCache();
-    stopReindexPolling();
-    stopIndexPolling();
     selectedCategory = "";
-    currentV4Filter = "all";
+    currentView = "all";
     currentPage = 1;
     setSelectionMode(false);
     reindexing = false;
     indexing = false;
-    reindexButton.setAttribute("aria-busy", "false");
+    setTaskBusy(reindexButton, false);
+    setTaskBusy(indexButton, false);
     reindexProgress.hidden = true;
     progressRow.classList.remove("active");
     void loadWorkspace();
@@ -1134,18 +1110,21 @@ async function initCaptureIndexPage() {
     resetImportPreview();
     setTransferMessage("");
   });
-  v4MetricButtons.forEach((button) => {
-    button.addEventListener("click", () => setV4Filter(button.dataset.v4Filter || "all"));
+  viewFilters.forEach((button) => {
+    button.addEventListener("click", () => setView(button.dataset.captureView || "all"));
   });
   paginationPrev?.addEventListener("click", () => {
     if (currentPage > 1) {
-      void goToIndexedPage(currentPage - 1);
+      void goToItemsPage(currentPage - 1);
     }
   });
   paginationNext?.addEventListener("click", () => {
-    const totalPages = Math.max(1, Number(currentWorkspace?.pagination?.indexed?.total_pages || 1));
+    const paginationData = currentWorkspace?.pagination || {};
+    const totalPages = Math.max(1, Number(
+      (paginationData.items || paginationData.indexed || {}).total_pages || 1,
+    ));
     if (currentPage < totalPages) {
-      void goToIndexedPage(currentPage + 1);
+      void goToItemsPage(currentPage + 1);
     }
   });
   selectionModeButton?.addEventListener("click", () => setSelectionMode(!selectionMode));
@@ -1163,14 +1142,18 @@ async function initCaptureIndexPage() {
   });
   indexButton.addEventListener("click", async () => {
     if (indexing || !packSelect.value) return;
+    const indexPackId = packSelect.value;
+    const generation = indexPolling.nextGeneration();
     indexing = true;
-    indexButton.disabled = true;
+    setTaskBusy(indexButton, true);
     try {
-      const result = await apiPost("capture/index", { pack_id: packSelect.value });
+      const result = await apiPost("capture/index", { pack_id: indexPackId });
+      if (!indexPolling.isCurrent(generation) || packSelect.value !== indexPackId) return;
       notice.textContent = result.message || "分类索引已开始";
       await loadWorkspace();
-      void pollIndexStatus();
+      void pollIndexStatus(generation);
     } catch (error) {
+      if (!indexPolling.isCurrent(generation) || packSelect.value !== indexPackId) return;
       indexing = false;
       await loadWorkspace();
       showError(error);
@@ -1179,26 +1162,24 @@ async function initCaptureIndexPage() {
   reindexButton.addEventListener("click", async () => {
     if (indexing || !packSelect.value) return;
     if (!(await requestConfirmation(
-      "将扫描整个资源包并整理旧目录；完整 v4 索引会跳过视觉模型，旧版或字段不完整的图片会重新调用视觉模型。继续吗？",
+      "将扫描整个资源包并整理旧目录；旧版或字段不完整的图片会重新调用视觉模型。继续吗？",
       "全量语义重索引",
     ))) return;
     const reindexPackId = packSelect.value;
-    const generation = ++reindexPollGeneration;
+    const generation = reindexPolling.nextGeneration();
     reindexing = true;
-    reindexButton.disabled = true;
-    reindexButton.setAttribute("aria-busy", "true");
+    setTaskBusy(reindexButton, true);
     notice.classList.remove("error");
     notice.textContent = "正在进行全量语义重索引，请稍候……";
     try {
       const result = await apiPost("capture/reindex", { pack_id: reindexPackId });
-      if (generation !== reindexPollGeneration || packSelect.value !== reindexPackId) return;
+      if (!reindexPolling.isCurrent(generation) || packSelect.value !== reindexPackId) return;
       renderReindexProgress(result);
       void pollReindexStatus(generation);
     } catch (error) {
-      if (generation !== reindexPollGeneration || packSelect.value !== reindexPackId) return;
+      if (!reindexPolling.isCurrent(generation) || packSelect.value !== reindexPackId) return;
       reindexing = false;
-      reindexButton.disabled = false;
-      reindexButton.setAttribute("aria-busy", "false");
+      setTaskBusy(reindexButton, false);
       showError(error);
     }
   });

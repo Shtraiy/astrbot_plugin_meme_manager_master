@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 A_MANAGE = ROOT / "pages" / "a_manage"
 REMAINING_PAGE_DIRS = ("semantic",)
-ASSET_VERSION = "20260817-transfer-1"
+ASSET_VERSION = "20260818-workspace-layout-1"
 
 
 class WebUINavigationAuthTests(unittest.TestCase):

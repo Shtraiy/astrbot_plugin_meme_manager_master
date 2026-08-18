@@ -2,6 +2,15 @@
 
 ## Session: 2026-08-17
 
+### v2.3.0 本地代码健康检查
+
+- **Status:** complete；只读检查，无代码修复。
+- 当前 `main` 与 `origin/main` 同步，工作区无未提交代码改动。
+- 运行全量 unittest：348 passed、1 skipped，10.704 秒。
+- compileall、schema、architecture、Node 语法和 `git diff --check` 全部通过。
+- 复核得到 1 个 Warning、3 个 Suggestion，无 Critical；健康评分 97/100。
+- 主要开放项：大型编排/兼容模块、v2.3.0 删除后的旧 import/服务初始化、`storage.py` 重复策略定义、异步测试资源警告。
+
 ### 移除表情包管理页面与死接口
 
 - **Status:** 实现与全量验证完成；git 提交待用户批准。

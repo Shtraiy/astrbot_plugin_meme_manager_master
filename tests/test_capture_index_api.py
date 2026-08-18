@@ -71,6 +71,12 @@ class CaptureIndexApiTests(unittest.TestCase):
                 second_page = instance._capture_workspace_for_pack("pack", page=2)
                 clamped_page = instance._capture_workspace_for_pack("pack", page=99)
                 filtered = instance._capture_workspace_for_pack("pack", "sad", page=1)
+                classified_view = instance._capture_workspace_for_pack(
+                    "pack", view="classified", page=1
+                )
+                unclassified_view = instance._capture_workspace_for_pack(
+                    "pack", view="unclassified", page=1
+                )
 
         self.assertEqual(first_page["pagination"]["page"], 1)
         self.assertEqual(first_page["pagination"]["page_size"], 48)
@@ -85,6 +91,12 @@ class CaptureIndexApiTests(unittest.TestCase):
         self.assertEqual(clamped_page["pagination"]["page"], 2)
         self.assertEqual(len(clamped_page["indexed_items"]), 3)
         self.assertEqual(first_page["summary"]["indexed"], 51)
+        self.assertEqual(first_page["pagination"]["items"]["total"], 52)
+        self.assertEqual(len(first_page["items"]), 48)
+        self.assertEqual(classified_view["pagination"]["items"]["total"], 51)
+        self.assertEqual(len(classified_view["items"]), 48)
+        self.assertEqual(unclassified_view["pagination"]["items"]["total"], 1)
+        self.assertEqual([item["filename"] for item in unclassified_view["items"]], [pending.name])
         self.assertEqual(len(filtered["indexed_items"]), 1)
         self.assertEqual(filtered["indexed_items"][0]["filename"], first.name)
         self.assertEqual(set(filtered["indexed_items"][0]["tags"]), {"开心", "悲伤"})
@@ -268,6 +280,47 @@ class CaptureIndexApiTests(unittest.TestCase):
         self.assertEqual(after["summary"]["duplicate"], 0)
         self.assertFalse(any(item.get("duplicate") for item in after["pending_items"]))
         self.assertEqual(after["duplicate_digests"], [])
+
+    def test_workspace_migrates_duplicate_events_into_auto_blacklist(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pack_dir = root / "pack"
+            store = MemeStore(pack_dir)
+            image = store.save_image(b"legacy-duplicate-image", "happy", ".png").path
+            digest = store.image_digest(image)
+            catalog = store.load_catalog()
+            for item in catalog["items"]:
+                if item["filename"] == image.name:
+                    item["indexed"] = True
+            store.write_catalog(catalog["items"])
+            record_capture_event(
+                pack_dir,
+                category="happy",
+                filename=image.name,
+                digest=digest,
+                status="duplicate",
+            )
+
+            instance = CaptureIndexAPIMixin.__new__(CaptureIndexAPIMixin)
+            instance._library_index_state = {}
+            instance.store = store
+            instance.capture_blacklist = CaptureBlacklist(root / "plugin-data")
+
+            with patch.object(capture_index_api, "PACKS_DIR", root):
+                workspace = instance._capture_workspace_for_pack("pack")
+
+            self.assertEqual(workspace["summary"]["duplicate"], 0)
+            self.assertEqual(workspace["pending_items"], [])
+            self.assertEqual(
+                load_capture_activity(pack_dir)["events"][0]["status"],
+                "blacklisted",
+            )
+            self.assertIn(digest, instance.capture_blacklist.auto_entries())
+
+            image.unlink()
+            with patch.object(capture_index_api, "PACKS_DIR", root):
+                instance._capture_workspace_for_pack("pack")
+            self.assertEqual(instance.capture_blacklist.auto_entries(), {})
 
 
 class IgnoreDuplicateApiTests(unittest.IsolatedAsyncioTestCase):

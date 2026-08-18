@@ -48,6 +48,7 @@ class Element {
     this.listeners = {};
     this.classList = new ClassList();
     this.dataset = {};
+    this.style = { setProperty() {} };
     this.value = "";
     this.disabled = false;
     this.hidden = false;
@@ -94,15 +95,14 @@ class Element {
 
 function makeDocument() {
   const ids = [
-    "pack", "notice", "capture-summary", "capture-folders",
-    "capture-indexed-items", "capture-pending-items", "capture-indexed-count",
-    "capture-pending-count", "capture-refresh-button", "capture-reindex-button",
+    "pack", "notice", "capture-items", "capture-items-count", "capture-items-heading",
+    "capture-view-filters", "capture-category-filters", "capture-refresh-button", "capture-reindex-button",
     "capture-reindex-progress", "capture-reindex-progress-label",
     "capture-reindex-progress-count", "capture-reindex-progress-bar",
-    "capture-index-button", "capture-selection-mode-button", "capture-indexed-heading",
+    "capture-index-button", "capture-selection-mode-button",
     "capture-select-indexed-page-button", "capture-select-pending-button",
     "capture-clear-selection-button", "capture-selection-summary",
-    "capture-category-filters", "preview-mask",
+    "preview-mask",
     "capture-pagination", "capture-pagination-prev", "capture-pagination-pages",
     "capture-pagination-next", "capture-pagination-summary",
     "preview-image", "preview-close", "capture-confirm-mask",
@@ -111,6 +111,12 @@ function makeDocument() {
   ];
   const elements = new Map(ids.map((id) => [id, new Element("div", id)]));
   const progressRow = new Element("div");
+  const itemGrid = elements.get("capture-items");
+  const filteredItems = (kind) => ({
+    get children() {
+      return itemGrid.children.filter((card) => card.dataset.kind === kind || (kind === "pending" && card.dataset.kind === "duplicate"));
+    },
+  });
   elements.get("pack").tagName = "select";
   elements.get("capture-reindex-progress").classList.add("reindex-progress");
   elements.get("capture-reindex-progress").hidden = true;
@@ -118,6 +124,11 @@ function makeDocument() {
   elements.get("preview-mask").classList.add("hidden");
   return {
     querySelector(selector) {
+      if (selector === "#capture-indexed-items") return filteredItems("indexed");
+      if (selector === "#capture-pending-items") return filteredItems("pending");
+      if (selector.endsWith(" strong")) {
+        return elements.get(selector.slice(1, -7));
+      }
       if (selector.startsWith("#")) return elements.get(selector.slice(1));
       if (selector === ".capture-progress-row") return progressRow;
       return null;
@@ -167,6 +178,14 @@ async function runPage(scriptPath) {
         duplicate: pendingAll.filter((item) => item.duplicate).length,
         complete_folders: 0,
         folder_total: 1,
+        v4: {
+          completion_percent: 77.78,
+          status: "partial",
+          complete: 7,
+          needs_rebuild: 2,
+          pending: 3,
+          duplicate: 1,
+        },
       },
       folders: [{ category: "happy", tag: "happy", indexed: indexedAll.length, total: indexedAll.length, complete: true }],
       indexed_items: indexedAll.slice(start, start + 48),

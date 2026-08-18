@@ -4,23 +4,46 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SEMANTIC_PAGE = ROOT / "pages" / "a_manage" / "semantic"
-ASSET_VERSION = "20260817-transfer-1"
+ASSET_VERSION = "20260818-workspace-layout-1"
 
 
 class CaptureIndexPageTests(unittest.TestCase):
+    def test_workspace_uses_overview_sections(self):
+        source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
+        self.assertIn('class="workspace-header"', source)
+        self.assertIn('id="capture-catalog-panel"', source)
+        self.assertIn('id="capture-items"', source)
+
+    def test_workspace_uses_one_emoji_grid_with_view_filters(self):
+        source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
+        script = (SEMANTIC_PAGE / "script.js").read_text(encoding="utf-8")
+        self.assertIn('id="capture-items"', source)
+        self.assertIn('id="capture-view-filters"', source)
+        self.assertIn('data-capture-view="classified"', source)
+        self.assertIn('data-capture-view="unclassified"', source)
+        self.assertNotIn('id="capture-v4-health"', source)
+        self.assertNotIn('id="capture-attention-items"', source)
+        self.assertNotIn('id="capture-indexed-items"', source)
+        self.assertNotIn('id="capture-pending-items"', source)
+        self.assertIn("currentView", script)
+        self.assertIn("params.view = currentView", script)
+
+    def test_workspace_cache_version_is_polished(self):
+        source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
+        self.assertIn("20260818-workspace-layout-1", source)
+
     def test_capture_index_page_is_available(self):
         page = SEMANTIC_PAGE / "index.html"
         self.assertTrue(page.is_file())
         source = page.read_text(encoding="utf-8")
         self.assertIn("表情索引", source)
-        self.assertIn("capture-indexed-items", source)
-        self.assertIn("capture-pending-items", source)
+        self.assertIn("capture-items", source)
         self.assertIn("capture-reindex-button", source)
         self.assertIn("全量语义重索引", source)
-        self.assertIn("完整 v4", source)
+        self.assertIn("全部表情", source)
         self.assertNotIn("capture-dispose-selected-button", source)
         self.assertIn("capture-category-filters", source)
-        self.assertIn("sections-stack", source)
+        self.assertIn("capture-view-filters", source)
 
     def test_capture_index_page_has_the_vertical_workspace_contract(self):
         page = SEMANTIC_PAGE / "index.html"
@@ -29,15 +52,14 @@ class CaptureIndexPageTests(unittest.TestCase):
         style = page.with_name("style.css").read_text(encoding="utf-8")
         self.assertIn("capture-reindex-button", source)
         self.assertIn("全量语义重索引", source)
-        self.assertIn("完整 v4", source)
         self.assertIn("capture-category-filters", source)
-        self.assertIn("sections-stack", source)
+        self.assertIn("capture-view-filters", source)
         self.assertIn('size: "preview"', script)
         self.assertIn('apiPost("capture/reindex"', script)
         self.assertIn('apiPost("capture/items/dispose"', script)
         self.assertIn('apiPost("capture/items/ignore-all"', script)
         self.assertIn('apiPost("capture/index"', script)
-        self.assertIn(".sections-stack", style)
+        self.assertIn(".catalog-panel .cards", style)
 
     def test_selection_index_and_pack_wide_ignore_controls_exist(self):
         source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
@@ -49,13 +71,21 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn('kind === "pending"', script)
         self.assertIn('item.kind !== "indexed"', script)
 
-    def test_indexed_pagination_sits_between_indexed_and_pending_sections(self):
+    def test_single_catalog_places_view_filters_before_items_and_pagination(self):
         source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
-        indexed = source.index('id="capture-indexed-items"')
+        view_filters = source.index('id="capture-view-filters"')
+        categories = source.index('id="capture-category-filters"')
+        items = source.index('id="capture-items"')
         pagination = source.index('id="capture-pagination"')
-        pending = source.index('id="capture-pending-items"')
-        self.assertLess(indexed, pagination)
-        self.assertLess(pagination, pending)
+        self.assertLess(view_filters, categories)
+        self.assertLess(categories, items)
+        self.assertLess(items, pagination)
+        self.assertNotIn('id="capture-v4-health"', source)
+
+    def test_catalog_uses_one_card_grid_for_all_views(self):
+        style = (SEMANTIC_PAGE / "style.css").read_text(encoding="utf-8")
+        self.assertIn(".catalog-panel .cards", style)
+        self.assertNotIn(".attention-items", style)
 
     def test_reindex_button_is_not_silently_disabled_by_model_index_state(self):
         script = (SEMANTIC_PAGE / "script.js").read_text(encoding="utf-8")
@@ -107,7 +137,9 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn("pollIndexStatus", script)
         self.assertIn('apiGet("capture/index/status"', script)
         self.assertIn("const data = await loadWorkspace();", script)
-        self.assertIn('setTimeout(() => void pollIndexStatus(), 500)', script)
+        self.assertIn("createPollingController", script)
+        self.assertIn("indexPolling.schedule", script)
+        self.assertIn("setTaskBusy", script)
         self.assertIn('["queued", "running"]', script)
 
     def test_progress_page_assets_use_a_cache_busting_script_version(self):
@@ -219,27 +251,44 @@ class CaptureIndexPageTests(unittest.TestCase):
     def test_index_stats_render_dynamic_values_without_inner_html(self):
         script = (SEMANTIC_PAGE / "script.js").read_text(encoding="utf-8")
         self.assertNotIn("item.innerHTML", script)
-        self.assertIn("valueElement.textContent", script)
+        self.assertIn("itemsCount.textContent", script)
 
-    def test_v4_health_panel_contract_exists(self):
+    def test_catalog_view_filter_contract_exists(self):
         source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
         style = (SEMANTIC_PAGE / "style.css").read_text(encoding="utf-8")
-        self.assertIn('id="capture-v4-health"', source)
-        self.assertIn('id="capture-v4-ring-value"', source)
-        self.assertIn('data-v4-filter="needs_rebuild"', source)
-        self.assertIn('aria-live="polite"', source)
-        self.assertIn(".summary[hidden]", style)
+        self.assertIn('id="capture-view-filters"', source)
+        self.assertIn('data-capture-view="classified"', source)
+        self.assertIn('data-capture-view="unclassified"', source)
+        self.assertIn('aria-pressed="true"', source)
+        self.assertIn(".catalog-panel .cards", style)
         self.assertIn(f"style.css?v={ASSET_VERSION}", source)
         self.assertIn(f"script.js?v={ASSET_VERSION}", source)
 
-    def test_v4_health_runtime_contract_exists(self):
+    def test_workspace_typography_uses_a_consistent_compact_scale(self):
+        style = (SEMANTIC_PAGE / "style.css").read_text(encoding="utf-8")
+        self.assertIn(
+            'font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;',
+            style,
+        )
+        self.assertIn("h1 { font-size: clamp(28px, 4vw, 44px);", style)
+        self.assertIn("font-variant-numeric: tabular-nums;", style)
+
+    def test_workspace_removes_repeated_health_detail_and_hides_empty_import_preview(self):
+        source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
         script = (SEMANTIC_PAGE / "script.js").read_text(encoding="utf-8")
-        self.assertIn("renderV4Health", script)
-        self.assertIn("currentV4Filter", script)
-        self.assertIn("params.v4_status = currentV4Filter", script)
-        self.assertIn("button.dataset.v4Filter", script)
-        self.assertIn('v4HealthRing.style.setProperty("--v4-completion"', script)
-        self.assertNotIn('v4Health.style.setProperty("--v4-completion"', script)
+        style = (SEMANTIC_PAGE / "style.css").read_text(encoding="utf-8")
+        self.assertNotIn('id="capture-v4-health-detail"', source)
+        self.assertNotIn("v4DetailNodes", script)
+        self.assertIn(".transfer-import-preview[hidden]", style)
+
+    def test_catalog_view_runtime_contract_exists(self):
+        script = (SEMANTIC_PAGE / "script.js").read_text(encoding="utf-8")
+        self.assertIn("setView", script)
+        self.assertIn("currentView", script)
+        self.assertIn("params.view = currentView", script)
+        self.assertIn("button.dataset.captureView", script)
+        self.assertNotIn("renderV4Health", script)
+        self.assertNotIn("currentV4Filter", script)
         self.assertNotIn("summary.innerHTML", script)
 
     def test_export_import_controls_use_transfer_routes(self):
@@ -251,6 +300,31 @@ class CaptureIndexPageTests(unittest.TestCase):
         self.assertIn('download("packs/export/download"', script)
         self.assertIn('upload("packs/import/stage"', script)
         self.assertIn('apiPost("packs/import/apply"', script)
+
+    def test_workspace_centers_heading_and_places_transfer_controls_below_it(self):
+        source = (SEMANTIC_PAGE / "index.html").read_text(encoding="utf-8")
+        style = (SEMANTIC_PAGE / "style.css").read_text(encoding="utf-8")
+        toolbar_start = source.index('<section class="toolbar panel"')
+        toolbar_end = source.index("</section>", toolbar_start)
+        transfer_start = source.index('id="capture-transfer-panel"')
+        transfer_end = source.index("</section>", transfer_start)
+        self.assertIn('class="toolbar-pack-control"', source)
+        self.assertIn('class="toolbar-actions"', source)
+        self.assertIn('class="export-mode-control"', source)
+        self.assertIn('id="capture-export-backup"', source[toolbar_start:toolbar_end])
+        self.assertNotIn('id="capture-export-backup"', source[transfer_start:transfer_end])
+        self.assertNotIn('class="transfer-export-row"', source)
+        self.assertRegex(style, r"\.workspace-header\s*\{[^}]*display:\s*grid;")
+        self.assertRegex(style, r"\.page-header-copy\s*\{[^}]*text-align:\s*center;")
+
+    def test_transfer_export_copy_uses_consistent_typography(self):
+        style = (SEMANTIC_PAGE / "style.css").read_text(encoding="utf-8")
+        self.assertRegex(
+            style,
+            r"\.transfer-option,\s*\.transfer-hint\s*\{[^}]*font-family:\s*inherit;",
+        )
+        self.assertRegex(style, r"\.transfer-option\s*\{[^}]*line-height:\s*1\.4;")
+        self.assertRegex(style, r"\.transfer-hint\s*\{[^}]*font-size:\s*12px;")
 
 
 if __name__ == "__main__":

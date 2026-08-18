@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+from pathlib import Path
 from typing import Any, Callable
 
 from astrbot.api import logger
@@ -91,6 +92,12 @@ class CapturePipeline:
             return None
         return self.config.perceptual_duplicate_threshold
 
+    def _reconcile_auto_blacklist(self) -> None:
+        reconcile = getattr(self._capture_blacklist, "reconcile_pack", None)
+        if not callable(reconcile):
+            return
+        reconcile(Path(self.store.root))
+
     async def process_one(
         self,
         event: Any,
@@ -112,8 +119,14 @@ class CapturePipeline:
     ) -> list[str]:
         """Process all new images in one message with two batched model calls."""
         async with self._semaphore:
+            if self._capture_blacklist is not None:
+                try:
+                    self._reconcile_auto_blacklist()
+                except Exception as exc:
+                    logger.warning("[meme_manager_master] 自动重复黑名单整理失败: %s", exc)
             statuses = ["error"] * len(sources)
             loaded: list[tuple[int, Any, Any]] = []
+            same_message_duplicates: list[tuple[int, Any, int]] = []
             for index, source in enumerate(sources):
                 try:
                     payload = await self._loader(source)
@@ -133,12 +146,18 @@ class CapturePipeline:
                         statuses[index] = "blacklisted"
                         continue
                 threshold = self._duplicate_threshold()
-                if any(
-                    self.store.is_similar(payload.content, previous.content, threshold)
-                    for _previous_index, previous, _previous_path in loaded
-                ):
+                duplicate_source_index = next(
+                    (
+                        previous_index
+                        for previous_index, previous, _previous_path in loaded
+                        if self.store.is_similar(payload.content, previous.content, threshold)
+                    ),
+                    None,
+                )
+                if duplicate_source_index is not None:
                     logger.debug("[meme_manager_master] current message contains a perceptual duplicate")
                     statuses[index] = "duplicate"
+                    same_message_duplicates.append((index, payload, duplicate_source_index))
                     continue
                 temp_path = self.store.make_temp_file(payload.content, payload.extension)
                 loaded.append((index, payload, temp_path))
@@ -234,6 +253,7 @@ class CapturePipeline:
                         for index, vision in accepted.items()
                     }
                 payload_by_index = {index: payload for index, payload, _path in loaded}
+                saved_paths_by_index: dict[int, Path] = {}
                 fallback = normalize_primary_category(self.config.fallback_category) or "疑惑"
                 for index, vision in accepted.items():
                     scene = scenes.get(index, {})
@@ -277,6 +297,7 @@ class CapturePipeline:
                             continue
                         if result.status in {"saved", "duplicate"}:
                             self._bind_saved_result(event, result.path)
+                            saved_paths_by_index[index] = result.path
                         statuses[index] = result.status
                         if result.status in {"saved", "duplicate"}:
                             catalog_entry = self._catalog_entry_builder(
@@ -308,17 +329,44 @@ class CapturePipeline:
                                     digest=result.digest,
                                     tags=tags,
                                 )
+                                event_status = "duplicate"
+                                auto_add = getattr(self._capture_blacklist, "add_auto", None)
+                                if callable(auto_add):
+                                    try:
+                                        auto_add(
+                                            digest,
+                                            pack_id=Path(self.store.root).name,
+                                            filename=result.path.name,
+                                        )
+                                        event_status = "blacklisted"
+                                    except Exception as exc:
+                                        logger.warning(
+                                            "[meme_manager_master] 自动加入重复黑名单失败 path=%s: %s",
+                                            result.path,
+                                            exc,
+                                        )
                                 self._record_capture_event(
                                     self.store.root,
                                     category=category,
                                     filename=result.path.name,
                                     digest=result.digest,
-                                    status="duplicate",
+                                    status=event_status,
                                     duplicate_of=result.path.name,
                                 )
                                 logger.debug(
                                     "[meme_manager_master] 跳过重复表情包 path=%s", result.path
                                 )
+                auto_add = getattr(self._capture_blacklist, "add_auto", None)
+                if callable(auto_add):
+                    for _index, duplicate_payload, source_index in same_message_duplicates:
+                        source_path = saved_paths_by_index.get(source_index)
+                        if source_path is None:
+                            continue
+                        auto_add(
+                            hashlib.sha256(duplicate_payload.content).hexdigest(),
+                            pack_id=Path(self.store.root).name,
+                            filename=source_path.name,
+                        )
                 return statuses
             except Exception:
                 logger.error("[meme_manager_master] 批量处理群聊图片失败", exc_info=True)

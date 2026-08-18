@@ -2,7 +2,7 @@
 
 # 表情包管理大师
 
-[![version](https://img.shields.io/badge/version-v2.3.0-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
+[![version](https://img.shields.io/badge/version-v2.4.0-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.5.7-orange.svg)](https://github.com/Soulter/AstrBot)
 
 **让表情包管理、收集与选图更简单**
@@ -17,13 +17,13 @@
 
 - 在 AstrBot WebUI 的插件页面直接打开“表情包管理大师”，入口即表情索引工作台。
 - 表情索引工作台按分类浏览缩略图、处置捕获图片、维护 v4 语义索引，并支持表情包导出与导入；手动上传、删除、移动与分类维护通过聊天命令完成。
-- 捕获索引工作台支持已整理与待处理表情的统一批量处置：已整理项删除并拉黑，普通待分类项忽略、删除并拉黑，重复项忽略并拉黑但保留已有图片。
-- 手动忽略或从索引工作台删除的图片会写入插件级精确 SHA-256 永久黑名单；后续自动收集会在识图前和保存前拦截，所有资源包共享。
+- 捕获索引工作台支持已整理与待处理表情的统一批量处置：已整理项删除并拉黑，普通待分类项忽略、删除并拉黑；重复图片会自动进入临时黑名单，不再生成待分类记录，并保留已有图片。
+- 手动忽略或从索引工作台删除的图片会写入插件级精确 SHA-256 永久黑名单；自动重复黑名单会记录来源资源包和文件名，原图被删除后自动移除。两类黑名单都会在识图前和保存前拦截，所有资源包共享。
 - 使用 pack 运行时保存表情包，支持默认包、导入导出和会话/人格选包规则。
 - 采用 12 个稳定主分类路由，辅助语义最多保留 2 个，并用精确 ID 选图。
 - 索引会整理图片描述、可见配字、文字含义、适用场景和避免场景，降低带字表情包误用。
 - 表情索引页的“全量语义重索引”会扫描整个资源包、整理旧目录；已有完整 v4 索引会跳过视觉模型，旧版或字段不完整的图片会重新识别，并写入 `full_reindex_status` 检查标记。
-- 表情索引工作台提供 v4 健康面板；可按“v4 完整、需重建、待分类、重复待忽略”气泡筛选当前资源包，旧缩略图预览与处置操作保持不变。
+- 表情索引工作台提供 v4 健康面板；可按“v4 完整、需重建、待分类”气泡筛选当前资源包，重复记录会在整理时自动归入黑名单。
 - 全量语义重索引按批次保存检查点并持久化进度；切换 WebUI 页面、插件重载或任务中断后，重新打开页面会自动恢复，已完成图片不会重复调用模型。
 - 自动识别群聊图片，使用视觉模型判断是否为表情包，再按场景分类保存。
 - 机器人回复完成后由情景模型统一判断是否追加本地表情包；其他插件生成的图片、文件、视频或音频不会被本插件抢占或再次追加表情包。
@@ -42,6 +42,7 @@
 ```text
 AstrBot/data/plugin_data/meme_manager_master/
 ├── capture_blacklist.json
+├── capture_auto_blacklist.json
 └── packs/
     └── <pack_id>/
         ├── manifest.json
@@ -50,7 +51,7 @@ AstrBot/data/plugin_data/meme_manager_master/
             └── index.json
 ```
 
-`capture_blacklist.json` 是插件级全局数据，不随单个资源包导入、导出或卸载；全量运行时备份会包含它，恢复时与当前黑名单取并集。
+`capture_blacklist.json` 是插件级全局手动黑名单，不随单个资源包导入、导出或卸载；自动重复黑名单保存在同目录的 `capture_auto_blacklist.json`，由来源文件是否仍存在决定是否保留。
 
 本插件只迁移自己的旧版 `meme_manager_master/memes/` 和 `memes_data.json` 到 `legacy-migrated` pack，不会读取或覆盖原版 `meme_manager` 的数据。本插件的自动收集会跟随当前默认 pack，避免与 WebUI 管理目录分离。
 

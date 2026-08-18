@@ -6,7 +6,6 @@ from application.services import (
     CatalogService,
     CommunityPackService,
     PackService,
-    PackBackupService,
     PackRuntimeService,
     SelectionApplicationService,
     PackTransferService,
@@ -14,8 +13,17 @@ from application.services import (
 from domain.models import Category, MemeId, PackContext, PackId, SelectionResult
 
 
+ROOT = Path(__file__).parents[1]
+
+
 class ApplicationServiceTests(unittest.TestCase):
-    def test_pack_application_facades_keep_runtime_backup_and_community_contracts(self):
+    def test_application_does_not_export_retired_backup_facade(self):
+        source = (ROOT / "application" / "__init__.py").read_text(encoding="utf-8")
+        services = (ROOT / "application" / "services.py").read_text(encoding="utf-8")
+        self.assertNotIn("PackBackupService", source)
+        self.assertNotIn("PackBackupService", services)
+
+    def test_pack_application_facades_keep_runtime_and_community_contracts(self):
         legacy = type(
             "LegacyPackStorage",
             (),
@@ -23,8 +31,6 @@ class ApplicationServiceTests(unittest.TestCase):
                 "list_installed_packs": lambda _: ["demo"],
                 "get_pack_detail": lambda _, pack_id: {"pack_id": pack_id},
                 "set_default_pack": lambda _, pack_id: {"default": pack_id},
-                "export_runtime_backup": lambda _, **kwargs: {"backup": True},
-                "import_runtime_backup": lambda _, path, **kwargs: {"restore": path},
                 "fetch_and_cache_community_index": lambda _, **kwargs: {"community": True},
                 "load_cached_community_index": lambda _: {"cached": True},
                 "find_cached_pack_entry": lambda _, pack_id: {"id": pack_id},
@@ -38,8 +44,6 @@ class ApplicationServiceTests(unittest.TestCase):
         )()
         self.assertEqual(PackRuntimeService(legacy).list(), ["demo"])
         self.assertEqual(PackRuntimeService(legacy).detail("demo")["pack_id"], "demo")
-        self.assertEqual(PackBackupService(legacy).export()["backup"], True)
-        self.assertEqual(PackBackupService(legacy).restore("backup.zip")["restore"], "backup.zip")
         community = CommunityPackService(legacy)
         self.assertEqual(community.fetch()["community"], True)
         self.assertEqual(community.cached()["cached"], True)

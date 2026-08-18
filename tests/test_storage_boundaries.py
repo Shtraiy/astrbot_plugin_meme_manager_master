@@ -1,3 +1,4 @@
+import ast
 import tempfile
 import threading
 import unittest
@@ -13,7 +14,22 @@ from infrastructure.storage_policy import (
 )
 
 
+ROOT = Path(__file__).parents[1]
+
+
+def _definition_count(name: str) -> int:
+    tree = ast.parse((ROOT / "storage.py").read_text(encoding="utf-8"))
+    return sum(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
+        for node in tree.body
+    )
+
+
 class StorageBoundaryTests(unittest.TestCase):
+    def test_storage_policy_compatibility_names_have_one_definition(self):
+        for name in ("is_safe_category_segment", "resolve_safe_category_dir", "_safe_extension"):
+            self.assertEqual(_definition_count(name), 1, name)
+
     def test_storage_policy_rejects_escape_and_normalizes_extension(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tests.fakes import install_package_alias, install_runtime_stubs
+from capture_blacklist import CaptureBlacklist
 from storage import MemeStore
 
 
@@ -243,6 +244,69 @@ class CapturePipelineTests(unittest.TestCase):
         self.assertEqual(description, "新的识别描述")
         self.assertEqual(image_count, 1)
         self.assertEqual(events[0]["status"], "duplicate")
+
+    def test_duplicate_capture_is_auto_blacklisted_and_hidden_from_duplicate_queue(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                store = MemeStore(root / "pack")
+                existing = store.save_image(b"already-stored", ["开心"], ".png", None)
+                blacklist = CaptureBlacklist(root / "plugin-data")
+                events = []
+                payload = SimpleNamespace(content=b"already-stored", extension=".png")
+                pipeline = self._pipeline(
+                    store=store,
+                    payload=payload,
+                    blacklist=blacklist,
+                    events=events,
+                    calls={"loader": 0, "recognize": 0, "classify": 0},
+                )
+
+                statuses = await pipeline.process_batch(None, ["source"], "message", "outline")
+
+                return statuses, existing.path, events, blacklist.auto_entries()
+
+        statuses, existing_path, events, auto_entries = asyncio.run(run())
+        digest = hashlib.sha256(b"already-stored").hexdigest()
+        self.assertEqual(statuses, ["duplicate"])
+        self.assertIn(digest, auto_entries)
+        self.assertEqual(events[0]["status"], "blacklisted")
+        self.assertEqual(
+            auto_entries,
+            {digest: [{"pack_id": existing_path.parent.parent.name, "filename": existing_path.name}]},
+        )
+
+    def test_same_message_duplicate_is_auto_blacklisted_without_a_pending_event(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                store = MemeStore(root / "pack")
+                blacklist = CaptureBlacklist(root / "plugin-data")
+                events = []
+                pipeline = self._pipeline(
+                    store=store,
+                    payload=SimpleNamespace(content=b"same-message-image", extension=".png"),
+                    blacklist=blacklist,
+                    events=events,
+                    calls={"loader": 0, "recognize": 0, "classify": 0},
+                )
+
+                statuses = await pipeline.process_batch(
+                    None,
+                    ["first-source", "second-source"],
+                    "message",
+                    "outline",
+                )
+
+                return statuses, events, blacklist.auto_entries(), store.image_paths()
+
+        statuses, events, auto_entries, image_paths = asyncio.run(run())
+        digest = hashlib.sha256(b"same-message-image").hexdigest()
+        self.assertEqual(statuses, ["saved", "duplicate"])
+        self.assertEqual(len(image_paths), 1)
+        self.assertEqual(events[0]["status"], "pending")
+        self.assertEqual(len(auto_entries), 1)
+        self.assertIn(digest, auto_entries)
 
 
 if __name__ == "__main__":

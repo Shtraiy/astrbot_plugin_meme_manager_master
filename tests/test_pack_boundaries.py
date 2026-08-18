@@ -4,7 +4,6 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from backend.community_pack_source import CommunityPackSource
-from backend.pack_backup import PackBackup
 from backend.pack_paths import PackPaths
 from backend.pack_runtime import PackRuntime
 from backend.pack_transfer import PackTransfer
@@ -26,7 +25,7 @@ class PackBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             paths.backup("../outside.zip")
 
-    def test_runtime_transfer_backup_and_community_boundaries_delegate(self):
+    def test_runtime_transfer_and_community_boundaries_delegate(self):
         class Backend:
             def list_installed_packs(self):
                 return ["list"]
@@ -52,12 +51,6 @@ class PackBoundaryTests(unittest.TestCase):
             def uninstall_pack(self, pack_id, **kwargs):
                 return {"uninstall": pack_id}
 
-            def export_runtime_backup(self, **kwargs):
-                return {"backup": True}
-
-            def import_runtime_backup(self, path, **kwargs):
-                return {"restore": path}
-
             def fetch_and_cache_community_index(self, **kwargs):
                 return {"community": True}
 
@@ -77,8 +70,6 @@ class PackBoundaryTests(unittest.TestCase):
         self.assertEqual(transfer.export("demo")["export"], "demo")
         self.assertEqual(transfer.import_pack("a.zip")["import"], "a.zip")
         self.assertEqual(transfer.uninstall("demo")["uninstall"], "demo")
-        self.assertEqual(PackBackup(backend).export()["backup"], True)
-        self.assertEqual(PackBackup(backend).import_backup("a.zip")["restore"], "a.zip")
         community = CommunityPackSource(backend)
         self.assertEqual(community.fetch()["community"], True)
         self.assertEqual(community.cached()["cached"], True)

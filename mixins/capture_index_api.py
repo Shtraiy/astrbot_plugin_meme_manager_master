@@ -80,9 +80,10 @@ class CaptureIndexAPIMixin:
         *,
         page: int = 1,
         v4_status: str = "all",
+        view: str = "all",
     ) -> dict:
         return self._flat_capture_workspace_for_pack(
-            pack_id, category, page=page, v4_status=v4_status
+            pack_id, category, page=page, v4_status=v4_status, view=view
         )
 
     @staticmethod
@@ -106,11 +107,15 @@ class CaptureIndexAPIMixin:
         *,
         page: int = 1,
         v4_status: str = "all",
+        view: str = "all",
     ) -> dict:
         """Build the capture workspace from flat files and virtual tags."""
         v4_status = str(v4_status or "all").strip().lower()
         if v4_status not in {"all", "complete", "needs_rebuild", "pending", "duplicate"}:
             raise ValueError("v4_status 无效")
+        view = str(view or "all").strip().lower()
+        if view not in {"all", "classified", "unclassified"}:
+            raise ValueError("view 无效")
         selected_tag = canonical_tag(category) if str(category or "").strip() else None
         if category and not selected_tag:
             raise ValueError("invalid tag")
@@ -121,6 +126,12 @@ class CaptureIndexAPIMixin:
         pack_dir = (PACKS_DIR / pack_id).resolve()
         store = MemeStore(pack_dir)
         store.reindex_flat_catalog()
+        reconcile = getattr(getattr(self, "capture_blacklist", None), "reconcile_pack", None)
+        if callable(reconcile):
+            try:
+                reconcile(pack_dir)
+            except Exception as exc:
+                logger.warning("[meme_manager_master] 自动重复黑名单整理失败: %s", exc)
         activity = load_capture_activity(pack_dir)
         indexed_by_filename: dict[str, dict] = {}
         pending_by_filename: dict[str, dict] = {}
@@ -270,8 +281,26 @@ class CaptureIndexAPIMixin:
         )
         visible_folders = [folder for folder in folders if not selected_tag or folder["tag"] == selected_tag]
         indexed_total_pages = max(1, (len(indexed_items) + CAPTURE_WORKSPACE_PAGE_SIZE - 1) // CAPTURE_WORKSPACE_PAGE_SIZE)
+        indexed_current_page = min(requested_page, indexed_total_pages)
+        indexed_page_start = (indexed_current_page - 1) * CAPTURE_WORKSPACE_PAGE_SIZE
+        indexed_page_end = indexed_page_start + CAPTURE_WORKSPACE_PAGE_SIZE
         pending_total_pages = 1
-        current_page = min(requested_page, indexed_total_pages)
+        if view == "classified":
+            visible_items = indexed_items
+        elif view == "unclassified":
+            visible_items = pending_items
+        else:
+            visible_items = sorted(
+                [*indexed_items, *pending_items],
+                key=self._capture_item_time,
+                reverse=True,
+            )
+        visible_total_pages = max(
+            1,
+            (len(visible_items) + CAPTURE_WORKSPACE_PAGE_SIZE - 1)
+            // CAPTURE_WORKSPACE_PAGE_SIZE,
+        )
+        current_page = min(requested_page, visible_total_pages)
         page_start = (current_page - 1) * CAPTURE_WORKSPACE_PAGE_SIZE
         page_end = page_start + CAPTURE_WORKSPACE_PAGE_SIZE
         return {
@@ -298,9 +327,14 @@ class CaptureIndexAPIMixin:
                     "total": len(pending_items),
                     "total_pages": pending_total_pages,
                 },
+                "items": {
+                    "total": len(visible_items),
+                    "total_pages": visible_total_pages,
+                },
             },
-            "indexed_items": indexed_items[page_start:page_end],
+            "indexed_items": indexed_items[indexed_page_start:indexed_page_end],
             "pending_items": pending_items,
+            "items": visible_items[page_start:page_end],
         }
     def _reindex_pack_catalog(self, pack_id: str) -> dict[str, int | str]:
         """Renumber local files and update catalog references without models."""
@@ -466,9 +500,10 @@ class CaptureIndexAPIMixin:
             category = str(request.args.get("category") or "").strip()
             page = request.args.get("page", "1")
             v4_status = str(request.args.get("v4_status") or "all").strip()
+            view = str(request.args.get("view") or "all").strip()
             return jsonify(
                 self._capture_workspace_for_pack(
-                    pack_id, category, page=page, v4_status=v4_status
+                    pack_id, category, page=page, v4_status=v4_status, view=view
                 )
             )
         except (FileNotFoundError, ValueError) as exc:

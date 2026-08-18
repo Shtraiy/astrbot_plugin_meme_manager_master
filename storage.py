@@ -1287,37 +1287,6 @@ class MemeStore:
         atomic_write_json(path, data)
 
 
-def is_safe_category_segment(value: str) -> bool:
-    """Validate one on-disk category segment, including Unicode names."""
-    normalized = str(value or "")
-    if (
-        not normalized
-        or normalized != normalized.strip()
-        or normalized in {".", ".."}
-        or "/" in normalized
-        or "\\" in normalized
-        or any(ord(char) < 32 for char in normalized)
-        or any(char in normalized for char in '<>:"|?*')
-    ):
-        return False
-    return Path(normalized).name == normalized
-
-
-def resolve_safe_category_dir(root: Path | str, category: str) -> Path:
-    """Resolve one category directory without allowing it to escape ``root``."""
-    normalized = str(category or "").strip()
-    if not is_safe_category_segment(normalized):
-        raise ValueError("分类名非法")
-
-    root_path = Path(root).expanduser().resolve(strict=False)
-    target_path = (root_path / normalized).resolve(strict=False)
-    try:
-        target_path.relative_to(root_path)
-    except ValueError as exc:
-        raise ValueError("分类目录超出表情包目录范围") from exc
-    return target_path
-
-
 def scan_pack_emojis(memes_dir: Path | str) -> dict[str, list[str]]:
     """Scan one pack into virtual tag buckets backed by the flat catalog."""
     root = Path(memes_dir)
@@ -1343,13 +1312,6 @@ def scan_pack_emojis(memes_dir: Path | str) -> dict[str, list[str]]:
 
 def _is_safe_segment(value: str) -> bool:
     return is_safe_category_segment(value)
-
-
-def _safe_extension(extension: str) -> str:
-    extension = str(extension or ".png").lower()
-    if not extension.startswith("."):
-        extension = f".{extension}"
-    return extension if extension in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"} else ".png"
 
 
 def _perceptual_hash(content: bytes) -> str | None:

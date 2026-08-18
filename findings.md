@@ -54,6 +54,36 @@
 | `add_emoji_to_category`、`set_default_pack`、`uninstall_pack`、`install_official_first` 等底层能力保留 | 捕获流程、pack 运行时与聊天命令仍依赖 |
 | 版本升级为 v2.2.0 | 破坏性移除（旧顶层页面 URL 失效），按项目惯例记录变更 |
 
+## Session 2026-08-17：v2.3.0 本地代码健康检查
+
+### Scope
+
+- 当前仓库 `HEAD`（`main`，与 `origin/main` 同步）
+- 136 个 Python 文件、62 个测试模块、1 个页面 JavaScript 文件
+- 工作区无未提交代码改动；未执行代码修复
+
+### Verification
+
+- `python -m unittest discover -s tests`：348 项通过、1 项跳过，10.704 秒
+- `python -m compileall -q .`：通过
+- `python scripts/generate_conf_schema.py --check`：schema is in sync
+- `python scripts/check_architecture.py`：architecture checks passed
+- `node --check pages/a_manage/semantic/script.js`：通过
+- `git diff --check`：通过
+- 测试输出仍包含一个 `ProactorEventLoop` `ResourceWarning` 和一个预期的 provider timeout 诊断堆栈
+
+### Health Findings
+
+- Warning：`capture.py` 2467 行、`backend/semantic_storage.py` 2347 行、`backend/pack_storage.py` 2121 行等大型模块集中多个职责，后续变更回归半径较大。
+- Suggestion：`mixins/web_api.py` 仍 import 已从 v2.3.0 页面移除的旧接口符号，`manager_base.py` 仍初始化当前无调用方的 `PackBackupService`。
+- Suggestion：`storage.py` 在 1290/1388 行重复定义路径策略函数，后续定义覆盖前一组实现。
+- Suggestion：测试异步资源清理仍产生未关闭事件循环警告，降低 CI 输出的信噪比。
+
+### Health Score
+
+- Composite：97/100；0 Critical、1 Warning、3 Suggestions。
+- 因无 PR diff，Code Quality 维度跳过并将权重按 0.40/0.33/0.27 分配给 Architecture、Tech Debt、Test Quality。
+
 ### Issues Encountered
 | Issue | Resolution |
 |-------|------------|

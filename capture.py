@@ -739,7 +739,7 @@ class CaptureMixin:
             "duplicate": "已存在",
             "not_meme": "判定为普通图片",
             "unavailable": "图片无法读取",
-            "blacklisted": "已被永久黑名单拦截",
+            "blacklisted": "已被黑名单拦截",
             "error": "处理失败",
         }
         counts: dict[str, int] = {}
@@ -1256,7 +1256,9 @@ class CaptureMixin:
                     blacklist = getattr(self, "capture_blacklist", None)
                     if blacklist is not None:
                         try:
-                            ignored_digests.update(str(value).lower() for value in blacklist.load())
+                            load_manual = getattr(blacklist, "manual_entries", None)
+                            entries = load_manual() if callable(load_manual) else blacklist.load()
+                            ignored_digests.update(str(value).lower() for value in entries)
                         except Exception:
                             logger.debug("读取捕获黑名单失败，继续使用活动记录保护并发提交")
                     current_entries: dict[str, dict] = {}

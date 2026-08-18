@@ -6,6 +6,7 @@ from pathlib import Path
 from capture_activity import (
     index_metadata_matches,
     load_capture_activity,
+    mark_capture_events_blacklisted,
     mark_capture_events_ignored,
     mark_capture_events_indexed,
     record_capture_event,
@@ -86,6 +87,26 @@ class CaptureActivityTests(unittest.TestCase):
             self.assertEqual([event["status"] for event in events], ["ignored", "ignored", "pending", "indexed"])
             self.assertEqual(events[0]["ignored_at"], 1234567890)
             self.assertEqual(image.read_bytes(), b"keep this file")
+
+    def test_blacklisting_digest_resolves_duplicate_events_without_touching_pending(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for status in ("duplicate", "pending"):
+                record_capture_event(
+                    root,
+                    category="happy",
+                    filename="meme.png",
+                    digest="a" * 64,
+                    status=status,
+                )
+
+            changed = mark_capture_events_blacklisted(root, digests={"a" * 64})
+
+            self.assertEqual(changed, 1)
+            self.assertEqual(
+                [event["status"] for event in load_capture_activity(root)["events"]],
+                ["blacklisted", "pending"],
+            )
 
 
 if __name__ == "__main__":

@@ -64,22 +64,6 @@ class PackRuntimeService:
         return self._runtime.set_default(pack_id)
 
 
-class PackBackupService:
-    def __init__(self, legacy_storage: Any):
-        try:
-            from ..backend.pack_backup import PackBackup
-        except ImportError:
-            from backend.pack_backup import PackBackup
-
-        self._backup = PackBackup(legacy_storage)
-
-    def export(self, **kwargs: Any):
-        return self._backup.export(**kwargs)
-
-    def restore(self, archive_path: Any, **kwargs: Any):
-        return self._backup.import_backup(archive_path, **kwargs)
-
-
 class CommunityPackService:
     def __init__(self, legacy_storage: Any):
         try:
