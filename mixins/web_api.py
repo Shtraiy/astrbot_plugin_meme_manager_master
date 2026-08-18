@@ -21,19 +21,6 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from astrbot.api import logger
 
 from ..capture_activity import load_capture_activity
-from ..backend.models import (
-    DuplicateEmojiError,
-    add_emoji_to_category,
-    batch_copy_emojis,
-    batch_delete_emojis,
-    batch_move_emojis,
-    clear_all_emojis,
-    clear_category_emojis,
-    delete_emoji_from_category,
-    get_emoji_by_category,
-    move_emoji_to_category,
-    scan_emoji_folder,
-)
 from ..backend.pack_storage import (
     export_pack_archive,
     get_pack_detail,

@@ -320,27 +320,6 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         if callable(remove_tool):
             remove_tool("search_memes")
 
-    def _semantic_mode_active(self, event: AstrMessageEvent | None) -> bool:
-        """Return whether the event still targets its verified semantic pack.
-
-        Args:
-            event: Current AstrBot message event.
-
-        Returns:
-            True when request-time verification and the runtime pack match.
-        """
-        if event is None or not hasattr(event, "get_extra"):
-            return False
-        verified_pack_id = str(
-            event.get_extra("meme_manager_master_semantic_verified_pack_id") or ""
-        )
-        runtime_pack_id = str(event.get_extra("meme_manager_master_runtime_pack_id") or "")
-        return (
-            bool(event.get_extra("meme_manager_master_semantic_active"))
-            and bool(verified_pack_id)
-            and verified_pack_id == runtime_pack_id
-        )
-
     def _semantic_system_prompt(self) -> str:
         return (
             f"\n\n{SEMANTIC_PROMPT_MARKER_START}\n"

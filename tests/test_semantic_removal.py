@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from backend.semantic_cleanup import cleanup_legacy_semantic_data
+from infrastructure.legacy_cleanup import cleanup_legacy_semantic_data
 from mixins.web_routes import enabled_route_specs
 
 ROOT = Path(__file__).resolve().parents[1]

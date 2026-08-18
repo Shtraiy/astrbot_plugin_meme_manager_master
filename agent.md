@@ -58,7 +58,7 @@ infrastructure → domain / ports
 - `backend/`：pack、分类、标签、语义兼容、远程下载和备份等后端模块；`storage.py` 与 `backend/pack_storage.py` 当前仍可能是兼容 facade，迁移时不得未经验证直接删除旧入口。
 - `mixins/`：命令、事件、Web API、Web 路由、pack API、表情 API 和捕获索引 API；修改 mixin 时必须检查组合类、路由处理器和实例方法绑定。
 - `capture.py`、`capture_pipeline.py`、`collector.py`、`capture_activity.py`、`capture_components/`：识别、分类、收集、索引和活动状态流程。
-- `meme_selection.py`、`response_policy.py`：选图、权重、发送凭证和回复策略。
+- `meme_selection.py`：选图与权重决策。
 - `pages/`：原生 HTML/CSS/JavaScript WebUI；页面脚本按 `state.js`、`api.js`、`dialogs.js`、`pack.js`、`emoji.js` 和入口 `script.js` 分工。
 - `tests/`：以 Python `unittest` 为主的回归测试，测试文件名为 `test_*.py`。
 - `scripts/`：配置 schema 生成、架构边界检查和架构指标脚本。

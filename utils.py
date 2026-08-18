@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import random
-import string
 from pathlib import Path
 from typing import Any
 
@@ -59,8 +58,3 @@ def probability_hit(value: Any, roll: int | None = None) -> bool:
         return True
     actual_roll = random.randint(1, 100) if roll is None else int(roll)
     return actual_roll <= probability
-
-
-def generate_secret_key(length: int = 8) -> str:
-    characters = string.ascii_letters + string.digits
-    return "".join(random.choice(characters) for _ in range(length))

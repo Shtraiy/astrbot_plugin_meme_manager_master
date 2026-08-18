@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 移除
+
+- 移除不再被引用的历史规划/设计文档（`docs/superpowers/`）、根目录会话记录文件（`plan.md`、`design.md`、`review.md`、`findings.md`、`progress.md`、`task_plan.md`）、历史审计/自检文档与 `INDEX_AND_DEDUPE.md`。
+- 移除无生产调用方的死代码：`response_policy.py`、`backend/semantic_caption.py`、`backend/semantic_cleanup.py` 兼容层、`application/web_routes.py` 测试专用副本，以及 `backend/models.py` 中 8 个旧版表情 CRUD 函数；同步删除/精简对应测试。
+- 移除 `mixins/event_handlers.py` 中已不可达的旧语义搜索/回复分支（含引用不存在符号 `search_memes` 等的历史代码），并清理 `manager_base.py` 中因此孤立的 `_semantic_mode_active` 与各模块未使用导入。
+
 ### 修复
 
 - /偷取 群聊图片下载改用插件级安全下载器：仅允许 HTTPS、固定已校验的公网 DNS 结果（阻断 DNS 重绑定）、禁止重定向、分块限流并校验真实图片格式；下载失败日志只记录 host，不再输出完整 URL。相关修复替代了此前未应用的 `_patch.py`。

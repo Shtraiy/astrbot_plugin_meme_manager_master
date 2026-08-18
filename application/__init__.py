@@ -9,7 +9,6 @@ from .services import (
     PackTransferService,
     SelectionApplicationService,
 )
-from .web_routes import WebRouteRegistry, WebRouteSpec
 
 __all__ = [
     "CaptureService",
@@ -19,6 +18,4 @@ __all__ = [
     "PackRuntimeService",
     "PackTransferService",
     "SelectionApplicationService",
-    "WebRouteRegistry",
-    "WebRouteSpec",
 ]
