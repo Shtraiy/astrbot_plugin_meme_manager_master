@@ -38,7 +38,11 @@ except ImportError:  # Pillow is optional at import time for AstrBot startup.
     Image = None
 
 
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+try:
+    from .infrastructure.storage_policy import IMAGE_EXTENSIONS
+except ImportError:  # standalone test imports (repo root on sys.path)
+    from infrastructure.storage_policy import IMAGE_EXTENSIONS
+
 DEFAULT_SEND_REPEAT_WINDOW = 300.0
 SEND_COUNT_PENALTY = 0.35
 SEND_WEIGHT_MIN = 0.1

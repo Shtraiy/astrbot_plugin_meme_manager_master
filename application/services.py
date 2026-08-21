@@ -1,4 +1,8 @@
-"""Small orchestration services used by adapters and compatibility facades."""
+"""Small orchestration services used by adapters and compatibility facades.
+
+PackRuntime/PackTransfer/CommunityPack 服务是过渡 seam:在 backend 迁移到
+ports 契约之前暂时直接依赖 legacy 实现;迁移完成后应收敛为面向 ports 的实现。
+"""
 
 from __future__ import annotations
 

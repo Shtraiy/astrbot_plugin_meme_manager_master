@@ -65,7 +65,6 @@ class WebAPIMixin(EmojiAPIMixin, PackAPIMixin, CaptureIndexAPIMixin):
         return str(value or "").strip()
 
     def _register_web_apis(self):
-        # ?????????????????????????????
         for spec in enabled_route_specs(self.web_capabilities):
             self._register_webui_api(
                 spec.path,

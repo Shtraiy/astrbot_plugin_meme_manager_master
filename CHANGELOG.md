@@ -2,6 +2,20 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
+## [Unreleased]
+
+### 重构
+
+- 统一图片扩展名策略：以 `infrastructure/storage_policy.py` 为唯一来源，主存储与语义索引共享同一集合（语义侧补齐 `.bmp`），避免策略漂移。
+- 收窄 `infrastructure/` 包级再导出，消除纯策略导入时意外加载整个存储栈的耦合，并避免 storage 顶层导入基础设施形成环。
+- 删除 `/表情管理大师 图库统计` 命令中 `return` 后的不可达旧实现，以及 WebUI 路由注册处的遗留占位注释。
+- 为 application 过渡门面与历史命名（`emotion` → `meme`）补充说明注释，新增图片扩展名单一来源一致性测试。
+
+### 验证
+
+- `python -m unittest discover -s tests`：366 项通过，1 项既有兼容性用例跳过。
+- `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、页面 JavaScript `node --check` 与 `git diff --check`：通过。
+
 ## [v2.4.1] - 2026-08-18
 
 ### 移除

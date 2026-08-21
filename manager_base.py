@@ -92,6 +92,7 @@ class MemeSender(Star, WebAPIMixin, CommandMixin, EventHandlerMixin):
         self.pending_images = {}
 
         # 配置项
+        # emotion 是历史命名,对应领域概念“表情/表情包”(meme);旧键保留兼容,新代码统一使用 meme。
         self.prompt_head = self._read_config_value(
             ("generation", "prompt", "head"),
             default="",

@@ -1,4 +1,3 @@
-import os
 import time
 from pathlib import Path
 
@@ -261,52 +260,3 @@ class CommandMixin:
         lines.extend(f"- {tag}: {count}" for tag, count in sorted(counts.items()))
         yield event.plain_result("\n".join(lines))
         return
-        """显示图库详细统计信息"""
-        try:
-            result = ["📊 表情包图库统计报告", "", "📁 本地图库统计:"]
-
-            # 统计本地文件
-            local_stats = {}
-            local_total = 0
-
-            local_memes_dir = str(self._default_pack_context()["memes_dir"])
-            if os.path.exists(local_memes_dir):
-                for category in os.listdir(local_memes_dir):
-                    category_path = os.path.join(local_memes_dir, category)
-                    if os.path.isdir(category_path):
-                        files = [
-                            f
-                            for f in os.listdir(category_path)
-                            if f.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
-                        ]
-                        count = len(files)
-                        local_stats[category] = count
-                        local_total += count
-
-            # 显示本地统计
-            if local_stats:
-                result.append(f"  • 总文件数: {local_total} 个")
-                result.append(f"  • 分类数: {len(local_stats)} 个")
-                result.append("")
-                result.append("📂 本地分类详情:")
-                for cat, count in sorted(
-                    local_stats.items(), key=lambda x: x[1], reverse=True
-                ):
-                    result.append(f"  • {cat}: {count} 个")
-            else:
-                result.append("  • 本地图库为空")
-
-            # 存储空间估算
-            result.append("")
-            result.append("💾 存储空间估算:")
-            if local_total > 0:
-                # 假设平均每个文件 500KB
-                estimated_size = local_total * 500 / 1024  # 转换为MB
-                result.append(f"  • 本地图库约: {estimated_size:.1f} MB")
-
-
-            yield event.plain_result("\n".join(result))
-
-        except Exception as e:
-            logger.error(f"获取图库统计失败: {str(e)}")
-            yield event.plain_result(f"获取图库统计失败: {str(e)}")

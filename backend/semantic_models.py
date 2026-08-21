@@ -15,9 +15,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+try:
+    from ..infrastructure.storage_policy import (
+        IMAGE_EXTENSIONS as _POLICY_IMAGE_EXTENSIONS,
+    )
+except ImportError:  # standalone test imports (repo root on sys.path)
+    from infrastructure.storage_policy import (
+        IMAGE_EXTENSIONS as _POLICY_IMAGE_EXTENSIONS,
+    )
+
+
 SCHEMA_VERSION = "2.0"
 PROMPT_VERSION = "meme-semantic-v8-category-reclassification"
-IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
+IMAGE_EXTENSIONS = frozenset(_POLICY_IMAGE_EXTENSIONS)
 CAPTION_STATUSES = frozenset({"pending", "running", "done", "failed"})
 EMBEDDING_STATUSES = frozenset({"pending", "running", "done", "failed", "cleared"})
 CATEGORY_FITS = frozenset({"match", "uncertain", "conflict"})
