@@ -20,5 +20,16 @@
       "suggestion": 3
     },
     "scope": "full repository at HEAD (v2.3.0)"
+  },
+  {
+    "date": "2026-08-21",
+    "mode": "Architecture Audit",
+    "score": 77,
+    "findings": {
+      "critical": 0,
+      "warning": 4,
+      "suggestion": 3
+    },
+    "scope": "full repository"
   }
 ]
