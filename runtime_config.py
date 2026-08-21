@@ -93,6 +93,7 @@ PUBLIC_CONFIG_KEYS = (
     "auto_send_enabled",
     "auto_send_probability",
     "auto_send_cooldown",
+    "llm_tool_enabled",
 )
 
 
@@ -111,6 +112,7 @@ class PluginConfig:
     auto_send_enabled: bool = True
     auto_send_probability: float = 50.0
     auto_send_cooldown: float = 30.0
+    llm_tool_enabled: bool = True
     auto_send_candidate_limit: int = 8
     meme_repeat_window: float = 300.0
     meme_follow_up_window: float = 300.0
@@ -184,6 +186,7 @@ class PluginConfig:
                 lookup("auto_send_probability"), 50, 0, 100
             ),
             auto_send_cooldown=float_value(lookup("auto_send_cooldown"), 30, 0, 3600),
+            llm_tool_enabled=bool_value(lookup("llm_tool_enabled"), True),
             auto_send_candidate_limit=int_value(
                 lookup("auto_send_candidate_limit"), 8, 2, 16
             ),
@@ -321,6 +324,12 @@ class PluginConfig:
                 "default": 30,
                 "min": 0,
                 "max": 3600,
+            },
+            "llm_tool_enabled": {
+                "type": "bool",
+                "description": "允许 LLM 调用表情包发送工具",
+                "hint": "开启后 LLM 可在回复需要配表情包时调用 send_meme 工具自动选图并发送。",
+                "default": True,
             },
             "auto_send_candidate_limit": {
                 "type": "int",

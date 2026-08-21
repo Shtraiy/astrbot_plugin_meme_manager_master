@@ -2,7 +2,11 @@
 
 本文件遵循 Keep a Changelog 结构，日期使用 Asia/Shanghai。
 
-## [Unreleased]
+## [v2.5.0] - 2026-08-21
+
+### 新增
+
+- 注册 `send_meme` LLM 工具：AstrBot 大模型判断回复需要配本地表情包时可直接调用工具，插件复用情景模型选图并发送到当前会话；新增 `llm_tool_enabled` 配置开关，与自动追加共用冷却与去重标记。
 
 ### 重构
 
@@ -13,8 +17,9 @@
 
 ### 验证
 
-- `python -m unittest discover -s tests`：366 项通过，1 项既有兼容性用例跳过。
+- `python -m pytest -q`：379 项通过，1 项既有兼容性用例跳过；`python -m unittest discover -s tests -q`：380 项通过。
 - `python -m compileall -q .`、`python scripts/generate_conf_schema.py --check`、`python scripts/check_architecture.py`、页面 JavaScript `node --check` 与 `git diff --check`：通过。
+- 新增 `send_meme` 工具契约、发送行为与去重标记测试，覆盖禁用/白名单/选图失败/冷却与注册回退路径。
 
 ## [v2.4.1] - 2026-08-18
 

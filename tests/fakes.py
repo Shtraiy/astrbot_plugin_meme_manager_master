@@ -89,7 +89,14 @@ class FakeResult(_Strict):
 
 class FakeContext(_Strict):
     def __init__(self) -> None:
-        self.provider_manager = types.SimpleNamespace(personas=[])
+        self.provider_manager = types.SimpleNamespace(
+            personas=[],
+            llm_tools=types.SimpleNamespace(func_list=[]),
+        )
+        self.registered_llm_tools: list[Any] = []
+
+    def add_llm_tools(self, *tools: Any) -> None:
+        self.registered_llm_tools.extend(tools)
 
     def get_provider_by_id(self, provider_id: str):
         raise KeyError(provider_id)
@@ -183,6 +190,65 @@ def install_runtime_stubs() -> None:
     sys.modules["astrbot.api.message_components"] = components
     sys.modules["astrbot.api.event"] = event_mod
     sys.modules["astrbot.api.star"] = star
+
+    core = types.ModuleType("astrbot.core")
+    agent_pkg = types.ModuleType("astrbot.core.agent")
+    tool_mod = types.ModuleType("astrbot.core.agent.tool")
+    run_ctx_mod = types.ModuleType("astrbot.core.agent.run_context")
+    agent_ctx_mod = types.ModuleType("astrbot.core.astr_agent_context")
+
+    from dataclasses import dataclass, field
+    from typing import Generic, TypeVar
+
+    TContext = TypeVar("TContext")
+
+    @dataclass
+    class FunctionTool(Generic[TContext]):
+        name: str = ""
+        description: str = ""
+        parameters: dict = field(default_factory=dict)
+        handler: Any = None
+        handler_module_path: Any = None
+        active: bool = True
+        is_background_task: bool = False
+
+        async def call(self, context: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError(
+                "FunctionTool.call() must be implemented by subclasses."
+            )
+
+    ToolExecResult = str
+
+    class ContextWrapper:
+        def __init__(
+            self,
+            context: Any = None,
+            event: Any = None,
+            messages: list | None = None,
+        ):
+            self.context = context
+            self.event = event
+            self.messages = messages if messages is not None else []
+
+    class AstrAgentContext:
+        def __init__(self, context: Any = None, event: Any = None):
+            self.context = context
+            self.event = event
+
+    tool_mod.FunctionTool = FunctionTool
+    tool_mod.ToolExecResult = ToolExecResult
+    run_ctx_mod.ContextWrapper = ContextWrapper
+    agent_ctx_mod.AstrAgentContext = AstrAgentContext
+    agent_pkg.tool = tool_mod
+    agent_pkg.run_context = run_ctx_mod
+    core.agent = agent_pkg
+    core.astr_agent_context = agent_ctx_mod
+    astrbot.core = core
+    sys.modules["astrbot.core"] = core
+    sys.modules["astrbot.core.agent"] = agent_pkg
+    sys.modules["astrbot.core.agent.tool"] = tool_mod
+    sys.modules["astrbot.core.agent.run_context"] = run_ctx_mod
+    sys.modules["astrbot.core.astr_agent_context"] = agent_ctx_mod
 
     aiohttp = types.ModuleType("aiohttp")
 

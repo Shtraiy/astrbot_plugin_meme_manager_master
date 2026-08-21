@@ -55,5 +55,11 @@
     "default": 30,
     "min": 0,
     "max": 3600
+  },
+  "llm_tool_enabled": {
+    "type": "bool",
+    "description": "允许 LLM 调用表情包发送工具",
+    "hint": "开启后 LLM 可在回复需要配表情包时调用 send_meme 工具自动选图并发送。",
+    "default": true
   }
 }

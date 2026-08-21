@@ -2,7 +2,7 @@
 
 # 表情包管理大师
 
-[![version](https://img.shields.io/badge/version-v2.4.1-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
+[![version](https://img.shields.io/badge/version-v2.5.0-blue.svg)](https://github.com/Shtraiy/astrbot_plugin_meme_manager_master)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.5.7-orange.svg)](https://github.com/Soulter/AstrBot)
 
 **让表情包管理、收集与选图更简单**
@@ -27,6 +27,7 @@
 - 全量语义重索引按批次保存检查点并持久化进度；切换 WebUI 页面、插件重载或任务中断后，重新打开页面会自动恢复，已完成图片不会重复调用模型。
 - 自动识别群聊图片，使用视觉模型判断是否为表情包，再按场景分类保存。
 - 机器人回复完成后由情景模型统一判断是否追加本地表情包；其他插件生成的图片、文件、视频或音频不会被本插件抢占或再次追加表情包。
+- 注册 `send_meme` LLM 工具：机器人回复需要配本地表情包时，AstrBot 大模型可直接调用工具自动选图并发送，与自动追加共用冷却与去重，不会同一轮重复发图。
 - 支持 `/偷取`、`/表情管理` 命令组和 `/表情偷取状态` 状态检查。
 
 ## 🖥️ WebUI

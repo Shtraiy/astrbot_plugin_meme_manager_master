@@ -287,6 +287,35 @@ class ExplicitMemeDispatchBehaviorTests(unittest.TestCase):
         cancelled = asyncio.run(scenario())
         self.assertTrue(all(cancelled))
 
+    def test_send_meme_tool_use_is_not_blocked(self):
+        event = FakeEvent(message_text="哈哈")
+        mixin = self._make_mixin()
+
+        asyncio.run(
+            mixin.on_using_llm_tool(
+                event,
+                {"name": "send_meme"},
+                {"reason": "开心"},
+            )
+        )
+
+        self.assertFalse(event.stopped)
+
+    def test_llm_tool_sent_marker_skips_auto_selection(self):
+        event = FakeEvent(message_text="哈哈")
+        event.set_result(FakeResult([CompPlain("笑死我了")]))
+        event.set_extra("meme_manager_master_llm_tool_sent", True)
+        mixin = self._make_mixin(
+            {"auto_send_probability": 100, "auto_send_cooldown": 0}
+        )
+        mixin._manager_ready = AsyncMock(return_value=True)
+        choose = AsyncMock(return_value=None)
+        mixin._choose_outgoing_meme_from_index = choose
+
+        asyncio.run(mixin.on_decorating_result(event))
+
+        choose.assert_not_awaited()
+
     def test_legacy_success_copy_is_absent(self):
         source = (ROOT / "capture.py").read_text(encoding="utf-8")
         self.assertNotIn("找到一个合适的表情包", source)

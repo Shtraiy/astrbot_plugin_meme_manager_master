@@ -15,10 +15,15 @@
 | `auto_send_enabled` | bool | `true` | 启用最终回复阶段的情景判断和自动追加 |
 | `auto_send_probability` | float | `50` | 情景模型决定发送后的概率控制 |
 | `auto_send_cooldown` | float | `30` | 自动发送之间的冷却秒数 |
+| `llm_tool_enabled` | bool | `true` | 允许 LLM 调用 `send_meme` 工具自动选图并发送 |
 
 情景模型会参考当前用户消息、机器人回复和最近 3 轮文本上下文。生图、自拍、插画、
 视频等外部视觉请求不会被当成本地表情包请求；当前回复已经包含外部媒体时也不会追加
 本地表情包。
+
+`send_meme` LLM 工具在 AstrBot 智能体调用时独立发送一张表情包，不受
+`auto_send_probability` 概率抽样影响；发送成功后会在事件上打上去重标记并记录冷却，
+同一轮回复不会重复追加表情包。
 
 ## 高级运行配置
 

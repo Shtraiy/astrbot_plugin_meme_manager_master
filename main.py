@@ -17,7 +17,7 @@ from .storage import MemeStore
     "meme_manager_master",
     "Shtraiy",
     "表情包管理大师：WebUI 管理、智能选图与群聊表情包自动收集。",
-    "2.4.1",
+    "2.5.0",
 )
 class MemeManager(CaptureMixin, MemeSender):
     """独立于原版 meme_manager 的管理运行时，并整合自动收集流程。"""
@@ -41,6 +41,23 @@ class MemeManager(CaptureMixin, MemeSender):
                 )
         except Exception as exc:
             logger.warning("[meme_manager_master] 分类索引初始化失败: %s", exc)
+        self._register_llm_tool()
+
+    def _register_llm_tool(self) -> None:
+        """Register the send_meme LLM tool for AstrBot's agent runtime."""
+        try:
+            from .llm_tools import register_send_meme_tool
+
+            if not register_send_meme_tool(self, self.context):
+                logger.warning(
+                    "[meme_manager_master] 未注册 send_meme LLM 工具: "
+                    "当前 AstrBot 不支持该工具 API"
+                )
+        except Exception as exc:
+            logger.warning(
+                "[meme_manager_master] send_meme LLM 工具注册失败: %s",
+                exc,
+            )
 
     @filter.event_message_type(EventMessageType.ALL)
     async def capture_images(self, event: AstrMessageEvent, *args, **kwargs):

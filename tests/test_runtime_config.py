@@ -28,6 +28,7 @@ class PluginConfigDefaultsTests(unittest.TestCase):
         self.assertTrue(config.auto_send_enabled)
         self.assertEqual(config.auto_send_probability, 50)
         self.assertEqual(config.auto_send_cooldown, 30)
+        self.assertTrue(config.llm_tool_enabled)
         self.assertEqual(config.auto_send_candidate_limit, 8)
         self.assertEqual(config.meme_repeat_window, 300)
         self.assertEqual(config.meme_follow_up_window, 300)
@@ -82,6 +83,11 @@ class PluginConfigBoundaryTests(unittest.TestCase):
         with self.assertRaises(AttributeError):
             config.group_whitelist.append("10003")
 
+    def test_llm_tool_enabled_parses_explicit_false(self):
+        self.assertFalse(
+            PluginConfig.from_mapping({"llm_tool_enabled": False}).llm_tool_enabled
+        )
+
     def test_legacy_nested_provider_is_used_when_flat_key_is_absent(self):
         config = PluginConfig.from_mapping({"semantic": {"vision_provider_id": "legacy-vision"}})
         self.assertEqual(config.vision_provider_id, "legacy-vision")
@@ -130,6 +136,7 @@ class PluginConfigSchemaTests(unittest.TestCase):
                 "auto_send_enabled",
                 "auto_send_probability",
                 "auto_send_cooldown",
+                "llm_tool_enabled",
             },
         )
 

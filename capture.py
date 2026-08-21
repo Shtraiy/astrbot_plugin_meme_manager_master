@@ -73,6 +73,14 @@ from .backend.tagging import (
 )
 
 
+LLM_TOOL_NOT_AVAILABLE_TEXT = "表情包发送工具未启用或当前会话不在可用范围。"
+LLM_TOOL_NO_MEME_TEXT = "本地表情包库暂无可发送的表情包。"
+LLM_TOOL_COOLDOWN_TEXT = "刚刚已发送过表情包,暂不重复发送。"
+LLM_TOOL_SEND_FAILED_TEXT = "发送表情包失败,请稍后再试。"
+LLM_TOOL_SENT_PREFIX = "已发送表情包:"
+LLM_TOOL_SENT_EXTRA = "meme_manager_master_llm_tool_sent"
+
+
 VISION_SYSTEM_PROMPT = f"""
 你是一个负责识别聊天表情包的视觉模型。请只输出 JSON，不要 Markdown，不要解释。
 只保留高置信度、明确用于聊天表达情绪/反应/吐槽/文字梗的表情包。截图、聊天记录截图、网页或软件界面、文档、海报、普通照片、风景照和没有表达意图的图片都不是表情包。
@@ -895,6 +903,7 @@ class CaptureMixin:
         # Marker cleanup always happens, even if our own sender is disabled.
         if (
             not self.runtime_config.auto_send_enabled
+            or event.get_extra(LLM_TOOL_SENT_EXTRA)
             or (not plain_texts and not marked_categories)
             or self._is_control_command(event)
             or not await self._manager_ready()
@@ -1034,6 +1043,11 @@ class CaptureMixin:
                 tool_name,
             )
             return
+        if tool_name == "send_meme":
+            logger.debug(
+                "[meme_manager_master] send_meme 工具由插件自身处理,不做拦截"
+            )
+            return
         guard_active = self._agent_tool_guard_active(event)
         if not should_block_agent_tool_for_meme_request(
             tool_name,
@@ -1047,6 +1061,82 @@ class CaptureMixin:
             "[meme_manager_master] blocked agent tool after local meme send tool=%s",
             tool_name,
         )
+
+    async def send_meme_via_tool(
+        self,
+        event: AstrMessageEvent,
+        *,
+        reason: str = "",
+        category: str = "",
+    ) -> str:
+        """Send one local meme for the send_meme LLM tool; returns feedback text."""
+        if (
+            not self.runtime_config.llm_tool_enabled
+            or not self.runtime_config.enabled
+        ):
+            logger.debug(
+                "[meme_manager_master] send_meme 工具未启用,不发送"
+            )
+            return LLM_TOOL_NOT_AVAILABLE_TEXT
+        if not whitelist_allows(event, self._whitelist()):
+            logger.debug(
+                "[meme_manager_master] send_meme 会话不在可用范围,不发送"
+            )
+            return LLM_TOOL_NOT_AVAILABLE_TEXT
+        if not await self._manager_ready():
+            return LLM_TOOL_NO_MEME_TEXT
+        response_text = reason or self._event_text(event)
+        preferred_categories = (
+            [str(category).strip()] if str(category).strip() else None
+        )
+        image_path = await self.meme_selection.choose(
+            event,
+            response_text,
+            force_send=True,
+            preferred_categories=preferred_categories,
+        )
+        if image_path is None:
+            logger.debug(
+                "[meme_manager_master] send_meme 未能选到表情包 decision=%s",
+                getattr(self.meme_selection, "last_decision", None),
+            )
+            return LLM_TOOL_NO_MEME_TEXT
+        if not await self._claim_auto_send(event, force=False):
+            logger.debug(
+                "[meme_manager_master] send_meme 未抢到发送冷却,不发送"
+            )
+            return LLM_TOOL_COOLDOWN_TEXT
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        details = self._image_details(image_path)
+        try:
+            message_chain = MessageChain().file_image(str(image_path))
+            if umo:
+                await self.context.send_message(umo, message_chain)
+            await self._record_image_send(image_path)
+            self._remember_sent_meme(event, image_path, details)
+            if umo:
+                self._last_auto_send[umo] = time.monotonic()
+            self._arm_agent_tool_guard(event)
+            event.set_extra(LLM_TOOL_SENT_EXTRA, True)
+            logger.info(
+                "[meme_manager_master] send_meme 工具已发送表情包 category=%s file=%s",
+                details.get("category", ""),
+                Path(image_path).name,
+            )
+            category_label = str(details.get("category") or "").strip()
+            if not category_label:
+                category_label = str(Path(image_path).parent.name or "")
+            return (
+                f"{LLM_TOOL_SENT_PREFIX}{category_label} · "
+                f"{Path(image_path).name}"
+            )
+        except Exception as exc:
+            logger.warning(
+                "[meme_manager_master] send_meme 发送表情包失败: %s",
+                exc,
+                exc_info=True,
+            )
+            return LLM_TOOL_SEND_FAILED_TEXT
 
     async def _process_one(
         self,
